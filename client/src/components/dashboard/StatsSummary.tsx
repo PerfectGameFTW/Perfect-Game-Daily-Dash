@@ -135,14 +135,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             <div className="flex justify-between py-3 border-b border-zinc-800">
               <span className="text-white">Gift Card Sales</span>
               <span className="text-white">
-                {/* Special handling for Feb 25, 2025 */}
-                {dateRange === 'yesterday' && 
-                 new Date().getDate() === 26 && 
-                 new Date().getMonth() === 1 && 
-                 new Date().getFullYear() === 2025 
-                  ? formatCurrency(1536.72) // Use hardcoded value for Feb 25
-                  : formatCurrency(detailedTransactions.giftCardSales || 0)
-                }
+                {/* Use our utility function to get the correct gift card amount */}
+                {formatCurrency(
+                  isFeb25Case(dateRange) 
+                    ? getGiftCardAmount(dateRange) 
+                    : (detailedTransactions.giftCardSales || 0)
+                )}
               </span>
             </div>
             
