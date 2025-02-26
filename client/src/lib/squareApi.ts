@@ -1,5 +1,5 @@
 import { apiRequest } from "./queryClient";
-import { DateRange, DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary, Transaction } from "@shared/schema";
+import { DateRange, DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary, Transaction, DetailedTransactionBreakdown } from "@shared/schema";
 
 // Helper to build query string
 const buildQueryString = (

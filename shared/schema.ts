@@ -120,6 +120,17 @@ export interface GiftCardSummary {
   averageValue: number;
 }
 
+export interface DetailedTransactionBreakdown {
+  partywirks: number;
+  tripleseat: number;
+  tips: number;
+  serviceCharges: number;
+  taxes: number;
+  refunds: number;
+  discountsAndComps: number;
+  giftCardSales: number;
+}
+
 // Keep the users table for authentication
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),

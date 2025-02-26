@@ -355,6 +355,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Server error while getting gift card summary data" });
     }
   });
+  
+  // Get detailed transaction breakdown
+  apiRouter.get("/detailed-transactions", async (req, res) => {
+    try {
+      // Parse date range from query (default to today if not provided)
+      const dateRange = req.query.dateRange as string || "today";
+      
+      // Validate date range
+      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
+      if (!parsedDateRange.success) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
+      
+      // Parse custom date range if provided, regardless of named range
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      
+      if (req.query.startDate && req.query.endDate) {
+        try {
+          // Log incoming date strings for debugging
+          console.log('Detailed Transactions API - Parsing dates:', {
+            startDateStr: req.query.startDate,
+            endDateStr: req.query.endDate
+          });
+          
+          // Handle different date formats (ISO string or simple date)
+          const startDateStr = req.query.startDate as string;
+          const endDateStr = req.query.endDate as string;
+          
+          if (startDateStr.includes('T')) {
+            // It's an ISO string
+            startDate = new Date(startDateStr);
+          } else {
+            // It's a simple date
+            startDate = parse(startDateStr, "yyyy-MM-dd", new Date());
+          }
+          
+          if (endDateStr.includes('T')) {
+            // It's an ISO string
+            endDate = new Date(endDateStr);
+          } else {
+            // It's a simple date
+            endDate = parse(endDateStr, "yyyy-MM-dd", new Date());
+          }
+          
+          console.log('Detailed Transactions API - Parsed dates:', {
+            startDate: startDate?.toISOString(),
+            endDate: endDate?.toISOString()
+          });
+        } catch (err) {
+          console.error('Error parsing detailed transactions dates:', err);
+        }
+      }
+      
+      // Get all transactions for the date range
+      const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate);
+      
+      // Calculate transaction breakdowns
+      // Mock data for now - in a real implementation we would analyze transaction data
+      const detailedBreakdown = {
+        partywirks: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('partywirks'))
+          .reduce((sum, t) => sum + t.amount, 0),
+        tripleseat: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('tripleseat'))
+          .reduce((sum, t) => sum + t.amount, 0),
+        tips: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('tip'))
+          .reduce((sum, t) => sum + t.amount, 0),
+        serviceCharges: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('service charge'))
+          .reduce((sum, t) => sum + t.amount, 0),
+        taxes: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('tax'))
+          .reduce((sum, t) => sum + t.amount, 0),
+        refunds: allTransactions.filter(t => t.status === 'refunded')
+          .reduce((sum, t) => sum + t.amount, 0),
+        discountsAndComps: allTransactions.filter(t => t.squareData && t.squareData.note && 
+          (t.squareData.note.toLowerCase().includes('discount') || t.squareData.note.toLowerCase().includes('comp')))
+          .reduce((sum, t) => sum + t.amount, 0),
+        giftCardSales: allTransactions.filter(t => t.categoryId === 'giftCard')
+          .reduce((sum, t) => sum + t.amount, 0)
+      };
+      
+      res.json(detailedBreakdown);
+    } catch (error) {
+      console.error("Error getting detailed transaction breakdown:", error);
+      res.status(500).json({ error: "Server error while getting detailed transaction data" });
+    }
+  });
 
   // Global variables for sync process
 let isSyncRunning = false;
