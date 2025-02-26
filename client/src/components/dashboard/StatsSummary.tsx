@@ -127,81 +127,57 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           </div>
         </div>
         
-        {/* Detailed Transaction Breakdown */}
+        {/* Detailed Transaction Breakdown - now as separate items */}
         {!isDetailedLoading && detailedTransactions && (
-          <div className="ml-4 space-y-2">
+          <>
             {/* Partywirks */}
-            <div className="flex justify-between py-2 border-b border-zinc-800/50">
-              <span className="text-zinc-300 flex items-center text-sm">
-                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
-                Partywirks
-              </span>
-              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.partywirks || 0)}</span>
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Partywirks</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.partywirks || 0)}</span>
             </div>
             
             {/* Tripleseat */}
-            <div className="flex justify-between py-2 border-b border-zinc-800/50">
-              <span className="text-zinc-300 flex items-center text-sm">
-                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
-                Tripleseat
-              </span>
-              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.tripleseat || 0)}</span>
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Tripleseat</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.tripleseat || 0)}</span>
             </div>
             
             {/* Tips */}
-            <div className="flex justify-between py-2 border-b border-zinc-800/50">
-              <span className="text-zinc-300 flex items-center text-sm">
-                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
-                Tips
-              </span>
-              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.tips || 0)}</span>
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Tips</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.tips || 0)}</span>
             </div>
             
             {/* Service Charges */}
-            <div className="flex justify-between py-2 border-b border-zinc-800/50">
-              <span className="text-zinc-300 flex items-center text-sm">
-                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
-                Service Charges
-              </span>
-              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.serviceCharges || 0)}</span>
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Service Charges</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.serviceCharges || 0)}</span>
             </div>
             
             {/* Taxes */}
-            <div className="flex justify-between py-2 border-b border-zinc-800/50">
-              <span className="text-zinc-300 flex items-center text-sm">
-                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
-                Taxes
-              </span>
-              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.taxes || 0)}</span>
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Taxes</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.taxes || 0)}</span>
             </div>
             
             {/* Refunds */}
-            <div className="flex justify-between py-2 border-b border-zinc-800/50">
-              <span className="text-zinc-300 flex items-center text-sm">
-                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
-                Refunds
-              </span>
-              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.refunds || 0)}</span>
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Refunds</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.refunds || 0)}</span>
             </div>
             
             {/* Discounts & Comps */}
-            <div className="flex justify-between py-2 border-b border-zinc-800/50">
-              <span className="text-zinc-300 flex items-center text-sm">
-                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
-                Discounts & Comps
-              </span>
-              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.discountsAndComps || 0)}</span>
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Discounts & Comps</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.discountsAndComps || 0)}</span>
             </div>
             
             {/* Gift Card Sales */}
-            <div className="flex justify-between py-2 border-b border-zinc-800/50">
-              <span className="text-zinc-300 flex items-center text-sm">
-                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
-                Gift Card Sales
-              </span>
-              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.giftCardSales || 0)}</span>
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Gift Card Sales</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.giftCardSales || 0)}</span>
             </div>
-          </div>
+          </>
         )}
 
         {/* Net Sales Item */}
