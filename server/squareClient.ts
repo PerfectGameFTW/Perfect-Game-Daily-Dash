@@ -320,7 +320,12 @@ export async function fetchGiftCards(): Promise<any[]> {
       console.log(`Fetching gift cards page ${pageCount}${cursor ? ' with cursor' : ''}`);
       
       // For v29.0.0, use the giftCardsApi with pagination
-      const response = await squareClient.giftCardsApi.listGiftCards(undefined, undefined, cursor as string | undefined);
+      // The cursor parameter should be a string or undefined, not a number
+      const response = await squareClient.giftCardsApi.listGiftCards(
+        undefined,  // type 
+        undefined,  // state
+        cursor      // cursor - TypeScript should understand this is string | undefined
+      );
       
       // Extract gift cards from the response
       const giftCards = response.result.giftCards || [];

@@ -4,7 +4,7 @@ import { pgStorage, db } from "./pgStorage";
 import { dateRangeSchema, InsertTransaction, InsertGiftCard, transactions } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
-import { and, gte, lte } from "drizzle-orm";
+import { and, gte, lte, sql } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Create API router for all endpoints
@@ -463,6 +463,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Clearing existing Feb 25 transactions from database...");
       
       // This is a special case where we want to replace all Feb 25 data
+      // First count existing transactions for Feb 25 in our database
+      const existingCount = await db.select({ count: sql`count(*)` })
+        .from(transactions)
+        .where(
+          and(
+            gte(transactions.timestamp, startDate),
+            lte(transactions.timestamp, endDate)
+          )
+        );
+      
+      const existingTotal = parseInt(existingCount[0]?.count?.toString() || '0');
+      console.log(`Found ${existingTotal} existing transactions for Feb 25, 2025 in database`);
+      
+      // Then delete them all
       await db.delete(transactions)
         .where(
           and(
@@ -470,6 +484,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             lte(transactions.timestamp, endDate)
           )
         );
+      
+      console.log(`Deleted ${existingTotal} existing transactions for Feb 25, 2025`);
       
       console.log("Adding new Feb 25 transactions to database...");
       let addedCount = 0;
