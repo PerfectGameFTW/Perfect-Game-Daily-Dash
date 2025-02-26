@@ -92,3 +92,9 @@ export const fetchGiftCardSummary = async (
   const response = await apiRequest('GET', `/api/gift-card-summary?${queryString}`);
   return await response.json();
 };
+
+// Function to test gift card detection for Feb 25 transactions
+export const testGiftCardDetection = async (): Promise<any> => {
+  const response = await apiRequest('GET', `/api/test-gift-card-detection`);
+  return await response.json();
+};

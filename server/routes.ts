@@ -7,6 +7,51 @@ import * as squareClient from "./squareClient";
 import { and, gte, lte, sql } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Test route for gift card detection
+  app.get('/api/test-gift-card-detection', async (req, res) => {
+    try {
+      // Fetch a few payments from Feb 25 to test gift card detection
+      const startDate = new Date('2025-02-25T00:00:00.000Z');
+      const endDate = new Date('2025-02-25T23:59:59.999Z');
+      
+      console.log("Fetching sample payments for gift card detection test...");
+      const payments = await squareClient.fetchPayments(startDate, endDate);
+      
+      // Take first 10 payments only for testing
+      const samplePayments = payments.slice(0, 10);
+      
+      // Test gift card detection
+      const results = samplePayments.map(payment => {
+        const transaction = squareClient.convertSquarePaymentToTransaction(payment);
+        return {
+          paymentId: payment.id,
+          isGiftCard: transaction.categoryId === 'giftCard',
+          category: transaction.categoryId,
+          // Provide some data to help determine why it was/wasn't detected
+          sourceType: payment.sourceType,
+          cardDetails: payment.cardDetails ? {
+            entryMethod: payment.cardDetails.entryMethod
+          } : null,
+          note: payment.note,
+          // Include a portion of the payment data for inspection
+          paymentSample: JSON.stringify(payment).substring(0, 500) + '...'
+        };
+      });
+      
+      res.json({
+        success: true,
+        totalPayments: payments.length,
+        sampleSize: samplePayments.length,
+        results
+      });
+    } catch (error) {
+      console.error("Error testing gift card detection:", error);
+      res.status(500).json({ 
+        success: false,
+        error: "Failed to test gift card detection" 
+      });
+    }
+  });
   // Create API router for all endpoints
   const apiRouter = express.Router();
 
