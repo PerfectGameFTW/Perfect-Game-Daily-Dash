@@ -116,33 +116,39 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       console.log(`Fetching payments page ${pageCount}${cursor ? ' with cursor' : ''}`);
       
       // Use date range with listPayments - Square API v29 requires specific parameters
-      // For Square API v29, the correct parameters are (from the SDK):
+      // For Square API v29, the parameters are in this exact order:
       // beginTime, endTime, sortOrder, cursor, locationId, total, last4, cardBrand, limit
-      const response = await squareClient.paymentsApi.listPayments(
-        beginTime,          // beginTime
-        endTime,            // endTime
-        'DESC',             // sortOrder - must be 'ASC' or 'DESC'
-        cursor,             // cursor for pagination
-        undefined,          // locationId - we use all available locations
-        undefined,          // total
-        undefined,          // last4
-        undefined,          // cardBrand
-        100                 // limit - use a reasonable number
-      );
-      
-      // Extract payments from the response
-      const payments = response.result.payments || [];
-      allPayments = [...allPayments, ...payments];
-      
-      // Check if there are more pages
-      cursor = response.result.cursor;
-      hasMorePages = !!cursor;
-      
-      console.log(`Fetched ${payments.length} payments on page ${pageCount}. Total so far: ${allPayments.length}`);
-      
-      // Add a small delay to avoid rate limiting
-      if (hasMorePages) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+      try {
+        const response = await squareClient.paymentsApi.listPayments(
+          beginTime,          // beginTime - string
+          endTime,            // endTime - string
+          'DESC',             // sortOrder - string, must be 'ASC' or 'DESC'
+          cursor,             // cursor - string
+          process.env.SQUARE_LOCATION_ID, // locationId - optional string
+          undefined,          // total - bigint
+          undefined,          // last4 - string
+          undefined,          // cardBrand - string
+          100                 // limit - number
+        );
+        
+        // Extract payments from the response
+        const payments = response.result.payments || [];
+        allPayments = [...allPayments, ...payments];
+        
+        // Check if there are more pages
+        cursor = response.result.cursor;
+        hasMorePages = !!cursor;
+        
+        console.log(`Fetched ${payments.length} payments on page ${pageCount}. Total so far: ${allPayments.length}`);
+        
+        // Add a small delay to avoid rate limiting
+        if (hasMorePages) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      } catch (error) {
+        console.error('Error fetching payments page:', error);
+        // If we get an error, break the loop but return what we have so far
+        hasMorePages = false;
       }
     }
     
@@ -325,29 +331,35 @@ export async function fetchGiftCards(): Promise<any[]> {
       console.log(`Fetching gift cards page ${pageCount}${cursor ? ' with cursor' : ''}`);
       
       // For v29.0.0, use the giftCardsApi with pagination
-      // According to the Square API SDK:
-      // listGiftCards(type?: string, state?: string, limit?: number, cursor?: string, customerId?: string)
-      const response = await squareClient.giftCardsApi.listGiftCards(
-        undefined,  // type 
-        undefined,  // state
-        100,        // limit - use a reasonable limit
-        cursor,     // cursor
-        undefined   // customerId
-      );
-      
-      // Extract gift cards from the response
-      const giftCards = response.result.giftCards || [];
-      allGiftCards = [...allGiftCards, ...giftCards];
-      
-      // Check if there are more pages
-      cursor = response.result.cursor;
-      hasMorePages = !!cursor;
-      
-      console.log(`Fetched ${giftCards.length} gift cards on page ${pageCount}. Total so far: ${allGiftCards.length}`);
-      
-      // Add a small delay to avoid rate limiting
-      if (hasMorePages) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+      try {
+        // According to the Square API SDK:
+        // listGiftCards(type?: string, state?: string, limit?: number, cursor?: string, customerId?: string)
+        const response = await squareClient.giftCardsApi.listGiftCards(
+          undefined,  // type 
+          undefined,  // state
+          100,        // limit - use a reasonable limit
+          cursor,     // cursor
+          undefined   // customerId
+        );
+        
+        // Extract gift cards from the response
+        const giftCards = response.result.giftCards || [];
+        allGiftCards = [...allGiftCards, ...giftCards];
+        
+        // Check if there are more pages
+        cursor = response.result.cursor;
+        hasMorePages = !!cursor;
+        
+        console.log(`Fetched ${giftCards.length} gift cards on page ${pageCount}. Total so far: ${allGiftCards.length}`);
+        
+        // Add a small delay to avoid rate limiting
+        if (hasMorePages) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      } catch (error) {
+        console.error('Error fetching gift cards page:', error);
+        // If we get an error, break the loop but return what we have so far
+        hasMorePages = false;
       }
     }
     
