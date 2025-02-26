@@ -975,11 +975,53 @@ let syncProgress = {
       
       console.log(`Syncing data for Feb 25, 2025: ${startDate.toISOString()} to ${endDate.toISOString()}`);
       
-      // Fetch ALL payments for Feb 25, 2025 (with pagination)
+      // Fetch both payments AND orders to identify gift card sales
+      console.log("Fetching Feb 25 payments from Square API...");
       const payments = await squareClient.fetchPayments(startDate, endDate);
       console.log(`Fetched ${payments.length} total payments for Feb 25, 2025`);
       
-      // Calculate total amount
+      console.log("Fetching Feb 25 orders from Square API...");
+      const orders = await squareClient.fetchOrders(startDate, endDate);
+      console.log(`Fetched ${orders.length} total orders for Feb 25, 2025`);
+      
+      // Identify gift card sales from order line items
+      console.log("Analyzing orders for gift card sales...");
+      let giftCardSalesCount = 0;
+      let giftCardSalesAmount = 0;
+      
+      // First scan orders for gift card line items
+      for (const order of orders) {
+        if (order.lineItems) {
+          for (const lineItem of order.lineItems) {
+            const itemName = (lineItem.name || '').toLowerCase();
+            
+            // Check if this is a gift card line item
+            if (
+              itemName.includes('gift') || 
+              itemName.includes('gift card') || 
+              (lineItem.note && lineItem.note.toLowerCase().includes('gift')) ||
+              lineItem.itemType === 'GIFT_CARD'
+            ) {
+              giftCardSalesCount++;
+              
+              // Calculate the amount
+              const quantity = Number(lineItem.quantity || '1');
+              const unitPrice = lineItem.basePriceMoney && lineItem.basePriceMoney.amount
+                ? Number(lineItem.basePriceMoney.amount) / 100
+                : 0;
+              
+              const totalPrice = quantity * unitPrice;
+              giftCardSalesAmount += totalPrice;
+              
+              console.log(`Found gift card sale: ${lineItem.name}, amount: $${totalPrice.toFixed(2)}`);
+            }
+          }
+        }
+      }
+      
+      console.log(`GIFT CARD SALES SUMMARY: Found ${giftCardSalesCount} gift card items totaling $${giftCardSalesAmount.toFixed(2)}`);
+      
+      // Calculate total amount for all payments
       const totalAmount = payments.reduce((sum, payment) => {
         const amountMoney = payment.amountMoney;
         let amount = 0;

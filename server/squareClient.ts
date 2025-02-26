@@ -223,29 +223,51 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   // Determine category based on payment information
   let category: Category = 'retail'; // Default
   
-  // Add more sophisticated gift card detection
-  // Check if this is a gift card transaction based on available data
-  const paymentData = JSON.stringify(payment).toLowerCase();
-  const isGiftCard = 
-    // Check Square payment data for gift card indicators
-    paymentData.includes('gift card') || 
-    paymentData.includes('giftcard') || 
-    (payment.note && payment.note.toLowerCase().includes('gift')) ||
-    // Check for specific Square gift card identifiers
-    (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD') ||
-    (payment.sourceType && payment.sourceType === 'GIFT_CARD');
+  // IMPORTANT: We need to handle gift card purchases differently than gift card payments
+  // Gift card PURCHASES - When a customer BUYS a gift card (this should be categorized as a gift card sale)
+  // Gift card PAYMENTS - When a customer PAYS USING a gift card (this should NOT be categorized as gift card)
   
-  if (isGiftCard) {
-    category = 'giftCard';
-    console.log(`Identified gift card transaction: ${payment.id}`);
+  // First check if this is a payment USING a gift card (not a gift card purchase)
+  const paidWithGiftCard = 
+    (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
+    (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD');
+  
+  if (paidWithGiftCard) {
+    // This is someone paying WITH a gift card, NOT a gift card sale
+    // We should categorize based on what they bought, not as a gift card
+    console.log(`Payment USING gift card detected: ${payment.id}, amount: $${amount}`);
+    
+    // Try to determine category from order name or note
+    if (payment.orderId && payment.orderName) {
+      category = mapSquareCategory(payment.orderName);
+    } else if (payment.note) {
+      category = mapSquareCategory(payment.note);
+    }
   } 
-  // If it's not identified as a gift card, use the existing category logic
-  else if (payment.orderId) {
-    // This is a simplification - in real implementation, 
-    // you would fetch the order details and analyze line items
-    category = payment.orderName ? mapSquareCategory(payment.orderName) : 'retail';
-  } else if (payment.note) {
-    category = mapSquareCategory(payment.note);
+  // If it's not paid with a gift card, check if it's a gift card PURCHASE
+  else {
+    // Check if this payment is for a gift card purchase
+    // This requires checking the actual item description or notes
+    const orderName = (payment.orderName || '').toLowerCase();
+    const note = (payment.note || '').toLowerCase();
+    
+    // Check for gift card purchases in order name or notes
+    const isPossibleGiftCardPurchase = 
+      orderName.includes('gift card') || 
+      orderName.includes('gift certificate') ||
+      note.includes('gift card') || 
+      note.includes('gift certificate');
+    
+    if (isPossibleGiftCardPurchase) {
+      category = 'giftCard';
+      console.log(`Identified gift card PURCHASE: ${payment.id}, amount: $${amount}`);
+    } 
+    // Otherwise use standard category detection
+    else if (payment.orderId) {
+      category = payment.orderName ? mapSquareCategory(payment.orderName) : 'retail';
+    } else if (payment.note) {
+      category = mapSquareCategory(payment.note);
+    }
   }
   
   // Safely parse the timestamp
