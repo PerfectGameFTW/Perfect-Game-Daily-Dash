@@ -134,7 +134,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      const transactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate);
+      // Get only completed transactions by default
+      const transactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate, 'completed');
       
       res.json(transactions);
     } catch (error) {
@@ -372,8 +373,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Get all transactions for the date range
-      const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate);
+      // Get all completed transactions for the date range
+      const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate, 'completed');
       
       // Calculate transaction breakdowns
       // In a real implementation, we would have more accurate detection

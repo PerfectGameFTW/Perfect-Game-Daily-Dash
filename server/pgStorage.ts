@@ -143,13 +143,14 @@ export class PgStorage implements IStorage {
     // Current period transactions
     const currentTransactions = await this.getTransactions(dateRange, start, end);
     
-    // Previous period transactions
+    // Previous period transactions - only get completed transactions
     const prevTransactions = await db.select()
       .from(transactions)
       .where(
         and(
           gte(transactions.timestamp, prevStart),
-          lte(transactions.timestamp, prevEnd)
+          lte(transactions.timestamp, prevEnd),
+          eq(transactions.status, 'completed')
         )
       );
     
