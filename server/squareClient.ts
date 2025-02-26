@@ -116,15 +116,18 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       console.log(`Fetching payments page ${pageCount}${cursor ? ' with cursor' : ''}`);
       
       // Use date range with listPayments - Square API v29 requires specific parameters
-      // For Square API v29, the correct parameters are:
-      // beginTime, endTime, sortOrder, cursor, locationId, total (in this order)
+      // For Square API v29, the correct parameters are (from the SDK):
+      // beginTime, endTime, sortOrder, cursor, locationId, total, last4, cardBrand, limit
       const response = await squareClient.paymentsApi.listPayments(
         beginTime,          // beginTime
         endTime,            // endTime
         'DESC',             // sortOrder - must be 'ASC' or 'DESC'
         cursor,             // cursor for pagination
         undefined,          // locationId - we use all available locations
-        undefined           // total
+        undefined,          // total
+        undefined,          // last4
+        undefined,          // cardBrand
+        100                 // limit - use a reasonable number
       );
       
       // Extract payments from the response
