@@ -26,8 +26,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let endDate: Date | undefined;
       
       if (req.query.startDate && req.query.endDate) {
-        startDate = parse(req.query.startDate as string, "yyyy-MM-dd", new Date());
-        endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
+        try {
+          // Log incoming date strings for debugging
+          console.log('Summary API - Parsing dates:', {
+            startDateStr: req.query.startDate,
+            endDateStr: req.query.endDate
+          });
+          
+          // Handle different date formats (ISO string or simple date)
+          const startDateStr = req.query.startDate as string;
+          const endDateStr = req.query.endDate as string;
+          
+          if (startDateStr.includes('T')) {
+            // It's an ISO string
+            startDate = new Date(startDateStr);
+          } else {
+            // It's a simple date
+            startDate = parse(startDateStr, "yyyy-MM-dd", new Date());
+          }
+          
+          if (endDateStr.includes('T')) {
+            // It's an ISO string
+            endDate = new Date(endDateStr);
+          } else {
+            // It's a simple date
+            endDate = parse(endDateStr, "yyyy-MM-dd", new Date());
+          }
+          
+          console.log('Summary API - Parsed dates:', {
+            startDate: startDate?.toISOString(),
+            endDate: endDate?.toISOString()
+          });
+        } catch (err) {
+          console.error('Error parsing dates:', err);
+        }
       }
       
       // Get daily summary data

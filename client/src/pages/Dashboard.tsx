@@ -19,15 +19,35 @@ export default function Dashboard() {
   const { toast } = useToast();
 
   const handleDateRangeChange = (newRange: DateRange, start?: Date, end?: Date) => {
-    console.log('Dashboard date range change:', { newRange, start, end });
-    setDateRange(newRange);
+    console.log('Dashboard date range change:', { 
+      newRange, 
+      start: start?.toISOString(), 
+      end: end?.toISOString(),
+      currentRange: dateRange,
+      currentStart: customStartDate?.toISOString(),
+      currentEnd: customEndDate?.toISOString()
+    });
     
-    // Always set start and end dates, regardless of range type
-    // This allows dates like "yesterday" to be stored as actual dates
+    // Store the new date range and dates
+    setDateRange(newRange);
     setCustomStartDate(start);
     setCustomEndDate(end);
     
-    // After updating the state, invalidate queries to refresh data
+    // Create an array of query keys to invalidate
+    const queryKeys = [
+      ['/api/summary', newRange, start?.toISOString(), end?.toISOString()],
+      ['/api/transactions', newRange, start?.toISOString(), end?.toISOString()],
+      ['/api/revenue-by-category', newRange, start?.toISOString(), end?.toISOString()],
+      ['/api/hourly-revenue', newRange, start?.toISOString(), end?.toISOString()],
+      ['/api/gift-card-summary', newRange, start?.toISOString(), end?.toISOString()]
+    ];
+    
+    // Invalidate all relevant queries with the new query keys
+    queryKeys.forEach(key => {
+      queryClient.invalidateQueries({ queryKey: key });
+    });
+    
+    // Also invalidate the general keys to be safe
     queryClient.invalidateQueries({ queryKey: ['/api/summary'] });
     queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
     queryClient.invalidateQueries({ queryKey: ['/api/revenue-by-category'] });
@@ -75,9 +95,15 @@ export default function Dashboard() {
     }
   };
 
-  // Initial sync when dashboard loads
+  // Initial sync when dashboard loads - only run once
   useEffect(() => {
-    handleSync();
+    // Only run sync when the component first mounts
+    const initialSync = async () => {
+      await handleSync();
+    };
+    
+    initialSync();
+    // Empty dependency array ensures this only runs once on mount
   }, []);
 
   return (

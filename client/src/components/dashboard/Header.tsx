@@ -57,17 +57,39 @@ export default function Header({
 
   const handlePrevDate = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent the drawer from opening
-    console.log('Clicked previous arrow');
+    console.log('Clicked previous arrow, current state:', {
+      dateRange,
+      customStartDate: customStartDate?.toISOString(),
+      customEndDate: customEndDate?.toISOString()
+    });
+    
     const result = navigateDate('prev', dateRange, customStartDate, customEndDate);
-    console.log('Navigation result:', result);
+    
+    console.log('Navigation result:', {
+      newDateRange: result.dateRange,
+      newStartDate: result.startDate?.toISOString(),
+      newEndDate: result.endDate?.toISOString()
+    });
+    
     onDateRangeChange(result.dateRange, result.startDate, result.endDate);
   };
 
   const handleNextDate = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent the drawer from opening
-    console.log('Clicked next arrow');
+    console.log('Clicked next arrow, current state:', {
+      dateRange,
+      customStartDate: customStartDate?.toISOString(),
+      customEndDate: customEndDate?.toISOString()
+    });
+    
     const result = navigateDate('next', dateRange, customStartDate, customEndDate);
-    console.log('Navigation result:', result);
+    
+    console.log('Navigation result:', {
+      newDateRange: result.dateRange,
+      newStartDate: result.startDate?.toISOString(),
+      newEndDate: result.endDate?.toISOString()
+    });
+    
     onDateRangeChange(result.dateRange, result.startDate, result.endDate);
   };
 

@@ -12,10 +12,25 @@ const buildQueryString = (
   // Always add date parameters if they exist, regardless of the named dateRange
   // This allows us to show specific days when using arrows
   if (startDate) {
-    queryParams += `&startDate=${startDate.toISOString().split('T')[0]}`;
+    const startDateString = startDate.toISOString().split('T')[0];
+    queryParams += `&startDate=${startDateString}`;
+    
     // If endDate is provided, use it; otherwise use startDate for single-day views
     const finalEndDate = endDate || startDate;
-    queryParams += `&endDate=${finalEndDate.toISOString().split('T')[0]}`;
+    const endDateString = finalEndDate.toISOString().split('T')[0];
+    queryParams += `&endDate=${endDateString}`;
+    
+    console.log('API Request with dates:', {
+      dateRange,
+      startDate: startDateString,
+      endDate: endDateString,
+      queryParams
+    });
+  } else {
+    console.log('API Request without custom dates:', {
+      dateRange,
+      queryParams
+    });
   }
   
   return queryParams;
