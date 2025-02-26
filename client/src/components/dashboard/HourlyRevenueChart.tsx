@@ -30,32 +30,26 @@ interface HourlyRevenueChartProps {
   customEndDate?: Date;
 }
 
-// Format data for Recharts using the enhanced API response
-const formatDataForChart = (data: any[]) => {
+// Format data for Recharts using the hourly revenue data
+const formatDataForChart = (data: HourlyRevenue[]) => {
   return data.map(item => {
     return {
       hour: item.hour,
-      sales: item.regularSales || 0,
-      giftCards: item.giftCardSales || 0,
-      formattedSales: formatCurrency(item.regularSales || 0),
-      formattedGiftCards: formatCurrency(item.giftCardSales || 0),
+      amount: item.amount || 0,
+      formattedAmount: formatCurrency(item.amount || 0),
       date: item.hour // For tooltip
     };
   });
 };
 
-// Chart configuration - blue for sales, red for gift cards
+// Chart configuration - blue for sales
 const chartConfig = {
   hours: {
     label: "Hour",
   },
-  sales: {
-    label: "Regular Sales",
+  amount: {
+    label: "Revenue",
     color: "hsl(var(--chart-1))", // Blue
-  },
-  giftCards: {
-    label: "Gift Card Sales",
-    color: "hsl(var(--chart-2))", // Red
   },
 } satisfies ChartConfig;
 
@@ -64,7 +58,7 @@ export default function HourlyRevenueChart({
   customStartDate, 
   customEndDate 
 }: HourlyRevenueChartProps) {
-  const [activeChart, setActiveChart] = React.useState<"combined" | "sales" | "giftCards">("combined");
+  // No longer need to track active chart type since we only have one type of data
   
   const { data, isLoading } = useQuery({
     queryKey: ['/api/hourly-revenue', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
@@ -146,22 +140,12 @@ export default function HourlyRevenueChart({
                     }
                   />
                   <Bar 
-                    dataKey="sales" 
-                    stackId="a"
-                    name="Regular Sales"
-                    fill="var(--color-sales)" 
+                    dataKey="amount" 
+                    name="Revenue"
+                    fill="var(--color-amount)" 
                     radius={[4, 4, 0, 0]}
                     maxBarSize={40}
                   />
-                  <Bar 
-                    dataKey="giftCards" 
-                    stackId="a"
-                    name="Gift Card Sales"
-                    fill="var(--color-giftCards)" 
-                    radius={[4, 4, 0, 0]}
-                    maxBarSize={40}
-                  />
-                  <Legend />
                 </BarChart>
               </ResponsiveContainer>
             </ChartContainer>

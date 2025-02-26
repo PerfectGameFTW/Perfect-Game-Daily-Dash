@@ -123,26 +123,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const hourlyRevenue = await pgStorage.getHourlyRevenue(parsedDateRange.data, startDate, endDate);
       
-      // Get gift card sales by hour for the same period to accurately split the revenue
-      const giftCardSalesByHour = await pgStorage.getGiftCardSalesByHour(parsedDateRange.data, startDate, endDate);
-      
-      // Combine the regular hourly revenue with gift card data
-      const enhancedHourlyRevenue = hourlyRevenue.map(hour => {
-        // Find corresponding gift card sales for this hour, if any
-        const giftCardData = giftCardSalesByHour.find(gc => gc.hour === hour.hour);
-        const giftCardAmount = giftCardData ? giftCardData.amount : 0;
-        
-        // Calculate regular sales (total minus gift card sales)
-        const regularSales = hour.amount - giftCardAmount;
-        
-        return {
-          ...hour,
-          regularSales: regularSales > 0 ? regularSales : 0,
-          giftCardSales: giftCardAmount
-        };
-      });
-      
-      res.json(enhancedHourlyRevenue);
+      // Return the direct hourly revenue without additional processing
+      res.json(hourlyRevenue);
     } catch (error) {
       console.error("Error getting hourly revenue:", error);
       res.status(500).json({ error: "Server error while getting hourly revenue data" });
