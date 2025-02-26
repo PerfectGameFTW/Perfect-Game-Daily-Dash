@@ -50,16 +50,16 @@ export default function TimeframeModal({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="bg-black border-t border-zinc-800 rounded-t-xl">
-        <div className="mx-auto mt-4 h-1.5 w-16 rounded-full bg-zinc-700" />
-        <DrawerHeader className="pt-4 px-6 pb-3">
-          <DrawerTitle className="text-2xl font-semibold text-white">Timeframe</DrawerTitle>
+      <DrawerContent className="bg-black border-t border-zinc-800 rounded-t-xl overflow-y-auto">
+        <div className="mx-auto mt-3 h-1.5 w-16 rounded-full bg-zinc-700" />
+        <DrawerHeader className="pt-2 px-6 pb-2">
+          <DrawerTitle className="text-xl font-semibold text-white">Timeframe</DrawerTitle>
         </DrawerHeader>
-        <div className="px-6 pb-10">
+        <div className="px-6 pb-6 overflow-y-auto">
           {timeframes.map((timeframe) => (
             <div 
               key={timeframe.value}
-              className="py-4 border-b border-zinc-800 flex items-center justify-between cursor-pointer"
+              className="py-3 border-b border-zinc-800 flex items-center justify-between cursor-pointer"
               onClick={() => handleSelectRange(timeframe.value)}
             >
               <span className="text-white">{timeframe.label}</span>
@@ -75,21 +75,21 @@ export default function TimeframeModal({
             </div>
           ))}
 
-          <div className="mt-6 border border-zinc-800 rounded-lg bg-zinc-900">
-            <div className="p-4 flex items-center justify-between">
+          <div className="mt-4 border border-zinc-800 rounded-lg bg-zinc-900">
+            <div className="p-3 flex items-center justify-between">
               <span className="font-medium text-white">Reporting hours</span>
               <div className="flex items-center">
-                <span className="text-sm text-zinc-400 mr-2">
+                <span className="text-xs text-zinc-400 mr-2">
                   {reportingHours}
                 </span>
-                <ChevronRight className="h-4 w-4 text-zinc-400" />
+                <ChevronRight className="h-3 w-3 text-zinc-400" />
               </div>
             </div>
           </div>
 
           <DrawerClose asChild>
             <Button 
-              className="w-full mt-4 justify-center bg-blue-500 hover:bg-blue-600 text-white"
+              className="w-full mt-3 justify-center bg-blue-500 hover:bg-blue-600 text-white"
             >
               Done
             </Button>
