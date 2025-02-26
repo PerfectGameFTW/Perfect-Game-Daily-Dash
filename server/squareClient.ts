@@ -1,4 +1,4 @@
-import { Client, Environment } from 'square';
+import { SquareClient, SquareEnvironment, SquareError } from 'square';
 import { 
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
@@ -9,11 +9,11 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Initialize Square client
-const squareClient = new Client({
+const squareClient = new SquareClient({
   accessToken: process.env.SQUARE_ACCESS_TOKEN,
   environment: process.env.NODE_ENV === 'production' 
-    ? Environment.Production 
-    : Environment.Sandbox
+    ? SquareEnvironment.Production 
+    : SquareEnvironment.Sandbox
 });
 
 // Map Square payment status to our TransactionStatus
@@ -60,7 +60,7 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     const endTime = end.toISOString();
     
     // Make API request to Square Orders API
-    const response = await squareClient.ordersApi.searchOrders({
+    const response = await squareClient.orders.searchOrders({
       locationIds: [process.env.SQUARE_LOCATION_ID!],
       query: {
         filter: {
@@ -100,7 +100,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     const endTime = end.toISOString();
     
     // Make API request to Square Payments API
-    const response = await squareClient.paymentsApi.listPayments(
+    const response = await squareClient.payments.listPayments(
       startTime,
       endTime,
       undefined, // Cursor
@@ -118,7 +118,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
 }
 
 // Convert Square payment to our Transaction model
-export function convertSquarePaymentToTransaction(payment: any): InsertTransaction {
+export function convertSquarePaymentToTransaction(payment: Record<string, any>): InsertTransaction {
   // Extract the amount
   const amountMoney = payment.amountMoney;
   const amount = amountMoney ? (amountMoney.amount || 0) / 100 : 0; // Convert from cents to dollars
@@ -149,7 +149,7 @@ export function convertSquarePaymentToTransaction(payment: any): InsertTransacti
 }
 
 // Convert Square gift card to our GiftCard model
-export function convertSquareGiftCardToGiftCard(giftCard: any): InsertGiftCard {
+export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): InsertGiftCard {
   const card: InsertGiftCard = {
     squareId: giftCard.id,
     amount: giftCard.balance_money ? (giftCard.balance_money.amount || 0) / 100 : 0,
@@ -165,7 +165,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: any): InsertGiftCard {
 // Fetch gift cards from Square API
 export async function fetchGiftCards(): Promise<any[]> {
   try {
-    const response = await squareClient.giftCardsApi.listGiftCards();
+    const response = await squareClient.giftCards.listGiftCards();
     return response.result.giftCards || [];
   } catch (error) {
     console.error('Error fetching gift cards from Square:', error);
