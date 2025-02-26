@@ -35,9 +35,22 @@ export default function RecentTransactionsTable({
     queryFn: () => fetchTransactions(dateRange, customStartDate, customEndDate),
   });
 
-  const formatTime = (timestamp: string) => {
-    // Convert UTC time to Eastern Time and format
-    const date = new Date(timestamp);
+  // Format transaction time in Eastern timezone
+  const formatTime = (transaction: any) => {
+    const timestamp = transaction.timestamp;
+    
+    // Handle various timestamp formats
+    let date: Date;
+    if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (typeof timestamp === 'string') {
+      date = new Date(timestamp);
+    } else {
+      console.error("Unexpected timestamp format:", timestamp);
+      return "Unknown time";
+    }
+    
+    // Use our timezone-aware formatter
     return formatInTimezone(date, "h:mm a");
   };
 
@@ -94,7 +107,7 @@ export default function RecentTransactionsTable({
                 data?.slice(0, 5).map((transaction, index) => (
                   <TableRow key={index}>
                     <TableCell className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatTime(transaction.timestamp)}
+                      {formatTime(transaction)}
                     </TableCell>
                     <TableCell className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       {formatCurrency(transaction.amount)}

@@ -261,8 +261,10 @@ export class PgStorage implements IStorage {
     // Group transactions by hour - only count completed transactions
     const completedTransactions = currentTransactions.filter(t => t.status === 'completed');
     completedTransactions.forEach(transaction => {
-      const date = new Date(transaction.timestamp);
-      const hour = date.getHours();
+      // Convert transaction timestamp to Eastern time for proper hour grouping
+      const utcDate = new Date(transaction.timestamp);
+      const easternDate = toZonedTime(utcDate, this.EASTERN_TIMEZONE);
+      const hour = easternDate.getHours();
       
       const formattedHour = hour === 0 
         ? '12 AM' 
@@ -351,16 +353,15 @@ export class PgStorage implements IStorage {
     if (startDate && (dateRange === 'custom' || endDate)) {
       // For custom range or when both dates are specified
       // Convert the dates to Eastern timezone
-      const easternStartDate = utcToZonedTime(startDate, this.EASTERN_TIMEZONE);
-      const easternEndDate = endDate ? utcToZonedTime(endDate, this.EASTERN_TIMEZONE) : easternStartDate;
+      const easternStartDate = toZonedTime(startDate, this.EASTERN_TIMEZONE);
+      const easternEndDate = endDate ? toZonedTime(endDate, this.EASTERN_TIMEZONE) : easternStartDate;
       
       // Apply start and end of day in Eastern timezone
       start = startOfDay(easternStartDate);
       end = endOfDay(easternEndDate);
       
-      // Convert back to UTC for database queries
-      start = zonedTimeToUtc(start, this.EASTERN_TIMEZONE);
-      end = zonedTimeToUtc(end, this.EASTERN_TIMEZONE);
+      // Start and end dates are already in UTC internally, 
+      // but with the hours set according to Eastern time boundaries
       
       console.log('Using explicit date range:', {
         dateRange,
@@ -411,9 +412,9 @@ export class PgStorage implements IStorage {
         easternEnd = endOfDay(now);
     }
     
-    // Convert Eastern times back to UTC for database queries
-    start = zonedTimeToUtc(easternStart, this.EASTERN_TIMEZONE);
-    end = zonedTimeToUtc(easternEnd, this.EASTERN_TIMEZONE);
+    // The date objects are already in UTC internally
+    start = easternStart;
+    end = easternEnd;
     
     console.log('Using predefined date range:', {
       dateRange,
