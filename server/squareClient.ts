@@ -192,6 +192,43 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     }
     
     console.log(`Completed fetching ${allPayments.length} total payments from Square for date range ${beginTime} to ${endTime}`);
+    
+    // Important: Now fetch corresponding orders and merge order data with payments
+    // This is a crucial step to properly identify gift card purchases using item_type=GIFT_CARD 
+    const orders = await fetchOrders(startDate, endDate);
+    console.log(`Fetched ${orders.length} orders from Square for date range: ${start.toLocaleString()} to ${end.toLocaleString()}`);
+    
+    // Create a map of orders by ID for quick lookup
+    const orderMap = new Map();
+    orders.forEach(order => {
+      orderMap.set(order.id, order);
+    });
+    
+    // Link payments with their corresponding orders
+    let paymentsWithOrders = 0;
+    allPayments.forEach(payment => {
+      if (payment.orderId && orderMap.has(payment.orderId)) {
+        // Attach order data to the payment
+        payment.orderData = orderMap.get(payment.orderId);
+        paymentsWithOrders++;
+        
+        // Special handling for orders with gift card line items
+        const order = payment.orderData;
+        if (order.lineItems) {
+          const giftCardItems = order.lineItems.filter((item: any) => 
+            item.itemType === 'GIFT_CARD' || 
+            (item.name && item.name.toLowerCase().includes('gift card'))
+          );
+          
+          if (giftCardItems.length > 0) {
+            console.log(`🎯 Found gift card items in order ${order.id} linked to payment ${payment.id}`);
+          }
+        }
+      }
+    });
+    
+    console.log(`Successfully linked ${paymentsWithOrders} payments with their orders`);
+    
     return allPayments;
   } catch (error) {
     console.error('Error fetching payments from Square:', error);
@@ -223,6 +260,11 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   // Determine category based on payment information
   let category: Category = 'retail'; // Default
   
+  // Log detailed payment data for troubleshooting
+  if (payment.id && payment.orderId) {
+    console.log(`Payment ${payment.id} linked to order ${payment.orderId}`);
+  }
+  
   // IMPORTANT: We need to handle gift card purchases differently than gift card payments
   // Gift card PURCHASES - When a customer BUYS a gift card (this should be categorized as a gift card sale)
   // Gift card PAYMENTS - When a customer PAYS USING a gift card (this should NOT be categorized as gift card)
@@ -248,95 +290,86 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   } 
   // If it's not paid with a gift card, check if it's a gift card PURCHASE
   else {
-    // Multiple ways to detect a gift card:
-    // 1. Check reference data for direct identification
-    const paymentId = payment.id || '';
-    const orderId = payment.orderId || '';
+    let isGiftCardPurchase = false;
     
-    // Known gift card transaction IDs for Feb 25 (could be expanded in future)
-    const knownGiftCardPaymentIds = [
-      // Add any known gift card payment IDs here if needed
-    ];
-    
-    // 2. Check catalog object IDs for known gift card items
-    const knownGiftCardCatalogIds = [
-      // Square uses specific formats for gift card catalog IDs
-      'GIFT_CARD'
-    ];
-    
-    // 3. Check transaction references in receipt/order/payment data
-    const orderName = (payment.orderName || '').toLowerCase();
-    const note = (payment.note || '').toLowerCase();
-    const receiptNumber = (payment.receiptNumber || '').toLowerCase();
-    const paymentNote = (payment.note || '').toLowerCase();
-    
-    // 4. Check for Square's internal gift card indicators
-    let hasGiftCardItems = false;
-    let hasGiftCardType = false;
-    
-    // 5. Check if there are itemizations with gift card references
-    if (payment.itemizations && Array.isArray(payment.itemizations)) {
-      hasGiftCardItems = payment.itemizations.some((item: any) => {
-        const itemName = (item.name || '').toLowerCase();
-        return itemName.includes('gift card') || 
-               itemName.includes('gift certificate') ||
-               (item.itemType && item.itemType === 'GIFT_CARD');
-      });
+    // DIRECT ORDERS API APPROACH - Check for item_type = GIFT_CARD in order line items
+    if (payment.orderId && payment.orderData) {
+      try {
+        // Parse order data if it's stored as a string
+        const orderData = typeof payment.orderData === 'string' 
+          ? JSON.parse(payment.orderData) 
+          : payment.orderData;
+        
+        // Check for line items with GIFT_CARD type - this is the most reliable method
+        if (orderData.lineItems && Array.isArray(orderData.lineItems)) {
+          const giftCardItems = orderData.lineItems.filter((item: any) => 
+            item.itemType === 'GIFT_CARD' || 
+            (item.name && item.name.toLowerCase().includes('gift card'))
+          );
+          
+          if (giftCardItems.length > 0) {
+            isGiftCardPurchase = true;
+            console.log(`✅ Found gift card purchase in order ${payment.orderId} via line items`);
+            
+            // Log detailed info about the gift card items
+            giftCardItems.forEach((item: any, index: number) => {
+              const itemAmount = item.basePriceMoney 
+                ? Number(item.basePriceMoney.amount) / 100 
+                : 0;
+              
+              console.log(`  Gift Card Item #${index + 1}:`);
+              console.log(`  - Name: ${item.name || 'N/A'}`);
+              console.log(`  - Item Type: ${item.itemType || 'N/A'}`);
+              console.log(`  - Amount: $${itemAmount}`);
+              console.log(`  - Quantity: ${item.quantity || 1}`);
+            });
+          }
+        }
+      } catch (error) {
+        console.warn(`Error checking order data for gift cards in payment ${payment.id}:`, error);
+      }
     }
     
-    // 6. Check for Square's gift card type markers
-    if (payment.type && payment.type === 'GIFT_CARD') {
-      hasGiftCardType = true;
+    // BACKUP PAYMENT-ONLY DETECTION - Used if order data isn't available
+    if (!isGiftCardPurchase) {
+      const orderName = (payment.orderName || '').toLowerCase();
+      const note = (payment.note || '').toLowerCase();
+      
+      // Check for gift card indicators in various fields
+      isGiftCardPurchase = 
+        orderName.includes('gift card') ||
+        note.includes('gift card') ||
+        (payment.itemizations && Array.isArray(payment.itemizations) && 
+          payment.itemizations.some((item: any) => 
+            (item.name && item.name.toLowerCase().includes('gift card')) ||
+            (item.itemType && item.itemType === 'GIFT_CARD')
+          )
+        );
+      
+      if (isGiftCardPurchase) {
+        console.log(`✅ Found gift card purchase in payment ${payment.id} via text search`);
+      }
     }
     
-    // 7. If the order has gift card details as part of the payment
-    const hasGiftCardDetails = payment.orderInfo && 
-      payment.orderInfo.giftCardInfo && 
-      payment.orderInfo.giftCardInfo.length > 0;
-      
-    // 8. Look for "buy gift card" or similar phrases
-    const hasBuyGiftCardPhrase = 
-      orderName.includes('buy gift card') || 
-      note.includes('buy gift card') ||
-      orderName.includes('purchase gift card') || 
-      note.includes('purchase gift card') ||
-      orderName.includes('gift card purchase') || 
-      note.includes('gift card purchase');
-      
-    // 9. Check for any partial gift card phrases (broader search)
-    const hasGiftCardPhrase = 
-      orderName.includes('gift card') || 
-      orderName.includes('gift certificate') ||
-      note.includes('gift card') || 
-      note.includes('gift certificate') ||
-      (receiptNumber && receiptNumber.includes('gift')) ||
-      (paymentNote && paymentNote.includes('gift'));
-    
-    // 10. COMBINE ALL DETECTION METHODS to determine if this is likely a gift card purchase
-    const isLikelyGiftCardPurchase = 
-      knownGiftCardPaymentIds.includes(paymentId) ||
-      hasGiftCardItems || 
-      hasGiftCardType || 
-      hasGiftCardDetails ||
-      hasBuyGiftCardPhrase ||
-      hasGiftCardPhrase;
-    
-    // Log detailed gift card detection for specific dates of interest
+    // SPECIALIZED DATE-TARGETED LOGGING for Feb 25
     const paymentDate = new Date(payment.createdAt || new Date());
     const isFeb25 = 
       paymentDate.getDate() === 25 && 
       paymentDate.getMonth() === 1 && // 0-indexed (February)
       paymentDate.getFullYear() === 2025;
     
-    if (isFeb25 && (isLikelyGiftCardPurchase || hasGiftCardPhrase)) {
-      console.log(`🔍 FEB 25 GIFT CARD DETECTION - Payment ID: ${paymentId}`);
+    if (isFeb25) {
+      console.log(`📆 FEB 25 PAYMENT - ID: ${payment.id}`);
       console.log(`💰 Amount: $${amount}`);
-      console.log(`📝 Order name: ${orderName}`);
-      console.log(`📝 Note: ${note}`);
-      console.log(`Gift card detection result: ${isLikelyGiftCardPurchase ? 'POSITIVE ✅' : 'NEGATIVE ❌'}`);
+      console.log(`🔍 Gift card detection result: ${isGiftCardPurchase ? 'POSITIVE ✅' : 'NEGATIVE ❌'}`);
+      
+      if (payment.orderId) {
+        console.log(`📦 Order ID: ${payment.orderId}`);
+      }
     }
     
-    if (isLikelyGiftCardPurchase) {
+    // SET CATEGORY based on our detection logic
+    if (isGiftCardPurchase) {
       category = 'giftCard';
       console.log(`Identified gift card PURCHASE: ${payment.id}, amount: $${amount}`);
     } 
@@ -526,6 +559,43 @@ export async function fetchGiftCards(): Promise<any[]> {
     if (error && typeof error === 'object') {
       console.error('Detailed error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     }
+    return [];
+  }
+}
+
+// Utility function to search for gift card items in the catalog
+export async function searchCatalogForGiftCards(): Promise<any[]> {
+  try {
+    // Call Square Catalog API to find gift card items
+    const response = await squareClient.catalogApi.listCatalog(
+      undefined, // cursor
+      "ITEM" // object_types - specifically looking for catalog items
+    );
+    
+    // Filter to find gift card items
+    const giftCardItems = (response.result.objects || []).filter((item: any) => {
+      if (item.type !== 'ITEM') return false;
+      
+      // Check item data
+      const itemData = item.itemData;
+      if (!itemData) return false;
+      
+      // Look for gift card indicators in name or description
+      const name = (itemData.name || '').toLowerCase();
+      const description = (itemData.description || '').toLowerCase();
+      
+      return (
+        name.includes('gift card') || 
+        name.includes('gift certificate') ||
+        description.includes('gift card') ||
+        description.includes('gift certificate')
+      );
+    });
+    
+    console.log(`Found ${giftCardItems.length} gift card items in catalog`);
+    return giftCardItems;
+  } catch (error) {
+    console.error('Error searching catalog for gift cards:', error);
     return [];
   }
 }

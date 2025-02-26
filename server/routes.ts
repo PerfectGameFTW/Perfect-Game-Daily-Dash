@@ -492,33 +492,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Call the catalog API directly to look for gift card items
       console.log("Searching for catalog items related to gift cards...");
       
-      // List catalog items that might be gift cards
-      const catalogResponse = await squareClient.catalogApi.listCatalog(
-        undefined, // cursor
-        "ITEM" // object_types - specifically looking for catalog items
-      );
+      // Use our dedicated function to search for gift card items
+      const giftCardCatalogItems = await squareClient.searchCatalogForGiftCards();
       
-      console.log(`Retrieved ${catalogResponse.result.objects?.length || 0} catalog objects`);
-      
-      // Check for gift card related items
-      const giftCardCatalogItems = (catalogResponse.result.objects || []).filter(item => {
-        if (item.type !== 'ITEM') return false;
-        
-        // Check if this catalog item is related to gift cards
-        const itemData = item.itemData;
-        if (!itemData) return false;
-        
-        // Look for gift card indicators in the item name or description
-        const name = itemData.name || '';
-        const description = itemData.description || '';
-        
-        return (
-          name.toLowerCase().includes('gift card') || 
-          name.toLowerCase().includes('gift certificate') ||
-          description.toLowerCase().includes('gift card') ||
-          description.toLowerCase().includes('gift certificate')
-        );
-      });
+      console.log(`Retrieved ${giftCardCatalogItems.length} gift card catalog items`);
       
       console.log(`Found ${giftCardCatalogItems.length} catalog items that might be gift cards`);
       
