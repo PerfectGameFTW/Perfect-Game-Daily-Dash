@@ -1,8 +1,9 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { pgStorage } from "./pgStorage";
 import { dateRangeSchema } from "@shared/schema";
 import { parse } from "date-fns";
+import * as squareClient from "./squareClient";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Create API router for all endpoints
