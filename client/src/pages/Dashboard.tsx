@@ -4,11 +4,8 @@ import Header from "@/components/dashboard/Header";
 import StatsSummary from "@/components/dashboard/StatsSummary";
 import BottomNavigation from "@/components/dashboard/BottomNavigation";
 import TimeframeModal from "@/components/dashboard/TimeframeModal";
-import RecentTransactionsTable from "@/components/dashboard/RecentTransactionsTable";
-import GiftCardActivity from "@/components/dashboard/GiftCardActivity";
 import { DateRange } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import useMobile from "@/hooks/use-mobile";
 import { ArrowUpRight, CalendarDays, LayoutGrid, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -141,32 +138,6 @@ export default function Dashboard() {
           customStartDate={customStartDate}
           customEndDate={customEndDate}
         />
-        
-        {/* Tabbed Content for Transactions and Gift Cards */}
-        <Tabs defaultValue="transactions" className="w-full">
-          <TabsList className="bg-muted border border-border w-full md:w-auto">
-            <TabsTrigger value="transactions" className="data-[state=active]:bg-background flex-1 md:flex-none">
-              Recent Transactions
-            </TabsTrigger>
-            <TabsTrigger value="giftcards" className="data-[state=active]:bg-background flex-1 md:flex-none">
-              Gift Card Activity
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="transactions" className="mt-3">
-            <RecentTransactionsTable 
-              dateRange={dateRange}
-              customStartDate={customStartDate}
-              customEndDate={customEndDate}
-            />
-          </TabsContent>
-          <TabsContent value="giftcards" className="mt-3">
-            <GiftCardActivity 
-              dateRange={dateRange}
-              customStartDate={customStartDate}
-              customEndDate={customEndDate}
-            />
-          </TabsContent>
-        </Tabs>
       </main>
       
       {/* Bottom Navigation (only shown on mobile) */}
