@@ -218,11 +218,43 @@ export function navigateDate(
         const rangeDays = Math.round((normalizedEndDate.getTime() - normalizedStartDate.getTime()) / (1000 * 60 * 60 * 24));
         console.log(`Custom range is ${rangeDays} days from ${normalizedStartDate.toISOString()} to ${normalizedEndDate.toISOString()}`);
         
+        // If we're viewing a single day (start === end)
+        if (rangeDays === 0) {
+          if (direction === 'prev') {
+            // Move backward one day for single-day view
+            const prevDay = subDays(normalizedStartDate, 1);
+            // Safe clone to avoid mutation issues
+            return { dateRange: 'custom', startDate: new Date(prevDay), endDate: new Date(prevDay) };
+          } else {
+            // Move forward one day for single-day view
+            const nextDay = addDays(normalizedStartDate, 1);
+            
+            // Don't go beyond today
+            if (nextDay > today) {
+              return { dateRange: 'today', startDate: undefined, endDate: undefined };
+            }
+            
+            // If next day is yesterday, use predefined range
+            if (isSameDay(nextDay, subDays(today, 1))) {
+              return { dateRange: 'yesterday', startDate: undefined, endDate: undefined };
+            }
+            
+            // If next day is today, use predefined range
+            if (isSameDay(nextDay, today)) {
+              return { dateRange: 'today', startDate: undefined, endDate: undefined };
+            }
+            
+            // Safe clone to avoid mutation issues
+            return { dateRange: 'custom', startDate: new Date(nextDay), endDate: new Date(nextDay) };
+          }
+        }
+        
+        // Handle multi-day ranges
         if (direction === 'prev') {
           // Move backward by the same range size
           const newStartDate = subDays(normalizedStartDate, rangeDays + 1);
           const newEndDate = subDays(normalizedStartDate, 1);
-          return { dateRange: 'custom', startDate: newStartDate, endDate: newEndDate };
+          return { dateRange: 'custom', startDate: new Date(newStartDate), endDate: new Date(newEndDate) };
         } else {
           // Move forward by the same range size
           const newStartDate = addDays(normalizedEndDate, 1);
@@ -232,14 +264,14 @@ export function navigateDate(
           if (newEndDate > today) {
             // If the window would extend past today, adjust to end at today
             if (newStartDate < today) {
-              return { dateRange: 'custom', startDate: newStartDate, endDate: today };
+              return { dateRange: 'custom', startDate: new Date(newStartDate), endDate: new Date(today) };
             } else {
               // If even the start date is beyond today, return to today's view
               return { dateRange: 'today', startDate: undefined, endDate: undefined };
             }
           }
           
-          return { dateRange: 'custom', startDate: newStartDate, endDate: newEndDate };
+          return { dateRange: 'custom', startDate: new Date(newStartDate), endDate: new Date(newEndDate) };
         }
       } else {
         // If missing dates, default to today
