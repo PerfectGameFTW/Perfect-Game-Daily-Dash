@@ -9,7 +9,8 @@ import {
 } from "@shared/schema";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
 import { IStorage } from "./storage";
-import { Pool } from "pg";
+import pg from "pg";
+const { Pool } = pg;
 import { drizzle } from "drizzle-orm/node-postgres";
 import { eq, and, gte, lte, SQL, sql } from "drizzle-orm";
 import dotenv from 'dotenv';

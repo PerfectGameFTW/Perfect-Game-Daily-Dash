@@ -165,6 +165,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sync route to pull data from Square into our database
+  apiRouter.post("/sync", async (req, res) => {
+    try {
+      console.log("Starting sync with Square API...");
+      const results = {
+        transactions: 0,
+        giftCards: 0
+      };
+      
+      // Fetch payments from Square
+      const payments = await squareClient.fetchPayments();
+      console.log(`Fetched ${payments.length} payments from Square`);
+      
+      // Process each payment and save to database
+      for (const payment of payments) {
+        // Check if we already have this transaction
+        const existing = await pgStorage.getTransactionBySquareId(payment.id);
+        if (!existing) {
+          // Convert to our model and save
+          const transaction = squareClient.convertSquarePaymentToTransaction(payment);
+          await pgStorage.createTransaction(transaction);
+          results.transactions++;
+        }
+      }
+      
+      // Fetch gift cards from Square
+      const giftCards = await squareClient.fetchGiftCards();
+      console.log(`Fetched ${giftCards.length} gift cards from Square`);
+      
+      // Process each gift card and save to database
+      for (const giftCard of giftCards) {
+        // Check if we already have this gift card
+        const existing = await pgStorage.getGiftCardBySquareId(giftCard.id);
+        if (!existing) {
+          // Convert to our model and save
+          const card = squareClient.convertSquareGiftCardToGiftCard(giftCard);
+          await pgStorage.createGiftCard(card);
+          results.giftCards++;
+        }
+      }
+      
+      console.log(`Sync complete. Added ${results.transactions} transactions and ${results.giftCards} gift cards.`);
+      res.json({
+        success: true,
+        message: "Sync completed successfully",
+        results
+      });
+    } catch (error) {
+      console.error("Error syncing with Square:", error);
+      res.status(500).json({ error: "Failed to sync with Square" });
+    }
+  });
+
   // Mount the API router
   app.use("/api", apiRouter);
 
