@@ -30,19 +30,15 @@ interface HourlyRevenueChartProps {
   customEndDate?: Date;
 }
 
-// Format data for Recharts - simulating sales vs gift card data
-const formatDataForChart = (data: HourlyRevenue[]) => {
+// Format data for Recharts using the enhanced API response
+const formatDataForChart = (data: any[]) => {
   return data.map(item => {
-    // Simulate gift card sales as 15% of total amount when amount > 0
-    const giftCardAmount = item.amount > 0 ? item.amount * 0.15 : 0;
-    const regularSales = item.amount - giftCardAmount;
-    
     return {
       hour: item.hour,
-      sales: regularSales,
-      giftCards: giftCardAmount,
-      formattedSales: formatCurrency(regularSales),
-      formattedGiftCards: formatCurrency(giftCardAmount),
+      sales: item.regularSales || 0,
+      giftCards: item.giftCardSales || 0,
+      formattedSales: formatCurrency(item.regularSales || 0),
+      formattedGiftCards: formatCurrency(item.giftCardSales || 0),
       date: item.hour // For tooltip
     };
   });
