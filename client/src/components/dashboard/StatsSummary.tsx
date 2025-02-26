@@ -31,12 +31,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   }
 
   return (
-    <div className="mt-4">
+    <div className="mt-4 w-full">
       {/* Main Sales Section */}
-      <div className="mb-2">
+      <div className="mb-8">
         <h2 className="text-sm font-medium text-zinc-400">Gross sales</h2>
         <div className="flex items-center">
-          <p className="text-xl font-bold text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
+          <p className="text-3xl md:text-4xl font-bold text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
           <div 
             className={`ml-2 px-2 py-1 rounded text-xs font-semibold flex items-center ${
               isPositiveChange(data?.revenueChange || 0)
@@ -53,105 +53,74 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           </div>
         </div>
       </div>
-      
-      {/* Hourly Revenue Chart Placeholder */}
-      <div className="relative h-36 w-full mb-8 bg-black border-t border-b border-zinc-800">
-        <div className="absolute left-0 text-xs text-zinc-500">1k</div>
-        <div className="absolute left-0 top-1/2 text-xs text-zinc-500">522</div>
-        <div className="absolute left-0 bottom-0 text-xs text-zinc-500">0</div>
-        
-        <div className="flex justify-between items-end h-full px-5 pt-6 pb-2">
-          <div className="relative h-1/6 w-1 bg-blue-500"></div>
-          <div className="relative h-1/5 w-1 bg-blue-500"></div>
-          <div className="relative h-1/4 w-1 bg-blue-500"></div>
-          <div className="relative h-1/3 w-1 bg-blue-500"></div>
-          <div className="relative h-4/5 w-1 bg-blue-500"></div>
-          <div className="relative h-1/2 w-1 bg-blue-500"></div>
-        </div>
-        
-        <div className="flex justify-between px-3 text-xs text-zinc-500 mt-1">
-          <span>1am</span>
-          <span>5am</span>
-          <span>9am</span>
-          <span>1pm</span>
-          <span>5pm</span>
-          <span></span>
-        </div>
-      </div>
 
       {/* Metrics Section */}
-      <div className="mb-3 flex justify-between items-center">
-        <h2 className="text-xl font-bold text-white">Metrics</h2>
-        <div className="bg-zinc-800 px-3 py-1 rounded-full text-sm text-zinc-300">
+      <div className="mb-6 flex justify-between items-center">
+        <h2 className="text-xl md:text-2xl font-bold text-white">Metrics</h2>
+        <div className="bg-zinc-800 px-3 py-1 rounded-full text-sm md:text-base text-zinc-300">
           vs. Prior {dateRange === 'today' ? 'Day' : 'Period'}
         </div>
       </div>
 
-      {/* Metric Items */}
-      <div className="space-y-5">
+      {/* Metric Items - Grid for desktop, stack for mobile */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8">
         {/* Net Sales Item */}
-        <div className="flex justify-between py-3 border-b border-zinc-800">
-          <span className="text-white">Net sales</span>
-          <div className="flex items-center">
-            <span className="text-white mr-3">{formatCurrency(data?.totalRevenue || 0)}</span>
-            <div 
-              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
-                isPositiveChange(data?.revenueChange || 0)
-                  ? "bg-green-900/30 text-green-400"
-                  : "bg-red-900/30 text-red-400"
-              }`}
-            >
-              {isPositiveChange(data?.revenueChange || 0) ? (
-                <ChevronUp className="mr-0.5 h-3 w-3" />
-              ) : (
-                <ChevronDown className="mr-0.5 h-3 w-3" />
-              )}
-              {formatPercentage(Math.abs(data?.revenueChange || 0))}
-            </div>
+        <div className="bg-zinc-900/50 rounded-xl p-4 md:p-6">
+          <div className="text-zinc-500 text-sm md:text-base mb-2">Net sales</div>
+          <div className="text-white text-xl md:text-2xl font-bold mb-2">{formatCurrency(data?.totalRevenue || 0)}</div>
+          <div 
+            className={`inline-flex px-2 py-1 rounded text-xs font-semibold items-center ${
+              isPositiveChange(data?.revenueChange || 0)
+                ? "bg-green-900/30 text-green-400"
+                : "bg-red-900/30 text-red-400"
+            }`}
+          >
+            {isPositiveChange(data?.revenueChange || 0) ? (
+              <ChevronUp className="mr-0.5 h-3 w-3" />
+            ) : (
+              <ChevronDown className="mr-0.5 h-3 w-3" />
+            )}
+            {formatPercentage(Math.abs(data?.revenueChange || 0))}
           </div>
         </div>
 
         {/* Gross Sales Item */}
-        <div className="flex justify-between py-3 border-b border-zinc-800">
-          <span className="text-white">Gross sales</span>
-          <div className="flex items-center">
-            <span className="text-white mr-3">{formatCurrency(data?.totalRevenue || 0)}</span>
-            <div 
-              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
-                isPositiveChange(data?.revenueChange || 0)
-                  ? "bg-green-900/30 text-green-400"
-                  : "bg-red-900/30 text-red-400"
-              }`}
-            >
-              {isPositiveChange(data?.revenueChange || 0) ? (
-                <ChevronUp className="mr-0.5 h-3 w-3" />
-              ) : (
-                <ChevronDown className="mr-0.5 h-3 w-3" />
-              )}
-              {formatPercentage(Math.abs(data?.revenueChange || 0))}
-            </div>
+        <div className="bg-zinc-900/50 rounded-xl p-4 md:p-6">
+          <div className="text-zinc-500 text-sm md:text-base mb-2">Gross sales</div>
+          <div className="text-white text-xl md:text-2xl font-bold mb-2">{formatCurrency(data?.totalRevenue || 0)}</div>
+          <div 
+            className={`inline-flex px-2 py-1 rounded text-xs font-semibold items-center ${
+              isPositiveChange(data?.revenueChange || 0)
+                ? "bg-green-900/30 text-green-400"
+                : "bg-red-900/30 text-red-400"
+            }`}
+          >
+            {isPositiveChange(data?.revenueChange || 0) ? (
+              <ChevronUp className="mr-0.5 h-3 w-3" />
+            ) : (
+              <ChevronDown className="mr-0.5 h-3 w-3" />
+            )}
+            {formatPercentage(Math.abs(data?.revenueChange || 0))}
           </div>
         </div>
 
         {/* Transactions Item */}
-        <div className="flex justify-between py-3 border-b border-zinc-800">
-          <span className="text-white">Transactions</span>
-          <div className="flex items-center">
-            <span className="text-white mr-3">{data?.totalOrders || 0}</span>
-            <div 
-              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
-                isPositiveChange(data?.ordersChange || 0)
-                  ? "bg-green-900/30 text-green-400"
-                  : "bg-red-900/30 text-red-400"
-              }`}
-            >
-              {isPositiveChange(data?.ordersChange || 0) ? (
-                <ChevronUp className="mr-0.5 h-3 w-3" />
-              ) : (
-                <ChevronDown className="mr-0.5 h-3 w-3" />
-              )}
-              {formatPercentage(Math.abs(data?.ordersChange || 0))}
-            </div>
+        <div className="bg-zinc-900/50 rounded-xl p-4 md:p-6">
+          <div className="text-zinc-500 text-sm md:text-base mb-2">Transactions</div>
+          <div className="text-white text-xl md:text-2xl font-bold mb-2">{data?.totalOrders || 0}</div>
+          <div 
+            className={`inline-flex px-2 py-1 rounded text-xs font-semibold items-center ${
+              isPositiveChange(data?.ordersChange || 0)
+                ? "bg-green-900/30 text-green-400"
+                : "bg-red-900/30 text-red-400"
+            }`}
+          >
+            {isPositiveChange(data?.ordersChange || 0) ? (
+              <ChevronUp className="mr-0.5 h-3 w-3" />
+            ) : (
+              <ChevronDown className="mr-0.5 h-3 w-3" />
+            )}
+            {formatPercentage(Math.abs(data?.ordersChange || 0))}
           </div>
         </div>
       </div>
