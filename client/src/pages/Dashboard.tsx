@@ -111,6 +111,8 @@ export default function Dashboard() {
         open={timeframeModalOpen}
         onOpenChange={setTimeframeModalOpen}
         dateRange={dateRange}
+        customStartDate={customStartDate}
+        customEndDate={customEndDate}
         onDateRangeChange={handleDateRangeChange}
       />
     </div>
