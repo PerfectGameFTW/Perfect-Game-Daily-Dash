@@ -1035,6 +1035,10 @@ let isSyncRunning = false;
       // Check if a sync is already running
       if (isSyncRunning) {
         console.log("Sync already in progress. Skipping Feb 25 sync request.");
+        // Get current sync state from database for response
+        const paymentsSyncState = await pgStorage.getSyncState('payments');
+        const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
+        
         return res.status(409).json({ 
           success: false, 
           error: "A sync is already in progress. Please try again later.",
@@ -1042,16 +1046,27 @@ let isSyncRunning = false;
         });
       }
       
-      // Set the lock and initialize progress
+      // Set the lock to prevent concurrent syncs
       isSyncRunning = true;
-      syncProgress = {
-        stage: 'fetching',
-        totalItems: 0,
-        processedItems: 0,
-        startTime: new Date(),
-        estimatedEndTime: null,
-        error: null
+      
+      // Create a special Feb25 sync state record
+      const feb25SyncState: InsertSyncState = {
+        syncType: 'feb25',
+        lastSyncedAt: new Date(),
+        processedCount: 0,
+        totalCount: 0,
+        isComplete: false,
+        status: 'in_progress',
+        lastCheckpoint: null
       };
+      
+      // Get or create the feb25 sync state
+      let syncState = await pgStorage.getSyncState('feb25');
+      if (syncState) {
+        syncState = await pgStorage.updateSyncState(syncState.id, feb25SyncState);
+      } else {
+        syncState = await pgStorage.createSyncState(feb25SyncState);
+      }
       
       console.log("Starting specialized sync for February 25, 2025...");
       
@@ -1190,14 +1205,22 @@ let isSyncRunning = false;
       
       console.log(`Feb 25 sync complete. Replaced with ${addedCount} transactions with total amount $${totalAmount.toFixed(2)}`);
       
-      // Update last sync time and release the lock
-      lastSyncTime = new Date();
+      // Update sync state as complete
+      await pgStorage.updateSyncState(syncState.id, {
+        processedCount: payments.length,
+        totalCount: payments.length,
+        isComplete: true,
+        status: 'completed',
+        lastSyncedAt: new Date()
+      });
+      
+      // Release the lock
       isSyncRunning = false;
       
       res.json({
         success: true,
         message: "Feb 25 sync completed successfully",
-        lastSyncTime: lastSyncTime.toISOString(),
+        lastSyncTime: new Date().toISOString(),
         stats: {
           totalTransactions: payments.length,
           totalAmount: totalAmount,
@@ -1208,23 +1231,68 @@ let isSyncRunning = false;
     } catch (error) {
       console.error("Error syncing February 25 data:", error);
       
+      // Update sync state with error in database
+      try {
+        if (syncState) {
+          await pgStorage.updateSyncState(syncState.id, {
+            status: 'error',
+            errorMessage: error instanceof Error ? error.message : "Unknown error",
+            lastSyncedAt: new Date()
+          });
+        }
+      } catch (dbError) {
+        console.error("Failed to update error state in database:", dbError);
+      }
+      
       // Release the lock even if there's an error
       isSyncRunning = false;
       
       res.status(500).json({ 
         success: false,
-        error: "Failed to sync February 25 data" 
+        error: "Failed to sync February 25 data",
+        details: error instanceof Error ? error.message : "Unknown error"
       });
     }
   });
 
-  // Add a status endpoint to check the sync progress
-  apiRouter.get("/sync-status", (req, res) => {
-    res.json({
-      isRunning: isSyncRunning,
-      lastSyncTime: lastSyncTime.toISOString(),
-      progress: syncProgress
-    });
+  // Add a status endpoint to check the sync progress from the database
+  apiRouter.get("/sync-status", async (req, res) => {
+    try {
+      // Get payment and gift card sync states from database
+      const paymentsSyncState = await pgStorage.getSyncState('payments');
+      const giftCardsSyncState = await pgStorage.getSyncState('giftCards');
+      
+      // Calculate overall progress
+      const progress = await pgStorage.getSyncProgress();
+      
+      // Get the most recent sync time
+      const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
+      
+      // Construct a response with the current sync state
+      res.json({
+        isRunning: isSyncRunning,
+        lastSyncTime: lastSyncTime.toISOString(),
+        progress: {
+          payments: {
+            processedCount: paymentsSyncState?.processedCount || 0,
+            totalCount: paymentsSyncState?.totalCount || 0, 
+            percent: progress.payments,
+            status: paymentsSyncState?.status || 'not_started',
+            isComplete: paymentsSyncState?.isComplete || false
+          },
+          giftCards: {
+            processedCount: giftCardsSyncState?.processedCount || 0,
+            totalCount: giftCardsSyncState?.totalCount || 0,
+            percent: progress.giftCards,
+            status: giftCardsSyncState?.status || 'not_started',
+            isComplete: giftCardsSyncState?.isComplete || false
+          }
+        }
+      });
+    } catch (error) {
+      console.error("Error getting sync status:", error);
+      res.status(500).json({ error: "Failed to get sync status" });
+    }
   });
 
   // Mount the API router
