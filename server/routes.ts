@@ -345,9 +345,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Global lock for sync process
+  // Global variables for sync process
 let isSyncRunning = false;
 let lastSyncTime = new Date(0); // Initialize with epoch time
+let syncProgress = {
+  stage: 'idle', // 'idle', 'fetching', 'processing', 'gift-cards', 'complete'
+  totalItems: 0,
+  processedItems: 0,
+  startTime: new Date(0),
+  estimatedEndTime: null as Date | null,
+  error: null as string | null
+};
 
 // Sync route to pull data from Square into our database
   apiRouter.post("/sync", async (req, res) => {
@@ -362,8 +370,16 @@ let lastSyncTime = new Date(0); // Initialize with epoch time
         });
       }
       
-      // Set the lock
+      // Set the lock and initialize progress
       isSyncRunning = true;
+      syncProgress = {
+        stage: 'fetching',
+        totalItems: 0,
+        processedItems: 0,
+        startTime: new Date(),
+        estimatedEndTime: null,
+        error: null
+      };
       
       console.log("Starting sync with Square API...");
       const results = {
@@ -407,14 +423,26 @@ let lastSyncTime = new Date(0); // Initialize with epoch time
       const payments = await squareClient.fetchPayments(startDate, endDate);
       console.log(`Fetched ${payments.length} total payments from Square for date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       
+      // Update progress to processing stage
+      syncProgress.stage = 'processing';
+      syncProgress.totalItems = payments.length;
+      syncProgress.processedItems = 0;
+      
       // Process each payment and save to database
       let processedCount = 0;
       let existingCount = 0;
       
       for (const payment of payments) {
         processedCount++;
+        // Update progress every 50 records
         if (processedCount % 50 === 0) {
           console.log(`Processing payment ${processedCount} of ${payments.length}...`);
+          syncProgress.processedItems = processedCount;
+          
+          // Calculate estimated end time based on progress
+          const elapsedMs = new Date().getTime() - syncProgress.startTime.getTime();
+          const estimatedTotalMs = (elapsedMs / processedCount) * payments.length;
+          syncProgress.estimatedEndTime = new Date(syncProgress.startTime.getTime() + estimatedTotalMs);
         }
         
         // Check if we already have this transaction
@@ -431,12 +459,28 @@ let lastSyncTime = new Date(0); // Initialize with epoch time
       
       console.log(`Processed ${processedCount} payments, ${existingCount} already existed, added ${results.transactions} new transactions`);
       
+      // Update progress to gift card stage
+      syncProgress.stage = 'gift-cards';
+      syncProgress.processedItems = payments.length;
+      
       // Fetch ALL gift cards from Square (with pagination)
       const giftCards = await squareClient.fetchGiftCards();
       console.log(`Fetched ${giftCards.length} total gift cards from Square`);
       
+      // Update progress for gift cards
+      syncProgress.totalItems = payments.length + giftCards.length;
+      
       // Process each gift card and save to database
+      let giftCardCount = 0;
       for (const giftCard of giftCards) {
+        giftCardCount++;
+        
+        // Update progress every 10 gift cards
+        if (giftCardCount % 10 === 0) {
+          console.log(`Processing gift card ${giftCardCount} of ${giftCards.length}...`);
+          syncProgress.processedItems = payments.length + giftCardCount;
+        }
+        
         // Check if we already have this gift card
         const existing = await pgStorage.getGiftCardBySquareId(giftCard.id);
         if (!existing) {
@@ -448,6 +492,10 @@ let lastSyncTime = new Date(0); // Initialize with epoch time
       }
       
       console.log(`Sync complete. Added ${results.transactions} new transactions and ${results.giftCards} new gift cards.`);
+      
+      // Mark sync as complete
+      syncProgress.stage = 'complete';
+      syncProgress.processedItems = syncProgress.totalItems;
       
       // Update last sync time and release the lock
       lastSyncTime = new Date();
@@ -467,12 +515,16 @@ let lastSyncTime = new Date(0); // Initialize with epoch time
     } catch (error) {
       console.error("Error syncing with Square:", error);
       
+      // Update progress with error
+      syncProgress.error = error instanceof Error ? error.message : "Unknown error";
+      
       // Release the lock even if there's an error
       isSyncRunning = false;
       
       res.status(500).json({ 
         success: false,
-        error: "Failed to sync with Square" 
+        error: "Failed to sync with Square",
+        details: syncProgress.error
       });
     }
   });
@@ -490,8 +542,16 @@ let lastSyncTime = new Date(0); // Initialize with epoch time
         });
       }
       
-      // Set the lock
+      // Set the lock and initialize progress
       isSyncRunning = true;
+      syncProgress = {
+        stage: 'fetching',
+        totalItems: 0,
+        processedItems: 0,
+        startTime: new Date(),
+        estimatedEndTime: null,
+        error: null
+      };
       
       console.log("Starting specialized sync for February 25, 2025...");
       
@@ -614,6 +674,15 @@ let lastSyncTime = new Date(0); // Initialize with epoch time
         error: "Failed to sync February 25 data" 
       });
     }
+  });
+
+  // Add a status endpoint to check the sync progress
+  apiRouter.get("/sync-status", (req, res) => {
+    res.json({
+      isRunning: isSyncRunning,
+      lastSyncTime: lastSyncTime.toISOString(),
+      progress: syncProgress
+    });
   });
 
   // Mount the API router
