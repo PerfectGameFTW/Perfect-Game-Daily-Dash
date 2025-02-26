@@ -1258,45 +1258,8 @@ let isSyncRunning = false;
     }
   });
 
-  // Add a status endpoint to check the sync progress from the database
-  apiRouter.get("/sync-status", async (req, res) => {
-    try {
-      // Get payment and gift card sync states from database
-      const paymentsSyncState = await pgStorage.getSyncState('payments');
-      const giftCardsSyncState = await pgStorage.getSyncState('giftCards');
-      
-      // Calculate overall progress
-      const progress = await pgStorage.getSyncProgress();
-      
-      // Get the most recent sync time
-      const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
-      
-      // Construct a response with the current sync state
-      res.json({
-        isRunning: isSyncRunning,
-        lastSyncTime: lastSyncTime.toISOString(),
-        progress: {
-          payments: {
-            processedCount: paymentsSyncState?.processedCount || 0,
-            totalCount: paymentsSyncState?.totalCount || 0, 
-            percent: progress.payments,
-            status: paymentsSyncState?.status || 'not_started',
-            isComplete: paymentsSyncState?.isComplete || false
-          },
-          giftCards: {
-            processedCount: giftCardsSyncState?.processedCount || 0,
-            totalCount: giftCardsSyncState?.totalCount || 0,
-            percent: progress.giftCards,
-            status: giftCardsSyncState?.status || 'not_started',
-            isComplete: giftCardsSyncState?.isComplete || false
-          }
-        }
-      });
-    } catch (error) {
-      console.error("Error getting sync status:", error);
-      res.status(500).json({ error: "Failed to get sync status" });
-    }
-  });
+  // Status endpoint for sync progress has been removed as the UI does not need it
+  // Database-backed checkpoint system continues to track sync state internally
 
   // Mount the API router
   app.use("/api", apiRouter);
