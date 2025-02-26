@@ -184,8 +184,24 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   // Determine category based on payment information
   let category: Category = 'retail'; // Default
   
-  // If there's order data, try to determine a more specific category
-  if (payment.orderId) {
+  // Add more sophisticated gift card detection
+  // Check if this is a gift card transaction based on available data
+  const paymentData = JSON.stringify(payment).toLowerCase();
+  const isGiftCard = 
+    // Check Square payment data for gift card indicators
+    paymentData.includes('gift card') || 
+    paymentData.includes('giftcard') || 
+    (payment.note && payment.note.toLowerCase().includes('gift')) ||
+    // Check for specific Square gift card identifiers
+    (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD') ||
+    (payment.sourceType && payment.sourceType === 'GIFT_CARD');
+  
+  if (isGiftCard) {
+    category = 'giftCard';
+    console.log(`Identified gift card transaction: ${payment.id}`);
+  } 
+  // If it's not identified as a gift card, use the existing category logic
+  else if (payment.orderId) {
     // This is a simplification - in real implementation, 
     // you would fetch the order details and analyze line items
     category = payment.orderName ? mapSquareCategory(payment.orderName) : 'retail';
