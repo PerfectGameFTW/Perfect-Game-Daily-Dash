@@ -1,8 +1,9 @@
-import { ChevronLeft, ChevronRight, Calendar } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, RotateCw } from "lucide-react";
 import { DateRange } from "@shared/schema";
 import { format, isSameDay, subDays } from "date-fns";
 import { navigateDate, getFormattedDate } from "@/lib/dateUtils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 
 interface HeaderProps {
   dateRange: DateRange;
@@ -10,6 +11,8 @@ interface HeaderProps {
   customEndDate?: Date;
   onDateRangeChange: (range: DateRange, start?: Date, end?: Date) => void;
   onOpenTimeframeModal: () => void;
+  onSync?: () => void;
+  isSyncing?: boolean;
 }
 
 export default function Header({ 
@@ -17,7 +20,9 @@ export default function Header({
   customStartDate, 
   customEndDate, 
   onDateRangeChange,
-  onOpenTimeframeModal
+  onOpenTimeframeModal,
+  onSync,
+  isSyncing = false
 }: HeaderProps) {
   // Format the current display date 
   const today = new Date();
@@ -108,6 +113,29 @@ export default function Header({
         <div className="flex items-center">
           <h1 className="text-2xl font-bold text-white">Perfect Game</h1>
         </div>
+        {onSync && (
+          <div className="flex items-center">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={onSync}
+                    disabled={isSyncing}
+                    className="gap-2"
+                  >
+                    <RotateCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isSyncing ? 'Syncing...' : 'Sync Data'}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>Manually sync data from Square API</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        )}
       </div>
       
       <div className="flex justify-center items-center py-3 mt-2">

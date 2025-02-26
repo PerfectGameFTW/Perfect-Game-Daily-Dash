@@ -118,26 +118,27 @@ export default function Dashboard() {
     }
   };
 
-  // Initial sync when dashboard loads - only run once
-  useEffect(() => {
-    // Only run sync when the component first mounts
-    const initialSync = async () => {
-      await handleSync();
-    };
-    
-    initialSync();
-    // Empty dependency array ensures this only runs once on mount
-  }, []);
+  // Initial sync is disabled to prevent automatic data loading
+  // This was previously set to run automatically on dashboard load
+  // useEffect(() => {
+  //   const initialSync = async () => {
+  //     await handleSync();
+  //   };
+  //   
+  //   initialSync();
+  // }, []);
 
   return (
     <div className="flex flex-col min-h-screen w-full bg-background text-foreground pb-16 md:pb-0">
-      {/* Header */}
+      {/* Header with manual sync button */}
       <Header 
         dateRange={dateRange}
         customStartDate={customStartDate}
         customEndDate={customEndDate}
         onDateRangeChange={handleDateRangeChange}
         onOpenTimeframeModal={() => setTimeframeModalOpen(true)}
+        onSync={handleSync}
+        isSyncing={isSyncing}
       />
 
       {/* Dashboard Content */}
