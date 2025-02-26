@@ -11,7 +11,6 @@ import { DateRange } from "@shared/schema";
 import { formatCurrency } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import Chart from "chart.js/auto";
-import { isFeb25Case, FEB_25_GIFT_CARD_DATA } from "@/lib/specialCases";
 
 interface GiftCardActivityProps {
   dateRange: DateRange;
@@ -27,24 +26,11 @@ export default function GiftCardActivity({
   const chartRef = useRef<HTMLCanvasElement>(null);
   const chartInstance = useRef<Chart | null>(null);
 
-  // Normal API data fetching
-  const { data: apiData, isLoading } = useQuery({
+  // API data fetching
+  const { data, isLoading } = useQuery({
     queryKey: ['/api/gift-card-summary', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchGiftCardSummary(dateRange, customStartDate, customEndDate),
   });
-  
-  // Check if this is our special Feb 25 case
-  const isSpecialFeb25Case = isFeb25Case(dateRange);
-  
-  // Use either the special data or the API data
-  const data = isSpecialFeb25Case ? FEB_25_GIFT_CARD_DATA : apiData;
-  
-  // Log when special case is activated
-  useEffect(() => {
-    if (isSpecialFeb25Case) {
-      console.log('🎉 USING SPECIAL CASE: Feb 25, 2025 gift card data override is active!');
-    }
-  }, [isSpecialFeb25Case]);
 
   useEffect(() => {
     // Cleanup previous chart
