@@ -1,10 +1,9 @@
-import { useState, useEffect } from "react";
+import * as React from "react";
+const { useState, useEffect } = React;
 import Header from "@/components/dashboard/Header";
 import StatsSummary from "@/components/dashboard/StatsSummary";
 import BottomNavigation from "@/components/dashboard/BottomNavigation";
 import TimeframeModal from "@/components/dashboard/TimeframeModal";
-import RevenueByCategoryChart from "@/components/dashboard/RevenueByCategoryChart";
-import HourlyRevenueChart from "@/components/dashboard/HourlyRevenueChart";
 import RecentTransactionsTable from "@/components/dashboard/RecentTransactionsTable";
 import GiftCardActivity from "@/components/dashboard/GiftCardActivity";
 import { DateRange } from "@shared/schema";
@@ -13,7 +12,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import useMobile from "@/hooks/use-mobile";
 import { ArrowUpRight, CalendarDays, LayoutGrid, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 
 export default function Dashboard() {
@@ -137,13 +135,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Hourly Revenue Chart - Only chart above Metrics */}
-        <HourlyRevenueChart 
-          dateRange={dateRange}
-          customStartDate={customStartDate}
-          customEndDate={customEndDate}
-        />
-        
         {/* Stats Overview */}
         <StatsSummary 
           dateRange={dateRange} 
