@@ -13,7 +13,10 @@ const squareClient = new SquareClient({
   token: process.env.SQUARE_ACCESS_TOKEN || '',
   environment: process.env.NODE_ENV === 'production' 
     ? 'production' 
-    : 'sandbox'
+    : 'sandbox',
+  baseUrl: process.env.NODE_ENV === 'production'
+    ? 'https://connect.squareup.com'
+    : 'https://connect.squareupsandbox.com'
 });
 
 // Map Square payment status to our TransactionStatus
@@ -81,7 +84,9 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
       }
     });
     
-    return response.orders || [];
+    // Extract orders from the SearchOrdersResponse
+    const orders = response.orders || [];
+    return orders;
   } catch (error) {
     console.error('Error fetching orders from Square:', error);
     return [];
@@ -107,7 +112,12 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       limit: 100
     });
     
-    return response.payments || [];
+    // In the new SDK, list() returns a Page object - we need to extract data from it
+    const payments = [];
+    for await (const payment of response) {
+      payments.push(payment);
+    }
+    return payments;
   } catch (error) {
     console.error('Error fetching payments from Square:', error);
     return [];
@@ -165,7 +175,13 @@ export async function fetchGiftCards(): Promise<any[]> {
     const response = await squareClient.giftCards.list({
       type: 'DIGITAL' // You can change this based on your requirements
     });
-    return response.giftCards || [];
+    
+    // In the new SDK, list() returns a Page object - we need to extract data from it
+    const giftCards = [];
+    for await (const giftCard of response) {
+      giftCards.push(giftCard);
+    }
+    return giftCards;
   } catch (error) {
     console.error('Error fetching gift cards from Square:', error);
     return [];
