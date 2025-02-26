@@ -1,10 +1,16 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { pgStorage, db } from "./pgStorage";
-import { dateRangeSchema, InsertTransaction, InsertGiftCard, transactions } from "@shared/schema";
+import { 
+  dateRangeSchema, 
+  InsertTransaction, 
+  InsertGiftCard, 
+  InsertSyncState,
+  transactions 
+} from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
-import { and, gte, lte, sql } from "drizzle-orm";
+import { and, gte, lte, sql, eq } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Test route for gift card detection
