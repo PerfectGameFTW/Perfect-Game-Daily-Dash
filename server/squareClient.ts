@@ -116,13 +116,15 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       console.log(`Fetching payments page ${pageCount}${cursor ? ' with cursor' : ''}`);
       
       // Use date range with listPayments - Square API v29 requires specific parameters
+      // For Square API v29, the correct parameters are:
+      // beginTime, endTime, sortOrder, cursor, locationId, total (in this order)
       const response = await squareClient.paymentsApi.listPayments(
-        beginTime,
-        endTime,
-        cursor,             // Use cursor for pagination
+        beginTime,          // beginTime
+        endTime,            // endTime
+        'DESC',             // sortOrder - must be 'ASC' or 'DESC'
+        cursor,             // cursor for pagination
         undefined,          // locationId - we use all available locations
-        undefined,          // total
-        undefined           // sort order
+        undefined           // total
       );
       
       // Extract payments from the response
@@ -320,11 +322,14 @@ export async function fetchGiftCards(): Promise<any[]> {
       console.log(`Fetching gift cards page ${pageCount}${cursor ? ' with cursor' : ''}`);
       
       // For v29.0.0, use the giftCardsApi with pagination
-      // The cursor parameter should be a string or undefined, not a number
+      // According to the Square API SDK:
+      // listGiftCards(type?: string, state?: string, limit?: number, cursor?: string, customerId?: string)
       const response = await squareClient.giftCardsApi.listGiftCards(
         undefined,  // type 
         undefined,  // state
-        cursor      // cursor - TypeScript should understand this is string | undefined
+        100,        // limit - use a reasonable limit
+        cursor,     // cursor
+        undefined   // customerId
       );
       
       // Extract gift cards from the response
