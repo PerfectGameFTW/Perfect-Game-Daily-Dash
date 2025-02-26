@@ -104,20 +104,45 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     
     console.log(`Fetching payments from ${beginTime} to ${endTime}`);
     
-    // Use date range with listPayments - Square API v29 requires specific parameters
-    const response = await squareClient.paymentsApi.listPayments(
-      beginTime,
-      endTime,
-      undefined, // cursor
-      undefined, // locationId - we use all available locations
-      undefined, // total
-      undefined  // sort order
-    );
+    // Implement pagination to get ALL payments
+    let allPayments: any[] = [];
+    let cursor: string | undefined = undefined;
+    let hasMorePages = true;
+    let pageCount = 0;
     
-    // Extract payments from the response
-    const payments = response.result.payments || [];
-    console.log(`Fetched ${payments.length} payments from Square for date range ${beginTime} to ${endTime}`);
-    return payments;
+    // Loop until we've fetched all pages
+    while (hasMorePages) {
+      pageCount++;
+      console.log(`Fetching payments page ${pageCount}${cursor ? ' with cursor' : ''}`);
+      
+      // Use date range with listPayments - Square API v29 requires specific parameters
+      const response = await squareClient.paymentsApi.listPayments(
+        beginTime,
+        endTime,
+        cursor,             // Use cursor for pagination
+        undefined,          // locationId - we use all available locations
+        undefined,          // total
+        undefined           // sort order
+      );
+      
+      // Extract payments from the response
+      const payments = response.result.payments || [];
+      allPayments = [...allPayments, ...payments];
+      
+      // Check if there are more pages
+      cursor = response.result.cursor;
+      hasMorePages = !!cursor;
+      
+      console.log(`Fetched ${payments.length} payments on page ${pageCount}. Total so far: ${allPayments.length}`);
+      
+      // Add a small delay to avoid rate limiting
+      if (hasMorePages) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    console.log(`Completed fetching ${allPayments.length} total payments from Square for date range ${beginTime} to ${endTime}`);
+    return allPayments;
   } catch (error) {
     console.error('Error fetching payments from Square:', error);
     // Log the detailed error if it's an object
@@ -283,13 +308,38 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
 // Fetch gift cards from Square API
 export async function fetchGiftCards(): Promise<any[]> {
   try {
-    // For v29.0.0, use the giftCardsApi
-    const response = await squareClient.giftCardsApi.listGiftCards();
+    // Implement pagination to get ALL gift cards
+    let allGiftCards: any[] = [];
+    let cursor: string | undefined = undefined;
+    let hasMorePages = true;
+    let pageCount = 0;
     
-    // Extract gift cards from the response
-    const giftCards = response.result.giftCards || [];
-    console.log(`Fetched ${giftCards.length} gift cards from Square`);
-    return giftCards;
+    // Loop until we've fetched all pages
+    while (hasMorePages) {
+      pageCount++;
+      console.log(`Fetching gift cards page ${pageCount}${cursor ? ' with cursor' : ''}`);
+      
+      // For v29.0.0, use the giftCardsApi with pagination
+      const response = await squareClient.giftCardsApi.listGiftCards(undefined, undefined, cursor as string | undefined);
+      
+      // Extract gift cards from the response
+      const giftCards = response.result.giftCards || [];
+      allGiftCards = [...allGiftCards, ...giftCards];
+      
+      // Check if there are more pages
+      cursor = response.result.cursor;
+      hasMorePages = !!cursor;
+      
+      console.log(`Fetched ${giftCards.length} gift cards on page ${pageCount}. Total so far: ${allGiftCards.length}`);
+      
+      // Add a small delay to avoid rate limiting
+      if (hasMorePages) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    console.log(`Completed fetching ${allGiftCards.length} total gift cards from Square`);
+    return allGiftCards;
   } catch (error) {
     console.error('Error fetching gift cards from Square:', error);
     // Log the detailed error if it's an object

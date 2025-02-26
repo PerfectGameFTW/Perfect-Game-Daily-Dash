@@ -23,7 +23,7 @@ const pool = new Pool({
 });
 
 // Initialize Drizzle
-const db = drizzle(pool);
+export const db = drizzle(pool);
 
 export class PgStorage implements IStorage {
   // User methods

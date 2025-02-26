@@ -1,9 +1,10 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
-import { pgStorage } from "./pgStorage";
-import { dateRangeSchema, InsertTransaction, InsertGiftCard } from "@shared/schema";
+import { pgStorage, db } from "./pgStorage";
+import { dateRangeSchema, InsertTransaction, InsertGiftCard, transactions } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
+import { and, gte, lte } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Create API router for all endpoints
@@ -330,20 +331,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.query.startDate && req.query.endDate) {
         startDate = new Date(req.query.startDate as string);
         endDate = new Date(req.query.endDate as string);
+        console.log(`Using provided date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       } else {
         // Default to last 90 days if no dates specified
         const now = new Date();
         startDate = new Date(now);
         startDate.setDate(startDate.getDate() - 90);
         endDate = now;
+        console.log(`Using default 90-day time window: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       }
       
-      // Fetch payments from Square with date range
+      // Fetch ALL payments from Square with date range (with pagination)
       const payments = await squareClient.fetchPayments(startDate, endDate);
-      console.log(`Fetched ${payments.length} payments from Square for date range ${startDate.toISOString()} to ${endDate.toISOString()}`);
+      console.log(`Fetched ${payments.length} total payments from Square for date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       
       // Process each payment and save to database
+      let processedCount = 0;
+      let existingCount = 0;
+      
       for (const payment of payments) {
+        processedCount++;
+        if (processedCount % 50 === 0) {
+          console.log(`Processing payment ${processedCount} of ${payments.length}...`);
+        }
+        
         // Check if we already have this transaction
         const existing = await pgStorage.getTransactionBySquareId(payment.id);
         if (!existing) {
@@ -351,12 +362,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const transaction = squareClient.convertSquarePaymentToTransaction(payment);
           await pgStorage.createTransaction(transaction);
           results.transactions++;
+        } else {
+          existingCount++;
         }
       }
       
-      // Fetch gift cards from Square
+      console.log(`Processed ${processedCount} payments, ${existingCount} already existed, added ${results.transactions} new transactions`);
+      
+      // Fetch ALL gift cards from Square (with pagination)
       const giftCards = await squareClient.fetchGiftCards();
-      console.log(`Fetched ${giftCards.length} gift cards from Square`);
+      console.log(`Fetched ${giftCards.length} total gift cards from Square`);
       
       // Process each gift card and save to database
       for (const giftCard of giftCards) {
@@ -370,17 +385,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      console.log(`Sync complete. Added ${results.transactions} transactions and ${results.giftCards} gift cards.`);
+      console.log(`Sync complete. Added ${results.transactions} new transactions and ${results.giftCards} new gift cards.`);
       res.json({
         success: true,
         message: "Sync completed successfully",
-        results
+        results,
+        timeWindow: {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          totalDays: Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+        }
       });
     } catch (error) {
       console.error("Error syncing with Square:", error);
       res.status(500).json({ 
         success: false,
         error: "Failed to sync with Square" 
+      });
+    }
+  });
+  
+  // Special route to sync data specifically for February 25, 2025
+  apiRouter.post("/sync-feb25", async (req, res) => {
+    try {
+      console.log("Starting specialized sync for February 25, 2025...");
+      
+      // Check Square API connection status
+      const accessToken = process.env.SQUARE_ACCESS_TOKEN;
+      const locationId = process.env.SQUARE_LOCATION_ID;
+      
+      if (!accessToken || !locationId) {
+        console.error("Square API credentials are missing. Check environment variables.");
+        return res.status(500).json({ 
+          success: false,
+          error: "Square API credentials are missing." 
+        });
+      }
+      
+      console.log("Using Square API with Location ID:", locationId);
+      
+      // Create specific date range for Feb 25, 2025 (from 00:00:00 to 23:59:59)
+      const startDate = new Date('2025-02-25T00:00:00.000Z');
+      const endDate = new Date('2025-02-25T23:59:59.999Z');
+      
+      console.log(`Syncing data for Feb 25, 2025: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+      
+      // Fetch ALL payments for Feb 25, 2025 (with pagination)
+      const payments = await squareClient.fetchPayments(startDate, endDate);
+      console.log(`Fetched ${payments.length} total payments for Feb 25, 2025`);
+      
+      // Calculate total amount
+      const totalAmount = payments.reduce((sum, payment) => {
+        const amountMoney = payment.amountMoney;
+        let amount = 0;
+        
+        if (amountMoney && amountMoney.amount !== undefined) {
+          // Check if it's a BigInt and convert appropriately
+          if (typeof amountMoney.amount === 'bigint') {
+            amount = Number(amountMoney.amount) / 100;
+          } else {
+            // Regular number conversion
+            amount = (Number(amountMoney.amount) || 0) / 100;
+          }
+        }
+        
+        return sum + amount;
+      }, 0);
+      
+      // Count transactions by status
+      const statuses = payments.reduce((acc, payment) => {
+        const status = payment.status || 'unknown';
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      // Process each payment and save to database (first clear existing records)
+      console.log("Clearing existing Feb 25 transactions from database...");
+      
+      // This is a special case where we want to replace all Feb 25 data
+      await db.delete(transactions)
+        .where(
+          and(
+            gte(transactions.timestamp, startDate),
+            lte(transactions.timestamp, endDate)
+          )
+        );
+      
+      console.log("Adding new Feb 25 transactions to database...");
+      let addedCount = 0;
+      
+      for (const payment of payments) {
+        // Convert to our model and save (no need to check for existing as we cleared them)
+        const transaction = squareClient.convertSquarePaymentToTransaction(payment);
+        await pgStorage.createTransaction(transaction);
+        addedCount++;
+        
+        if (addedCount % 20 === 0) {
+          console.log(`Added ${addedCount} of ${payments.length} transactions...`);
+        }
+      }
+      
+      console.log(`Feb 25 sync complete. Replaced with ${addedCount} transactions with total amount $${totalAmount.toFixed(2)}`);
+      
+      res.json({
+        success: true,
+        message: "Feb 25 sync completed successfully",
+        stats: {
+          totalTransactions: payments.length,
+          totalAmount: totalAmount,
+          statuses,
+          date: "February 25, 2025"
+        }
+      });
+    } catch (error) {
+      console.error("Error syncing February 25 data:", error);
+      res.status(500).json({ 
+        success: false,
+        error: "Failed to sync February 25 data" 
       });
     }
   });
