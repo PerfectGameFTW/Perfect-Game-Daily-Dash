@@ -145,3 +145,26 @@ export const insertUserSchema = createInsertSchema(users).pick({
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+// Sync state table to track Square data synchronization progress
+export const syncState = pgTable("sync_state", {
+  id: serial("id").primaryKey(),
+  syncType: text("sync_type").notNull(), // 'payments', 'giftCards', etc.
+  lastSyncedAt: timestamp("last_synced_at").notNull(),
+  currentPage: integer("current_page").default(1),
+  totalPages: integer("total_pages").default(0),
+  processedCount: integer("processed_count").default(0),
+  totalCount: integer("total_count").default(0),
+  cursor: text("cursor").default(''),
+  isComplete: boolean("is_complete").default(false),
+  status: text("status").default('pending'),
+  errorMessage: text("error_message"),
+  lastCheckpoint: jsonb("last_checkpoint"),
+});
+
+export const insertSyncStateSchema = createInsertSchema(syncState).omit({
+  id: true
+});
+
+export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
+export type SyncState = typeof syncState.$inferSelect;

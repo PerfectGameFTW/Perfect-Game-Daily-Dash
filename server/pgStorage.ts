@@ -3,9 +3,10 @@ import {
   GiftCard, InsertGiftCard, 
   GiftCardRedemption, InsertGiftCardRedemption,
   User, InsertUser,
+  SyncState, InsertSyncState,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
   DateRange,
-  transactions, giftCards, giftCardRedemptions, users
+  transactions, giftCards, giftCardRedemptions, users, syncState
 } from "@shared/schema";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
 import { IStorage } from "./storage";

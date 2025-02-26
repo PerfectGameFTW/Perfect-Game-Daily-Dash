@@ -3,6 +3,7 @@ import {
   GiftCard, InsertGiftCard, 
   GiftCardRedemption, InsertGiftCardRedemption,
   User, InsertUser,
+  SyncState, InsertSyncState,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
   DateRange
 } from "@shared/schema";
@@ -36,6 +37,12 @@ export interface IStorage {
   getCategoryRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<CategoryRevenue[]>;
   getHourlyRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<HourlyRevenue[]>;
   getGiftCardSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<GiftCardSummary>;
+  
+  // Sync state management methods
+  getSyncState(syncType: string): Promise<SyncState | undefined>;
+  createSyncState(syncState: InsertSyncState): Promise<SyncState>;
+  updateSyncState(id: number, updates: Partial<InsertSyncState>): Promise<SyncState>;
+  getSyncProgress(): Promise<{ payments: number; giftCards: number; }>;
 }
 
 // No MemStorage implementation - we now exclusively use PgStorage for all data storage
