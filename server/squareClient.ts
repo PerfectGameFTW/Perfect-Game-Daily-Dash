@@ -1,4 +1,4 @@
-import { SquareClient } from 'square';
+import { Client, Environment } from 'square';
 import { 
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
@@ -9,14 +9,11 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Initialize Square client
-const squareClient = new SquareClient({
-  token: process.env.SQUARE_ACCESS_TOKEN || '',
+const squareClient = new Client({
+  accessToken: process.env.SQUARE_ACCESS_TOKEN || '',
   environment: process.env.NODE_ENV === 'production' 
-    ? 'production' 
-    : 'sandbox',
-  baseUrl: process.env.NODE_ENV === 'production'
-    ? 'https://connect.squareup.com'
-    : 'https://connect.squareupsandbox.com'
+    ? Environment.Production 
+    : Environment.Sandbox
 });
 
 // Map Square payment status to our TransactionStatus
@@ -62,8 +59,8 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     const startTime = start.toISOString();
     const endTime = end.toISOString();
     
-    // Make API request to Square Orders API
-    const response = await squareClient.orders.search({
+    // Create search request body for v29.0.0
+    const searchRequest = {
       locationIds: [process.env.SQUARE_LOCATION_ID!],
       query: {
         filter: {
@@ -82,10 +79,13 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
           sortOrder: 'DESC'
         }
       }
-    });
+    };
+    
+    // Make API request to Square Orders API
+    const response = await squareClient.ordersApi.searchOrders(searchRequest);
     
     // Extract orders from the SearchOrdersResponse
-    const orders = response.orders || [];
+    const orders = response.result.orders || [];
     return orders;
   } catch (error) {
     console.error('Error fetching orders from Square:', error);
@@ -105,18 +105,17 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     const endTime = end.toISOString();
     
     // Make API request to Square Payments API
-    const response = await squareClient.payments.list({
-      beginTime: startTime,
-      endTime: endTime,
-      locationId: process.env.SQUARE_LOCATION_ID,
-      limit: 100
-    });
+    const response = await squareClient.paymentsApi.listPayments(
+      process.env.SQUARE_LOCATION_ID,
+      startTime,
+      endTime,
+      'ASC',
+      undefined, // cursor
+      100 // limit
+    );
     
-    // In the new SDK, list() returns a Page object - we need to extract data from it
-    const payments = [];
-    for await (const payment of response) {
-      payments.push(payment);
-    }
+    // Extract payments from the response
+    const payments = response.result.payments || [];
     return payments;
   } catch (error) {
     console.error('Error fetching payments from Square:', error);
@@ -172,15 +171,16 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
 // Fetch gift cards from Square API
 export async function fetchGiftCards(): Promise<any[]> {
   try {
-    const response = await squareClient.giftCards.list({
-      type: 'DIGITAL' // You can change this based on your requirements
-    });
+    // For v29.0.0, use the giftCardsApi
+    const response = await squareClient.giftCardsApi.listGiftCards(
+      undefined, // type
+      undefined, // state
+      undefined, // limit
+      undefined  // cursor
+    );
     
-    // In the new SDK, list() returns a Page object - we need to extract data from it
-    const giftCards = [];
-    for await (const giftCard of response) {
-      giftCards.push(giftCard);
-    }
+    // Extract gift cards from the response
+    const giftCards = response.result.giftCards || [];
     return giftCards;
   } catch (error) {
     console.error('Error fetching gift cards from Square:', error);
