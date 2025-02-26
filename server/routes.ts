@@ -722,15 +722,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         date: feb25Start.toLocaleDateString(),
         orderAnalysis: {
           totalOrders: orders.length,
-          giftCardOrders: giftCardOrders.length,
+          giftCardOrderCount: giftCardOrders.length,
           totalGiftCardAmount: totalGiftCardAmount,
-          giftCardOrders: giftCardOrders
+          giftCardOrderDetails: giftCardOrders
         },
         paymentAnalysis: {
           totalPayments: payments.length,
-          giftCardPayments: giftCardPayments.length,
-          totalGiftCardAmount: giftCardPaymentsTotal,
-          giftCardPayments: giftCardPayments
+          giftCardPaymentCount: giftCardPayments.length,
+          totalGiftCardPaymentAmount: giftCardPaymentsTotal,
+          giftCardPaymentDetails: giftCardPayments
         },
         summary: {
           totalGiftCardAmount: totalGiftCardAmount + giftCardPaymentsTotal,

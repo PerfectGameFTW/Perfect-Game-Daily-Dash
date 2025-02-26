@@ -130,6 +130,39 @@ export default function GiftCardActivity({
             {/* Donut Chart for Gift Card Sales vs Redemptions */}
             <div className="mt-6 h-64">
               <canvas ref={chartRef}></canvas>
+              
+              {/* Horizontal bars showing percentages */}
+              <div className="mt-4 space-y-4">
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Gift Card Sales</span>
+                    <span className="font-semibold">{formatCurrency(data?.soldAmount || 0)}</span>
+                  </div>
+                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-amber-500 rounded-full" 
+                      style={{ 
+                        width: `${data?.soldAmount ? Math.min(100, (data.soldAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
+                      }} 
+                    />
+                  </div>
+                </div>
+                
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Gift Card Redemptions</span>
+                    <span className="font-semibold">{formatCurrency(data?.redeemedAmount || 0)}</span>
+                  </div>
+                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-indigo-500 rounded-full" 
+                      style={{ 
+                        width: `${data?.redeemedAmount ? Math.min(100, (data.redeemedAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
+                      }} 
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
             
             {/* Gift Card Metrics */}
