@@ -37,7 +37,8 @@ export default function RecentTransactionsTable({
   });
 
   const formatTime = (timestamp: string) => {
-    return format(new Date(timestamp), "h:mm a");
+    // Convert UTC time to Eastern Time and format
+    return formatInTimezone(new Date(timestamp), "h:mm a");
   };
 
   const formatCategory = (category: string) => {

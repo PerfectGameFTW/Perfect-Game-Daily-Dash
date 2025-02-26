@@ -1,5 +1,19 @@
 import { DateRange } from "@shared/schema";
 import { format, subDays, addDays, startOfMonth, endOfMonth, isToday, subMonths, addMonths, subWeeks, addWeeks, isSameDay } from "date-fns";
+import { formatInTimeZone, toZonedTime } from "date-fns-tz";
+
+// Define Eastern Time Zone
+export const EASTERN_TIMEZONE = 'America/New_York';
+
+// Convert a UTC date to Eastern Time
+export function toEasternTime(date: Date): Date {
+  return toZonedTime(date, EASTERN_TIMEZONE);
+}
+
+// Format a date with timezone awareness
+export function formatInTimezone(date: Date, formatStr: string): string {
+  return formatInTimeZone(date, EASTERN_TIMEZONE, formatStr);
+}
 
 export function getFormattedDate(dateRange: DateRange, customStartDate?: Date, customEndDate?: Date): string {
   const now = new Date();
