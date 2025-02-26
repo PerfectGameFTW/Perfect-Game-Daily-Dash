@@ -57,6 +57,8 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     const startTime = start.toISOString();
     const endTime = end.toISOString();
     
+    console.log(`Fetching orders from ${startTime} to ${endTime}`);
+    
     // Create search request body for v29.0.0
     const searchRequest = {
       locationIds: [process.env.SQUARE_LOCATION_ID!],
@@ -76,7 +78,10 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
           sortField: 'CREATED_AT',
           sortOrder: 'DESC'
         }
-      }
+      },
+      // Include all relevant fields to analyze gift card purchases
+      returnEntries: true,
+      limit: 500 // Increased to get more results on a single request
     };
     
     // Make API request to Square Orders API
@@ -84,9 +89,43 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     
     // Extract orders from the SearchOrdersResponse
     const orders = response.result.orders || [];
+    console.log(`Fetched ${orders.length} orders from Square API between ${startTime} and ${endTime}`);
+    
+    // Look for gift card items
+    let giftCardOrders = 0;
+    let giftCardAmount = 0;
+    
+    for (const order of orders) {
+      if (order.lineItems) {
+        for (const item of order.lineItems) {
+          if (
+            (item.name && item.name.toLowerCase().includes('gift card')) ||
+            (item.catalogObjectId && item.catalogObjectId.includes('GIFT_CARD')) ||
+            (item.note && item.note.toLowerCase().includes('gift card')) ||
+            (item.itemType && item.itemType === 'GIFT_CARD')
+          ) {
+            giftCardOrders++;
+            const itemAmount = item.basePriceMoney && item.basePriceMoney.amount 
+              ? Number(item.basePriceMoney.amount) / 100 
+              : 0;
+            giftCardAmount += itemAmount;
+            
+            console.log(`Found gift card item! Order ID: ${order.id}, Item: ${item.name}, Amount: $${itemAmount}`);
+          }
+        }
+      }
+    }
+    
+    if (giftCardAmount > 0) {
+      console.log(`GIFT CARD SUMMARY: Found ${giftCardOrders} gift card orders totaling $${giftCardAmount.toFixed(2)}`);
+    }
+    
     return orders;
   } catch (error) {
     console.error('Error fetching orders from Square:', error);
+    if (error && typeof error === 'object') {
+      console.error('Detailed error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    }
     return [];
   }
 }

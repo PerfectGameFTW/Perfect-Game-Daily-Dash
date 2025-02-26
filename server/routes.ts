@@ -452,6 +452,299 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Test endpoint to check gift card items in Square API
+  apiRouter.get("/check-gift-card-items", async (req, res) => {
+    try {
+      // Fetch orders from yesterday
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const start = new Date(yesterday);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(yesterday);
+      end.setHours(23, 59, 59, 999);
+      
+      console.log(`Fetching orders from ${start.toISOString()} to ${end.toISOString()}`);
+      
+      // Call the catalog API directly to look for gift card items
+      console.log("Searching for catalog items related to gift cards...");
+      
+      // List catalog items that might be gift cards
+      const catalogResponse = await squareClient.catalogApi.listCatalog(
+        undefined, // cursor
+        "ITEM" // object_types - specifically looking for catalog items
+      );
+      
+      console.log(`Retrieved ${catalogResponse.result.objects?.length || 0} catalog objects`);
+      
+      // Check for gift card related items
+      const giftCardCatalogItems = (catalogResponse.result.objects || []).filter(item => {
+        if (item.type !== 'ITEM') return false;
+        
+        // Check if this catalog item is related to gift cards
+        const itemData = item.itemData;
+        if (!itemData) return false;
+        
+        // Look for gift card indicators in the item name or description
+        const name = itemData.name || '';
+        const description = itemData.description || '';
+        
+        return (
+          name.toLowerCase().includes('gift card') || 
+          name.toLowerCase().includes('gift certificate') ||
+          description.toLowerCase().includes('gift card') ||
+          description.toLowerCase().includes('gift certificate')
+        );
+      });
+      
+      console.log(`Found ${giftCardCatalogItems.length} catalog items that might be gift cards`);
+      
+      // Get their IDs to search for in orders
+      const giftCardItemIds = giftCardCatalogItems.map(item => item.id);
+      
+      // Now get all orders from yesterday
+      const orders = await squareClient.fetchOrders(start, end);
+      
+      // Look for orders with items from our gift card catalog list or with names containing "gift card"
+      const giftCardOrders = [];
+      let totalGiftCardAmount = 0;
+      
+      for (const order of orders) {
+        const lineItems = order.lineItems || [];
+        const giftCardItems = [];
+        
+        for (const item of lineItems) {
+          // Check if this line item is a gift card by:
+          // 1. Matching catalog ID against our list
+          // 2. Name containing "gift card"
+          // 3. Item type being explicitly "GIFT_CARD"
+          const isGiftCard = 
+            (item.catalogObjectId && giftCardItemIds.includes(item.catalogObjectId)) ||
+            (item.name && item.name.toLowerCase().includes('gift card')) ||
+            (item.itemType === 'GIFT_CARD');
+          
+          if (isGiftCard) {
+            // Calculate the amount
+            const amount = item.basePriceMoney && item.basePriceMoney.amount 
+              ? Number(item.basePriceMoney.amount) / 100
+              : 0;
+              
+            totalGiftCardAmount += amount;
+            
+            giftCardItems.push({
+              name: item.name || 'Gift Card',
+              amount: amount,
+              quantity: Number(item.quantity || 1),
+              total: amount * Number(item.quantity || 1)
+            });
+          }
+        }
+        
+        if (giftCardItems.length > 0) {
+          giftCardOrders.push({
+            orderId: order.id,
+            createdAt: order.createdAt,
+            totalAmount: order.totalMoney ? Number(order.totalMoney.amount) / 100 : 0,
+            giftCardItems: giftCardItems
+          });
+        }
+      }
+      
+      // Now check catalog API for item variations (may contain gift card info)
+      console.log("Checking catalog for gift card item variations...");
+      
+      // Get all order IDs from Feb 25 to check in the database
+      const feb25Orders = orders.map(o => o.id);
+      
+      // Check payments/transactions from Feb 25 for gift card references
+      const feb25Payments = await squareClient.fetchPayments(start, end);
+      
+      // Find any payments with "gift card" in their notes or order names
+      const giftCardPayments = feb25Payments.filter(payment => {
+        // Check payment data for gift card clues
+        const note = payment.note || '';
+        const orderInfo = payment.orderName || '';
+        
+        return (
+          note.toLowerCase().includes('gift card') ||
+          note.toLowerCase().includes('gift certificate') ||
+          orderInfo.toLowerCase().includes('gift card') ||
+          orderInfo.toLowerCase().includes('gift certificate')
+        );
+      });
+      
+      console.log(`Found ${giftCardPayments.length} payments potentially related to gift cards`);
+      
+      // Calculate the total from these payments
+      const giftCardPaymentTotal = giftCardPayments.reduce((total, payment) => {
+        const amount = payment.amountMoney && payment.amountMoney.amount
+          ? Number(payment.amountMoney.amount) / 100
+          : 0;
+        return total + amount;
+      }, 0);
+      
+      res.json({
+        date: yesterday.toLocaleDateString(),
+        totalOrders: orders.length,
+        totalPayments: feb25Payments.length,
+        giftCardData: {
+          catalogItems: {
+            count: giftCardCatalogItems.length,
+            items: giftCardCatalogItems.map(item => ({
+              id: item.id,
+              name: item.itemData?.name,
+              description: item.itemData?.description
+            }))
+          },
+          orders: {
+            count: giftCardOrders.length,
+            total: totalGiftCardAmount,
+            details: giftCardOrders
+          },
+          payments: {
+            count: giftCardPayments.length,
+            total: giftCardPaymentTotal,
+            details: giftCardPayments.map(p => ({
+              id: p.id,
+              amount: p.amountMoney ? Number(p.amountMoney.amount) / 100 : 0,
+              note: p.note,
+              orderId: p.orderId,
+              orderName: p.orderName,
+              time: p.createdAt
+            }))
+          }
+        }
+      });
+    } catch (error) {
+      console.error("Error checking gift card items:", error);
+      res.status(500).json({ 
+        error: "Failed to check gift card items",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
+  // Check Feb 25 gift card orders directly from Square API
+  apiRouter.get("/feb25-gift-card-analysis", async (req, res) => {
+    try {
+      // Create specific date range for Feb 25, 2025
+      const feb25Start = new Date('2025-02-25T00:00:00.000Z');
+      const feb25End = new Date('2025-02-25T23:59:59.999Z');
+      
+      console.log(`Analyzing Feb 25 data: ${feb25Start.toISOString()} to ${feb25End.toISOString()}`);
+      
+      // Get orders for Feb 25
+      console.log("Fetching Feb 25 orders from Square API...");
+      const orders = await squareClient.fetchOrders(feb25Start, feb25End);
+      console.log(`Retrieved ${orders.length} orders from Feb 25, 2025`);
+      
+      // Analyze all orders for gift card related items
+      const giftCardOrders = [];
+      let totalGiftCardAmount = 0;
+      
+      // First check for gift card items in orders
+      for (const order of orders) {
+        if (!order.lineItems) continue;
+        
+        // Look for gift card items based on name
+        const giftCardLineItems = order.lineItems.filter((item: any) => {
+          const name = String(item.name || '').toLowerCase();
+          return name.includes('gift') || name.includes('card') || name.includes('certificate');
+        });
+        
+        if (giftCardLineItems.length > 0) {
+          // Calculate amount from these items
+          let orderGiftCardTotal = 0;
+          
+          for (const item of giftCardLineItems) {
+            const quantity = Number(item.quantity || '1');
+            const pricePerUnit = item.basePriceMoney && item.basePriceMoney.amount
+              ? Number(item.basePriceMoney.amount) / 100
+              : 0;
+            
+            const lineTotal = quantity * pricePerUnit;
+            orderGiftCardTotal += lineTotal;
+            totalGiftCardAmount += lineTotal;
+          }
+          
+          // Add to our findings
+          giftCardOrders.push({
+            id: order.id,
+            createdAt: order.createdAt,
+            totalAmount: order.totalMoney ? Number(order.totalMoney.amount) / 100 : 0,
+            lineItems: giftCardLineItems.map((item: any) => ({
+              name: item.name,
+              quantity: Number(item.quantity || '1'),
+              unitPrice: item.basePriceMoney ? Number(item.basePriceMoney.amount) / 100 : 0,
+              totalPrice: Number(item.quantity || '1') * (item.basePriceMoney ? Number(item.basePriceMoney.amount) / 100 : 0)
+            })),
+            giftCardTotal: orderGiftCardTotal
+          });
+        }
+      }
+      
+      // Now check payments for Feb 25
+      console.log("Fetching Feb 25 payments from Square API...");
+      const payments = await squareClient.fetchPayments(feb25Start, feb25End);
+      console.log(`Retrieved ${payments.length} payments from Feb 25, 2025`);
+      
+      // Look for gift card related payments
+      const giftCardPayments = [];
+      let giftCardPaymentsTotal = 0;
+      
+      for (const payment of payments) {
+        // Check payment for gift card references
+        const note = String(payment.note || '').toLowerCase();
+        const orderName = String(payment.orderName || '').toLowerCase();
+        
+        if (note.includes('gift') || note.includes('card') || 
+            orderName.includes('gift') || orderName.includes('card')) {
+          
+          const amount = payment.amountMoney && payment.amountMoney.amount
+            ? Number(payment.amountMoney.amount) / 100
+            : 0;
+          
+          giftCardPaymentsTotal += amount;
+          
+          giftCardPayments.push({
+            id: payment.id,
+            orderId: payment.orderId,
+            amount: amount,
+            note: payment.note,
+            orderName: payment.orderName,
+            createdAt: payment.createdAt
+          });
+        }
+      }
+      
+      // Return all our findings
+      res.json({
+        date: feb25Start.toLocaleDateString(),
+        orderAnalysis: {
+          totalOrders: orders.length,
+          giftCardOrders: giftCardOrders.length,
+          totalGiftCardAmount: totalGiftCardAmount,
+          giftCardOrders: giftCardOrders
+        },
+        paymentAnalysis: {
+          totalPayments: payments.length,
+          giftCardPayments: giftCardPayments.length,
+          totalGiftCardAmount: giftCardPaymentsTotal,
+          giftCardPayments: giftCardPayments
+        },
+        summary: {
+          totalGiftCardAmount: totalGiftCardAmount + giftCardPaymentsTotal,
+          message: "This analysis shows gift card sales by examining both orders and payments from the Square API."
+        }
+      });
+    } catch (error) {
+      console.error("Error analyzing Feb 25 gift card sales:", error);
+      res.status(500).json({ 
+        error: "Failed to analyze Feb 25 gift card sales",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
   // Global variables for sync process
 let isSyncRunning = false;
 let lastSyncTime = new Date(0); // Initialize with epoch time
