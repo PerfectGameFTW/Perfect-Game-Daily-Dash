@@ -351,21 +351,9 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
       }
     }
     
-    // SPECIALIZED DATE-TARGETED LOGGING for Feb 25
-    const paymentDate = new Date(payment.createdAt || new Date());
-    const isFeb25 = 
-      paymentDate.getDate() === 25 && 
-      paymentDate.getMonth() === 1 && // 0-indexed (February)
-      paymentDate.getFullYear() === 2025;
-    
-    if (isFeb25) {
-      console.log(`📆 FEB 25 PAYMENT - ID: ${payment.id}`);
-      console.log(`💰 Amount: $${amount}`);
-      console.log(`🔍 Gift card detection result: ${isGiftCardPurchase ? 'POSITIVE ✅' : 'NEGATIVE ❌'}`);
-      
-      if (payment.orderId) {
-        console.log(`📦 Order ID: ${payment.orderId}`);
-      }
+    // Generalized logging for all gift card purchases regardless of date
+    if (isGiftCardPurchase && process.env.DEBUG_GIFT_CARDS) {
+      console.log(`📊 Gift card purchase detected in payment ${payment.id} - Amount: $${amount}`);
     }
     
     // SET CATEGORY based on our detection logic

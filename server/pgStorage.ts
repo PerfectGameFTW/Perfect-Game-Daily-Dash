@@ -129,27 +129,8 @@ export class PgStorage implements IStorage {
   async getDailySummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<DailySummary> {
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     
-    // Check if the date range includes today (Feb 26, 2025) - when the data is still being synced
-    const now = new Date();
-    const isToday = start.getDate() === now.getDate() && 
-                    start.getMonth() === now.getMonth() && 
-                    start.getFullYear() === now.getFullYear();
-    
-    // For Feb 26, 2025 (today), return zero values since sync is not complete
-    if (isToday) {
-      console.log('Returning zero data for today since sync is still in progress');
-      return {
-        totalRevenue: 0,
-        revenueChange: 0,
-        totalOrders: 0,
-        ordersChange: 0,
-        averageOrder: 0,
-        averageOrderChange: 0,
-        giftCardSales: 0,
-        giftCardSalesChange: 0,
-        date: format(start, 'yyyy-MM-dd')
-      };
-    }
+    // Note: We've removed special case handling for "today" - all data is now consistently
+    // processed from the database regardless of date
     
     // Calculate previous period
     const daysDiff = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -219,12 +200,6 @@ export class PgStorage implements IStorage {
   async getCategoryRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<CategoryRevenue[]> {
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     
-    // Check if the date range includes today (Feb 26, 2025) - when the data is still being synced
-    const now = new Date();
-    const isToday = start.getDate() === now.getDate() && 
-                    start.getMonth() === now.getMonth() && 
-                    start.getFullYear() === now.getFullYear();
-    
     // Define category colors matching the design
     const categoryColors: Record<string, string> = {
       food: '#3B82F6',
@@ -234,17 +209,8 @@ export class PgStorage implements IStorage {
       giftCard: '#F59E0B'
     };
     
-    // For Feb 26, 2025 (today), return zero values since sync is not complete
-    if (isToday) {
-      console.log('Returning zero category data for today since sync is still in progress');
-      return [
-        { category: 'Food', amount: 0, color: categoryColors.food },
-        { category: 'Drinks', amount: 0, color: categoryColors.drinks },
-        { category: 'Retail', amount: 0, color: categoryColors.retail },
-        { category: 'Services', amount: 0, color: categoryColors.services },
-        { category: 'GiftCard', amount: 0, color: categoryColors.giftCard }
-      ];
-    }
+    // Note: We've removed special case handling for "today" - all data is now consistently
+    // processed from the database regardless of date
     
     const currentTransactions = await this.getTransactions(dateRange, start, end);
     
@@ -267,12 +233,6 @@ export class PgStorage implements IStorage {
   async getHourlyRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<HourlyRevenue[]> {
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     
-    // Check if the date range includes today (Feb 26, 2025) - when the data is still being synced
-    const now = new Date();
-    const isToday = start.getDate() === now.getDate() && 
-                    start.getMonth() === now.getMonth() && 
-                    start.getFullYear() === now.getFullYear();
-    
     // Initialize hourly buckets (midnight to 11 PM)
     const hourlyMap = new Map<string, number>();
     
@@ -287,14 +247,8 @@ export class PgStorage implements IStorage {
       hourlyMap.set(formattedHour, 0);
     }
     
-    // For Feb 26, 2025 (today), return zero values for all hours since sync is not complete
-    if (isToday) {
-      console.log('Returning zero hourly data for today since sync is still in progress');
-      return Array.from(hourlyMap.entries()).map(([hour]) => ({
-        hour,
-        amount: 0
-      }));
-    }
+    // Note: We've removed special case handling for "today" - all data is now consistently
+    // processed from the database regardless of date
     
     const currentTransactions = await this.getTransactions(dateRange, start, end);
     
