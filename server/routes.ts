@@ -12,17 +12,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get dashboard summary data
   apiRouter.get("/summary", async (req, res) => {
     try {
-      // Parse date range from query
+      // Parse date range from query (default to today if not provided)
       const dateRange = req.query.dateRange as string || "today";
       
       // Validate date range
-      const parsedDateRange = dateRangeSchema.parse(dateRange);
+      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
+      if (!parsedDateRange.success) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
       
       // Parse custom date range if needed
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange === "custom") {
+      if (parsedDateRange.data === "custom") {
         if (!req.query.startDate || !req.query.endDate) {
           return res.status(400).json({ error: "Start date and end date are required for custom range" });
         }
@@ -32,29 +35,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Get daily summary data
-      const summary = await pgStorage.getDailySummary(parsedDateRange, startDate, endDate);
+      const summary = await pgStorage.getDailySummary(parsedDateRange.data, startDate, endDate);
       
       res.json(summary);
     } catch (error) {
       console.error("Error getting summary:", error);
-      res.status(400).json({ error: "Invalid request" });
+      res.status(500).json({ error: "Server error while getting summary data" });
     }
   });
 
   // Get transactions with date range filter
   apiRouter.get("/transactions", async (req, res) => {
     try {
-      // Parse date range from query
+      // Parse date range from query (default to today if not provided)
       const dateRange = req.query.dateRange as string || "today";
       
       // Validate date range
-      const parsedDateRange = dateRangeSchema.parse(dateRange);
+      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
+      if (!parsedDateRange.success) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
       
       // Parse custom date range if needed
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange === "custom") {
+      if (parsedDateRange.data === "custom") {
         if (!req.query.startDate || !req.query.endDate) {
           return res.status(400).json({ error: "Start date and end date are required for custom range" });
         }
@@ -63,29 +69,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
       
-      const transactions = await pgStorage.getTransactions(parsedDateRange, startDate, endDate);
+      const transactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate);
       
       res.json(transactions);
     } catch (error) {
       console.error("Error getting transactions:", error);
-      res.status(400).json({ error: "Invalid request" });
+      res.status(500).json({ error: "Server error while getting transactions data" });
     }
   });
 
   // Get revenue by category
   apiRouter.get("/revenue-by-category", async (req, res) => {
     try {
-      // Parse date range from query
+      // Parse date range from query (default to today if not provided)
       const dateRange = req.query.dateRange as string || "today";
       
       // Validate date range
-      const parsedDateRange = dateRangeSchema.parse(dateRange);
+      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
+      if (!parsedDateRange.success) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
       
       // Parse custom date range if needed
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange === "custom") {
+      if (parsedDateRange.data === "custom") {
         if (!req.query.startDate || !req.query.endDate) {
           return res.status(400).json({ error: "Start date and end date are required for custom range" });
         }
@@ -94,29 +103,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
       
-      const categoryRevenue = await pgStorage.getCategoryRevenue(parsedDateRange, startDate, endDate);
+      const categoryRevenue = await pgStorage.getCategoryRevenue(parsedDateRange.data, startDate, endDate);
       
       res.json(categoryRevenue);
     } catch (error) {
       console.error("Error getting category revenue:", error);
-      res.status(400).json({ error: "Invalid request" });
+      res.status(500).json({ error: "Server error while getting category revenue data" });
     }
   });
 
   // Get hourly revenue
   apiRouter.get("/hourly-revenue", async (req, res) => {
     try {
-      // Parse date range from query
+      // Parse date range from query (default to today if not provided)
       const dateRange = req.query.dateRange as string || "today";
       
       // Validate date range
-      const parsedDateRange = dateRangeSchema.parse(dateRange);
+      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
+      if (!parsedDateRange.success) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
       
       // Parse custom date range if needed
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange === "custom") {
+      if (parsedDateRange.data === "custom") {
         if (!req.query.startDate || !req.query.endDate) {
           return res.status(400).json({ error: "Start date and end date are required for custom range" });
         }
@@ -125,29 +137,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
       
-      const hourlyRevenue = await pgStorage.getHourlyRevenue(parsedDateRange, startDate, endDate);
+      const hourlyRevenue = await pgStorage.getHourlyRevenue(parsedDateRange.data, startDate, endDate);
       
       res.json(hourlyRevenue);
     } catch (error) {
       console.error("Error getting hourly revenue:", error);
-      res.status(400).json({ error: "Invalid request" });
+      res.status(500).json({ error: "Server error while getting hourly revenue data" });
     }
   });
 
   // Get gift card summary
   apiRouter.get("/gift-card-summary", async (req, res) => {
     try {
-      // Parse date range from query
+      // Parse date range from query (default to today if not provided)
       const dateRange = req.query.dateRange as string || "today";
       
       // Validate date range
-      const parsedDateRange = dateRangeSchema.parse(dateRange);
+      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
+      if (!parsedDateRange.success) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
       
       // Parse custom date range if needed
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange === "custom") {
+      if (parsedDateRange.data === "custom") {
         if (!req.query.startDate || !req.query.endDate) {
           return res.status(400).json({ error: "Start date and end date are required for custom range" });
         }
@@ -156,12 +171,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
       
-      const giftCardSummary = await pgStorage.getGiftCardSummary(parsedDateRange, startDate, endDate);
+      const giftCardSummary = await pgStorage.getGiftCardSummary(parsedDateRange.data, startDate, endDate);
       
       res.json(giftCardSummary);
     } catch (error) {
       console.error("Error getting gift card summary:", error);
-      res.status(400).json({ error: "Invalid request" });
+      res.status(500).json({ error: "Server error while getting gift card summary data" });
     }
   });
 

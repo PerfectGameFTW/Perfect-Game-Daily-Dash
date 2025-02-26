@@ -111,7 +111,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       endTime,
       'ASC',
       undefined, // cursor
-      100 // limit
+      BigInt(100) // limit as BigInt for v29.0.0
     );
     
     // Extract payments from the response
