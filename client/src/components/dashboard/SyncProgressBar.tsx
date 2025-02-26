@@ -133,17 +133,20 @@ const SyncProgressBar: React.FC = () => {
   if (data.isRunning) {
     // Sync is in progress - show progress bar
     return (
-      <Card className="shadow-md">
+      <Card className="shadow-md border border-blue-100 bg-blue-50/10">
         <CardHeader className="pb-2 flex flex-row items-center justify-between">
-          <CardTitle className="text-sm font-medium">Square Sync in Progress</CardTitle>
-          <Badge variant={data.progress.error ? "destructive" : "outline"}>
+          <CardTitle className="text-sm font-medium flex items-center">
+            <Loader2 className="h-4 w-4 mr-2 animate-spin text-blue-500" />
+            Square Sync in Progress
+          </CardTitle>
+          <Badge variant={data.progress.error ? "destructive" : "secondary"}>
             {data.progress.error ? "Error" : stageLabel()}
           </Badge>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{data.progress.processedItems.toLocaleString()} of {data.progress.totalItems.toLocaleString()} items</span>
+              <span>{data.progress.processedItems.toLocaleString()} of {data.progress.totalItems > 0 ? data.progress.totalItems.toLocaleString() : '?'} items</span>
               <span>{progress}%</span>
             </div>
             <Progress value={progress} className="h-2" />
@@ -154,8 +157,8 @@ const SyncProgressBar: React.FC = () => {
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-x-2 text-xs text-muted-foreground mt-1">
-                <div>Started: <span>{getStartedTimeAgo()}</span></div>
-                <div>Remaining: <span>{getTimeRemaining()}</span></div>
+                <div>Started: <span className="font-medium">{getStartedTimeAgo()}</span></div>
+                <div>Remaining: <span className="font-medium">{getTimeRemaining()}</span></div>
               </div>
             )}
           </div>
