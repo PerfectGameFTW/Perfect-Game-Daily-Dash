@@ -69,7 +69,19 @@ export default function Dashboard() {
         }
       });
       
-      if (!response.ok) {
+      if (response.status === 409) {
+        // A sync is already in progress
+        const result = await response.json();
+        console.log('Sync already in progress:', result);
+        
+        toast({
+          title: "Sync In Progress",
+          description: `Another sync is already running. Last sync was at ${new Date(result.lastSyncTime).toLocaleTimeString()}.`,
+          variant: "default",
+        });
+        
+        return;
+      } else if (!response.ok) {
         throw new Error('Sync failed');
       }
       
@@ -84,7 +96,7 @@ export default function Dashboard() {
       
       toast({
         title: "Sync Completed",
-        description: `Updated Square data successfully.`,
+        description: `Updated Square data successfully at ${new Date(result.lastSyncTime).toLocaleTimeString()}.`,
         variant: "default",
       });
     } catch (error) {

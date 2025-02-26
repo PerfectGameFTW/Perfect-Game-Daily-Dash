@@ -345,9 +345,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Sync route to pull data from Square into our database
+  // Global lock for sync process
+let isSyncRunning = false;
+let lastSyncTime = new Date(0); // Initialize with epoch time
+
+// Sync route to pull data from Square into our database
   apiRouter.post("/sync", async (req, res) => {
     try {
+      // Check if a sync is already running
+      if (isSyncRunning) {
+        console.log("Sync already in progress. Skipping new sync request.");
+        return res.status(409).json({ 
+          success: false, 
+          error: "A sync is already in progress. Please try again later.",
+          lastSyncTime: lastSyncTime.toISOString()
+        });
+      }
+      
+      // Set the lock
+      isSyncRunning = true;
+      
       console.log("Starting sync with Square API...");
       const results = {
         transactions: 0,
@@ -431,10 +448,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       console.log(`Sync complete. Added ${results.transactions} new transactions and ${results.giftCards} new gift cards.`);
+      
+      // Update last sync time and release the lock
+      lastSyncTime = new Date();
+      isSyncRunning = false;
+      
       res.json({
         success: true,
         message: "Sync completed successfully",
         results,
+        lastSyncTime: lastSyncTime.toISOString(),
         timeWindow: {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
@@ -443,6 +466,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error syncing with Square:", error);
+      
+      // Release the lock even if there's an error
+      isSyncRunning = false;
+      
       res.status(500).json({ 
         success: false,
         error: "Failed to sync with Square" 
@@ -453,6 +480,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Special route to sync data specifically for February 25, 2025
   apiRouter.post("/sync-feb25", async (req, res) => {
     try {
+      // Check if a sync is already running
+      if (isSyncRunning) {
+        console.log("Sync already in progress. Skipping Feb 25 sync request.");
+        return res.status(409).json({ 
+          success: false, 
+          error: "A sync is already in progress. Please try again later.",
+          lastSyncTime: lastSyncTime.toISOString()
+        });
+      }
+      
+      // Set the lock
+      isSyncRunning = true;
+      
       console.log("Starting specialized sync for February 25, 2025...");
       
       // Check Square API connection status
@@ -548,9 +588,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`Feb 25 sync complete. Replaced with ${addedCount} transactions with total amount $${totalAmount.toFixed(2)}`);
       
+      // Update last sync time and release the lock
+      lastSyncTime = new Date();
+      isSyncRunning = false;
+      
       res.json({
         success: true,
         message: "Feb 25 sync completed successfully",
+        lastSyncTime: lastSyncTime.toISOString(),
         stats: {
           totalTransactions: payments.length,
           totalAmount: totalAmount,
@@ -560,6 +605,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error syncing February 25 data:", error);
+      
+      // Release the lock even if there's an error
+      isSyncRunning = false;
+      
       res.status(500).json({ 
         success: false,
         error: "Failed to sync February 25 data" 
