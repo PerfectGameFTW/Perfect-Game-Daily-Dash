@@ -94,29 +94,20 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
 // Fetch payments from Square API
 export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]> {
   try {
-    const now = new Date();
-    const start = startDate || new Date(now.setDate(now.getDate() - 30));
-    const end = endDate || new Date();
-    
-    // Format dates for Square API
-    const startTime = start.toISOString();
-    const endTime = end.toISOString();
-    
-    // Make API request to Square Payments API
-    const response = await squareClient.paymentsApi.listPayments(
-      process.env.SQUARE_LOCATION_ID,
-      startTime,
-      endTime,
-      'ASC',
-      undefined, // cursor
-      BigInt(100) // limit as BigInt for v29.0.0
-    );
+    // In Square API 29.0.0, we need to use a different approach
+    // First try without dates to get default recent payments
+    const response = await squareClient.paymentsApi.listPayments();
     
     // Extract payments from the response
     const payments = response.result.payments || [];
+    console.log(`Fetched ${payments.length} payments from Square`);
     return payments;
   } catch (error) {
     console.error('Error fetching payments from Square:', error);
+    // Log the detailed error if it's an object
+    if (error && typeof error === 'object') {
+      console.error('Detailed error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    }
     return [];
   }
 }
@@ -139,14 +130,55 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     category = mapSquareCategory(payment.note);
   }
   
+  // Safely parse the timestamp
+  let timestamp: Date;
+  try {
+    timestamp = new Date(payment.createdAt);
+    // Validate the date
+    if (isNaN(timestamp.getTime())) {
+      // If invalid, use current date
+      console.warn(`Invalid timestamp for payment ${payment.id}, using current date instead`);
+      timestamp = new Date();
+    }
+  } catch (error) {
+    console.warn(`Error parsing timestamp for payment ${payment.id}, using current date instead:`, error);
+    timestamp = new Date();
+  }
+  
+  // Convert payment data to handle BigInt values
+  let cleanedPaymentData;
+  try {
+    // Try the JSON parse/stringify approach with replacer
+    cleanedPaymentData = JSON.parse(JSON.stringify(payment, (key, value) => 
+      typeof value === 'bigint' ? value.toString() : value
+    ));
+  } catch (error) {
+    console.warn(`Error stringifying payment ${payment.id}, using manual conversion:`, error);
+    // Manual fallback - create a new object without BigInt values
+    cleanedPaymentData = {};
+    for (const key in payment) {
+      if (Object.prototype.hasOwnProperty.call(payment, key)) {
+        const value = payment[key];
+        if (typeof value === 'bigint') {
+          cleanedPaymentData[key] = value.toString();
+        } else if (typeof value === 'object' && value !== null) {
+          // For nested objects, we'll just store a simplified version
+          cleanedPaymentData[key] = `[Object: ${JSON.stringify(value)}]`;
+        } else {
+          cleanedPaymentData[key] = value;
+        }
+      }
+    }
+  }
+  
   // Map to our transaction model
   const transaction: InsertTransaction = {
     squareId: payment.id,
     amount,
     categoryId: category,
     status: mapSquareStatus(payment.status),
-    timestamp: new Date(payment.createdAt),
-    squareData: payment
+    timestamp,
+    squareData: cleanedPaymentData
   };
   
   return transaction;
@@ -154,13 +186,33 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
 
 // Convert Square gift card to our GiftCard model
 export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): InsertGiftCard {
+  // Safely parse the purchase date
+  let purchaseDate: Date;
+  try {
+    purchaseDate = new Date(giftCard.created_at);
+    // Validate the date
+    if (isNaN(purchaseDate.getTime())) {
+      // If invalid, use current date
+      console.warn(`Invalid purchase date for gift card ${giftCard.id}, using current date instead`);
+      purchaseDate = new Date();
+    }
+  } catch (error) {
+    console.warn(`Error parsing purchase date for gift card ${giftCard.id}, using current date instead:`, error);
+    purchaseDate = new Date();
+  }
+  
+  // Convert any BigInt values in the gift card data to strings
+  const cleanedGiftCardData = JSON.parse(JSON.stringify(giftCard, (key, value) => 
+    typeof value === 'bigint' ? value.toString() : value
+  ));
+  
   const card: InsertGiftCard = {
     squareId: giftCard.id,
     amount: giftCard.balance_money ? (giftCard.balance_money.amount || 0) / 100 : 0,
     redeemedAmount: 0, // May need to calculate this separately
     isActive: giftCard.state === 'ACTIVE',
-    purchaseDate: new Date(giftCard.created_at),
-    squareData: giftCard
+    purchaseDate,
+    squareData: cleanedGiftCardData
   };
   
   return card;
@@ -170,18 +222,18 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
 export async function fetchGiftCards(): Promise<any[]> {
   try {
     // For v29.0.0, use the giftCardsApi
-    const response = await squareClient.giftCardsApi.listGiftCards(
-      undefined, // type
-      undefined, // state
-      undefined, // limit
-      undefined  // cursor
-    );
+    const response = await squareClient.giftCardsApi.listGiftCards();
     
     // Extract gift cards from the response
     const giftCards = response.result.giftCards || [];
+    console.log(`Fetched ${giftCards.length} gift cards from Square`);
     return giftCards;
   } catch (error) {
     console.error('Error fetching gift cards from Square:', error);
+    // Log the detailed error if it's an object
+    if (error && typeof error === 'object') {
+      console.error('Detailed error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    }
     return [];
   }
 }
