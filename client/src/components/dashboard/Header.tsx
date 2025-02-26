@@ -1,5 +1,4 @@
-import { Settings, ChevronLeft, ChevronRight, Filter } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { DateRange } from "@shared/schema";
 import { format } from "date-fns";
 
@@ -40,13 +39,6 @@ export default function Header({
         <div className="flex items-center">
           <h1 className="text-lg font-semibold text-white">Perfect Game</h1>
         </div>
-        <Button 
-          variant="ghost"
-          size="sm"
-          className="text-zinc-400 hover:text-white hover:bg-transparent"
-        >
-          <Settings className="h-5 w-5" />
-        </Button>
       </div>
       
       <div 
