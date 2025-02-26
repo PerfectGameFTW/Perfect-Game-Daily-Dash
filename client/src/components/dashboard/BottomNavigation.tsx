@@ -1,16 +1,10 @@
-import { Home, BarChart2, MessageCircle, User, MoreHorizontal } from "lucide-react";
-
-const BottomNavigation = () => {
-  return (
-    <div className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-zinc-800 flex items-center justify-around px-2">
-      <NavItem icon={<Home className="w-5 h-5" />} label="Home" active />
-      <NavItem icon={<BarChart2 className="w-5 h-5" />} label="Reports" />
-      <NavItem icon={<MessageCircle className="w-5 h-5" />} label="Messages" />
-      <NavItem icon={<User className="w-5 h-5" />} label="Me" />
-      <NavItem icon={<MoreHorizontal className="w-5 h-5" />} label="More" />
-    </div>
-  );
-};
+import { 
+  Home,
+  CircleDollarSign, 
+  ShoppingBag, 
+  Wallet, 
+  MenuSquare
+} from "lucide-react";
 
 interface NavItemProps {
   icon: React.ReactNode;
@@ -20,13 +14,41 @@ interface NavItemProps {
 
 const NavItem = ({ icon, label, active }: NavItemProps) => {
   return (
-    <div className="flex flex-col items-center justify-center">
-      <div className={`p-2 ${active ? 'text-blue-500' : 'text-zinc-400'}`}>
+    <div className="flex flex-col items-center justify-center w-1/5">
+      <div className={`mb-0.5 ${active ? 'text-blue-500' : 'text-zinc-400'}`}>
         {icon}
       </div>
-      <span className={`text-xs ${active ? 'text-blue-500' : 'text-zinc-400'}`}>
+      <span className={`text-xs ${active ? 'text-blue-500 font-medium' : 'text-zinc-400'}`}>
         {label}
       </span>
+    </div>
+  );
+};
+
+const BottomNavigation = () => {
+  return (
+    <div className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-zinc-800 flex items-center justify-between px-4">
+      <NavItem 
+        icon={<Home className="w-6 h-6" />} 
+        label="Home" 
+      />
+      <NavItem 
+        icon={<CircleDollarSign className="w-6 h-6" />} 
+        label="Sales" 
+        active 
+      />
+      <NavItem 
+        icon={<ShoppingBag className="w-6 h-6" />} 
+        label="Orders" 
+      />
+      <NavItem 
+        icon={<Wallet className="w-6 h-6" />} 
+        label="Banking" 
+      />
+      <NavItem 
+        icon={<MenuSquare className="w-6 h-6" />} 
+        label="Menu" 
+      />
     </div>
   );
 };

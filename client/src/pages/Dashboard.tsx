@@ -1,10 +1,6 @@
 import { useState } from "react";
 import Header from "@/components/dashboard/Header";
 import StatsSummary from "@/components/dashboard/StatsSummary";
-import RevenueByCategoryChart from "@/components/dashboard/RevenueByCategoryChart";
-import HourlyRevenueChart from "@/components/dashboard/HourlyRevenueChart";
-import RecentTransactionsTable from "@/components/dashboard/RecentTransactionsTable";
-import GiftCardActivity from "@/components/dashboard/GiftCardActivity";
 import BottomNavigation from "@/components/dashboard/BottomNavigation";
 import TimeframeModal from "@/components/dashboard/TimeframeModal";
 import { DateRange } from "@shared/schema";
@@ -47,34 +43,6 @@ export default function Dashboard() {
           customStartDate={customStartDate}
           customEndDate={customEndDate}
         />
-
-        {/* Charts Section */}
-        <div className="mt-6 space-y-6">
-          <RevenueByCategoryChart 
-            dateRange={dateRange}
-            customStartDate={customStartDate}
-            customEndDate={customEndDate}
-          />
-          <HourlyRevenueChart 
-            dateRange={dateRange}
-            customStartDate={customStartDate}
-            customEndDate={customEndDate}
-          />
-        </div>
-
-        {/* Tables Section */}
-        <div className="mt-6 space-y-6 pb-8">
-          <RecentTransactionsTable 
-            dateRange={dateRange}
-            customStartDate={customStartDate}
-            customEndDate={customEndDate}
-          />
-          <GiftCardActivity 
-            dateRange={dateRange}
-            customStartDate={customStartDate}
-            customEndDate={customEndDate}
-          />
-        </div>
       </main>
       
       {/* Bottom Navigation */}
