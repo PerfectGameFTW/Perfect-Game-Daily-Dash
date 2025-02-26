@@ -1,34 +1,21 @@
 /**
- * Special cases module for handling known data inconsistencies
- * This allows us to apply client-side fixes for data that cannot be fixed on the backend
+ * SPECIAL CASES MODULE - DEPRECATED
+ * 
+ * This module has been completely deprecated as part of the sync simplification process.
+ * We now use a single, unified sync process with no special case handling.
+ * All data comes directly from the database with consistent processing.
+ * 
+ * These stub functions are maintained for backward compatibility only
+ * and will be removed in a future update.
  */
 
-import { DateRange, GiftCardSummary } from "@shared/schema";
+import { DateRange } from "@shared/schema";
 
-/**
- * Checks if we're looking at Feb 25, 2025 data - DISABLED
- * This function always returns false now as we're using direct API data
- */
+// Stub functions to maintain API compatibility
 export function isFeb25Case(dateRange: DateRange): boolean {
-  return false; // We're no longer using hardcoded data for Feb 25
+  return false; // Special cases have been removed completely
 }
 
-/**
- * Special gift card data for Feb 25, 2025 - DISABLED
- * We're no longer using hardcoded data, this is kept for reference
- */
-export const FEB_25_GIFT_CARD_DATA: GiftCardSummary = {
-  soldCount: 0,
-  soldAmount: 0, 
-  redeemedCount: 0,
-  redeemedAmount: 0,
-  averageValue: 0
-};
-
-/**
- * Get the correct gift card amount for a given date range
- * This function no longer uses hardcoded values and just returns the API data
- */
 export function getGiftCardAmount(dateRange: DateRange, defaultAmount: number = 0): number {
-  return defaultAmount; // Always use the value from the API
+  return defaultAmount; // Always use the value from the database
 }

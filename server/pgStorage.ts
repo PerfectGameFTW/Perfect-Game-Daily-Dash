@@ -327,40 +327,6 @@ export class PgStorage implements IStorage {
     
     console.log(`Gift Card Summary - Date Range: ${start.toISOString()} to ${end.toISOString()}`);
     
-    // Special handling for Feb 25, 2025
-    const isFeb25 = start.getDate() === 25 && 
-                    start.getMonth() === 1 && // 0-indexed month, 1 = February
-                    start.getFullYear() === 2025;
-    
-    if (isFeb25) {
-      console.log('🎉 Special handling for Feb 25 gift card data - returning hardcoded values');
-      return {
-        soldCount: 6,
-        soldAmount: 1536.72, // The correct amount from Square dashboard
-        redeemedCount: 0,
-        redeemedAmount: 0,
-        averageValue: 256.12
-      };
-    }
-    
-    // Check if the date range includes today (Feb 26, 2025) - when the data is still being synced
-    const now = new Date();
-    const isToday = start.getDate() === now.getDate() && 
-                    start.getMonth() === now.getMonth() && 
-                    start.getFullYear() === now.getFullYear();
-    
-    // For Feb 26, 2025 (today), return zero values since sync is not complete
-    if (isToday) {
-      console.log('Returning zero gift card data for today since sync is still in progress');
-      return {
-        soldCount: 0,
-        soldAmount: 0,
-        redeemedCount: 0,
-        redeemedAmount: 0,
-        averageValue: 0
-      };
-    }
-    
     // IMPROVED: Get transactions specifically for gift card sales
     // We need to query transactions directly with categoryId = 'giftCard'
     const giftCardSales = await db.select()
@@ -373,12 +339,10 @@ export class PgStorage implements IStorage {
         )
       );
     
-    // We already handled Feb 25th special case above, log what we found in the db
-    if (start.getMonth() === 1 && start.getDate() === 25 && start.getFullYear() === 2025) {
-      console.log(`Found ${giftCardSales.length} gift card transactions in database for Feb 25`);
-      const dbAmount = giftCardSales.reduce((sum, sale) => sum + sale.amount, 0);
-      console.log(`Database reports $${dbAmount.toFixed(2)} in gift card sales for Feb 25`);
-    }
+    // Logging to help with diagnostics
+    console.log(`Found ${giftCardSales.length} gift card transactions in database for this period`);
+    const dbAmount = giftCardSales.reduce((sum, sale) => sum + sale.amount, 0);
+    console.log(`Database reports $${dbAmount.toFixed(2)} in gift card sales for this period`);
     
     // Get gift card redemptions
     const redemptions = await db.select()

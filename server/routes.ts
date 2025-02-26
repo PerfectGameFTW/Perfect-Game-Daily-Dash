@@ -13,51 +13,8 @@ import * as squareClient from "./squareClient";
 import { and, gte, lte, sql, eq } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Test route for gift card detection
-  app.get('/api/test-gift-card-detection', async (req, res) => {
-    try {
-      // Fetch a few payments from Feb 25 to test gift card detection
-      const startDate = new Date('2025-02-25T00:00:00.000Z');
-      const endDate = new Date('2025-02-25T23:59:59.999Z');
-      
-      console.log("Fetching sample payments for gift card detection test...");
-      const payments = await squareClient.fetchPayments(startDate, endDate);
-      
-      // Take first 10 payments only for testing
-      const samplePayments = payments.slice(0, 10);
-      
-      // Test gift card detection
-      const results = samplePayments.map(payment => {
-        const transaction = squareClient.convertSquarePaymentToTransaction(payment);
-        return {
-          paymentId: payment.id,
-          isGiftCard: transaction.categoryId === 'giftCard',
-          category: transaction.categoryId,
-          // Provide some data to help determine why it was/wasn't detected
-          sourceType: payment.sourceType,
-          cardDetails: payment.cardDetails ? {
-            entryMethod: payment.cardDetails.entryMethod
-          } : null,
-          note: payment.note,
-          // Include a portion of the payment data for inspection
-          paymentSample: JSON.stringify(payment).substring(0, 500) + '...'
-        };
-      });
-      
-      res.json({
-        success: true,
-        totalPayments: payments.length,
-        sampleSize: samplePayments.length,
-        results
-      });
-    } catch (error) {
-      console.error("Error testing gift card detection:", error);
-      res.status(500).json({ 
-        success: false,
-        error: "Failed to test gift card detection" 
-      });
-    }
-  });
+  // Test route for gift card detection has been removed as part of sync simplification
+  // All gift card transactions are now processed through the unified sync process
   // Create API router for all endpoints
   const apiRouter = express.Router();
 
@@ -305,30 +262,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Parse date range from query (default to today if not provided)
       const dateRange = req.query.dateRange as string || "today";
-      
-      // Special handling for Feb 25, 2025 - hard code gift card data
-      const isYesterday = dateRange === 'yesterday';
-      
-      // Create a new date but force it to be Feb 26, 2025 for testing
-      const simulatedDate = new Date();
-      simulatedDate.setFullYear(2025, 1, 26); // Month is 0-indexed, so 1 = February
-      
-      console.log(`Actual date: ${new Date().toISOString()}`);
-      console.log(`Simulated date: ${simulatedDate.toISOString()}`);
-      console.log(`Is yesterday request: ${isYesterday}`);
-      
-      // Always use our simulated date for test environment
-      if (isYesterday && simulatedDate.getFullYear() === 2025 && 
-          simulatedDate.getMonth() === 1 && simulatedDate.getDate() === 26) {
-        console.log('🎉 Returning special gift card data for February 25, 2025');
-        return res.json({
-          soldCount: 6,
-          soldAmount: 1536.72, // The correct amount from Square dashboard
-          redeemedCount: 0,
-          redeemedAmount: 0,
-          averageValue: 256.12
-        });
-      }
       
       // Validate date range
       const parsedDateRange = dateRangeSchema.safeParse(dateRange);
@@ -630,127 +563,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Check Feb 25 gift card orders directly from Square API
-  apiRouter.get("/feb25-gift-card-analysis", async (req, res) => {
-    try {
-      // Create specific date range for Feb 25, 2025
-      const feb25Start = new Date('2025-02-25T00:00:00.000Z');
-      const feb25End = new Date('2025-02-25T23:59:59.999Z');
-      
-      console.log(`Analyzing Feb 25 data: ${feb25Start.toISOString()} to ${feb25End.toISOString()}`);
-      
-      // Get orders for Feb 25
-      console.log("Fetching Feb 25 orders from Square API...");
-      const orders = await squareClient.fetchOrders(feb25Start, feb25End);
-      console.log(`Retrieved ${orders.length} orders from Feb 25, 2025`);
-      
-      // Analyze all orders for gift card related items
-      const giftCardOrders = [];
-      let totalGiftCardAmount = 0;
-      
-      // First check for gift card items in orders
-      for (const order of orders) {
-        if (!order.lineItems) continue;
-        
-        // Look for gift card items based on name
-        const giftCardLineItems = order.lineItems.filter((item: any) => {
-          const name = String(item.name || '').toLowerCase();
-          return name.includes('gift') || name.includes('card') || name.includes('certificate');
-        });
-        
-        if (giftCardLineItems.length > 0) {
-          // Calculate amount from these items
-          let orderGiftCardTotal = 0;
-          
-          for (const item of giftCardLineItems) {
-            const quantity = Number(item.quantity || '1');
-            const pricePerUnit = item.basePriceMoney && item.basePriceMoney.amount
-              ? Number(item.basePriceMoney.amount) / 100
-              : 0;
-            
-            const lineTotal = quantity * pricePerUnit;
-            orderGiftCardTotal += lineTotal;
-            totalGiftCardAmount += lineTotal;
-          }
-          
-          // Add to our findings
-          giftCardOrders.push({
-            id: order.id,
-            createdAt: order.createdAt,
-            totalAmount: order.totalMoney ? Number(order.totalMoney.amount) / 100 : 0,
-            lineItems: giftCardLineItems.map((item: any) => ({
-              name: item.name,
-              quantity: Number(item.quantity || '1'),
-              unitPrice: item.basePriceMoney ? Number(item.basePriceMoney.amount) / 100 : 0,
-              totalPrice: Number(item.quantity || '1') * (item.basePriceMoney ? Number(item.basePriceMoney.amount) / 100 : 0)
-            })),
-            giftCardTotal: orderGiftCardTotal
-          });
-        }
-      }
-      
-      // Now check payments for Feb 25
-      console.log("Fetching Feb 25 payments from Square API...");
-      const payments = await squareClient.fetchPayments(feb25Start, feb25End);
-      console.log(`Retrieved ${payments.length} payments from Feb 25, 2025`);
-      
-      // Look for gift card related payments
-      const giftCardPayments = [];
-      let giftCardPaymentsTotal = 0;
-      
-      for (const payment of payments) {
-        // Check payment for gift card references
-        const note = String(payment.note || '').toLowerCase();
-        const orderName = String(payment.orderName || '').toLowerCase();
-        
-        if (note.includes('gift') || note.includes('card') || 
-            orderName.includes('gift') || orderName.includes('card')) {
-          
-          const amount = payment.amountMoney && payment.amountMoney.amount
-            ? Number(payment.amountMoney.amount) / 100
-            : 0;
-          
-          giftCardPaymentsTotal += amount;
-          
-          giftCardPayments.push({
-            id: payment.id,
-            orderId: payment.orderId,
-            amount: amount,
-            note: payment.note,
-            orderName: payment.orderName,
-            createdAt: payment.createdAt
-          });
-        }
-      }
-      
-      // Return all our findings
-      res.json({
-        date: feb25Start.toLocaleDateString(),
-        orderAnalysis: {
-          totalOrders: orders.length,
-          giftCardOrderCount: giftCardOrders.length,
-          totalGiftCardAmount: totalGiftCardAmount,
-          giftCardOrderDetails: giftCardOrders
-        },
-        paymentAnalysis: {
-          totalPayments: payments.length,
-          giftCardPaymentCount: giftCardPayments.length,
-          totalGiftCardPaymentAmount: giftCardPaymentsTotal,
-          giftCardPaymentDetails: giftCardPayments
-        },
-        summary: {
-          totalGiftCardAmount: totalGiftCardAmount + giftCardPaymentsTotal,
-          message: "This analysis shows gift card sales by examining both orders and payments from the Square API."
-        }
-      });
-    } catch (error) {
-      console.error("Error analyzing Feb 25 gift card sales:", error);
-      res.status(500).json({ 
-        error: "Failed to analyze Feb 25 gift card sales",
-        message: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
-  });
+  // Feb 25, 2025 special case analysis endpoint has been completely removed
+  // All transaction data is now processed through the unified sync endpoint and
+  // stored directly in the database. The system now pulls all data directly from
+  // the database with no special case handling for specific dates.
 
   // Simple mutex to prevent concurrent syncs
 let isSyncRunning = false;
@@ -768,7 +584,7 @@ const hasSyncTimedOut = (): boolean => {
   return diffMinutes > timeoutMinutes;
 };
 
-// Sync route to pull data from Square into our database with checkpoints
+// Unified sync route to handle all transaction and gift card syncing
   apiRouter.post("/sync", async (req, res) => {
     try {
       // Check if a sync is already running
@@ -796,9 +612,10 @@ const hasSyncTimedOut = (): boolean => {
       isSyncRunning = true;
       syncStartTime = new Date();
       
-      console.log("Starting sync with Square API using database checkpoints...");
+      console.log("Starting unified sync with Square API...");
       const results = {
         transactions: 0,
+        orders: 0,
         giftCards: 0
       };
       
@@ -834,6 +651,10 @@ const hasSyncTimedOut = (): boolean => {
         console.log(`Using default 90-day time window: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       }
       
+      // STEP 1: Sync Payments
+      // ------------------------
+      console.log("--- STEP 1: SYNCING PAYMENTS ---");
+      
       // Check for existing payments sync state
       let paymentsSyncState = await pgStorage.getSyncState('payments');
       let lastCheckpoint: any = null;
@@ -843,8 +664,7 @@ const hasSyncTimedOut = (): boolean => {
         console.log("Resuming payments sync from checkpoint:", {
           lastSyncAt: paymentsSyncState.lastSyncedAt,
           processed: paymentsSyncState.processedCount,
-          total: paymentsSyncState.totalCount,
-          currentPage: paymentsSyncState.currentPage
+          total: paymentsSyncState.totalCount
         });
         lastCheckpoint = paymentsSyncState.lastCheckpoint;
       } else {
@@ -869,10 +689,10 @@ const hasSyncTimedOut = (): boolean => {
         console.log("Created new payments sync state record:", paymentsSyncState.id);
       }
       
-      // Fetch payments from Square with date range (with pagination)
-      // In a real implementation, we'd use the cursor/checkpoint here
+      // Fetch payments from Square with date range
+      console.log(`Fetching payments for ${startDate.toLocaleString()} to ${endDate.toLocaleString()}...`);
       const payments = await squareClient.fetchPayments(startDate, endDate);
-      console.log(`Fetched ${payments.length} total payments from Square for date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
+      console.log(`Fetched ${payments.length} total payments`);
       
       // Update sync state with total payment count
       paymentsSyncState = await pgStorage.updateSyncState(paymentsSyncState.id, {
@@ -880,12 +700,12 @@ const hasSyncTimedOut = (): boolean => {
         status: 'processing',
       });
       
-      // Process each payment and save to database with periodic checkpoints
+      // Process each payment with robust error handling
       let processedCount = lastCheckpoint?.lastPosition || 0;
       let existingCount = 0;
       let errorCount = 0;
       
-      // Start from the last checkpoint position with robust error handling
+      // Start from the last checkpoint position
       for (let i = processedCount; i < payments.length; i++) {
         try {
           const payment = payments[i];
@@ -924,7 +744,7 @@ const hasSyncTimedOut = (): boolean => {
               processedCount: i,
               lastSyncedAt: new Date(),
               lastCheckpoint: { lastPosition: i },
-              errorMessage: `Skipped ${errorCount} records with errors`
+              errorMessage: `Skipped ${errorCount} payment records with errors`
             });
           }
           
@@ -933,9 +753,7 @@ const hasSyncTimedOut = (): boolean => {
         }
       }
       
-      console.log(`Payment processing complete: ${processedCount} processed, ${existingCount} already existed, ${errorCount} errors, added ${results.transactions} new transactions`);
-      
-      console.log(`Processed ${processedCount} payments, ${existingCount} already existed, added ${results.transactions} new transactions`);
+      console.log(`Payments sync complete: ${processedCount} processed, ${existingCount} already existed, ${errorCount} errors, added ${results.transactions} new transactions`);
       
       // Mark payments sync as complete
       await pgStorage.updateSyncState(paymentsSyncState.id, {
@@ -945,8 +763,147 @@ const hasSyncTimedOut = (): boolean => {
         lastSyncedAt: new Date()
       });
       
+      // STEP 2: Sync Orders and detect gift card line items
+      // --------------------------------------------------
+      console.log("--- STEP 2: SYNCING ORDERS AND DETECTING GIFT CARDS ---");
+      
+      // Check for existing orders sync state
+      let ordersSyncState = await pgStorage.getSyncState('orders');
+      let ordersCheckpoint: any = null;
+      
+      if (ordersSyncState && !ordersSyncState.isComplete) {
+        // Resume from checkpoint
+        console.log("Resuming orders sync from checkpoint:", {
+          lastSyncAt: ordersSyncState.lastSyncedAt,
+          processed: ordersSyncState.processedCount,
+          total: ordersSyncState.totalCount
+        });
+        ordersCheckpoint = ordersSyncState.lastCheckpoint;
+      } else {
+        // Create a new sync state record or update existing one
+        const syncData: InsertSyncState = {
+          syncType: 'orders',
+          lastSyncedAt: new Date(),
+          processedCount: 0,
+          totalCount: 0,
+          isComplete: false,
+          status: 'in_progress',
+          lastCheckpoint: { lastPosition: 0 }
+        };
+        
+        if (ordersSyncState) {
+          // Update existing record
+          ordersSyncState = await pgStorage.updateSyncState(ordersSyncState.id, syncData);
+        } else {
+          // Create new record
+          ordersSyncState = await pgStorage.createSyncState(syncData);
+        }
+        console.log("Created new orders sync state record:", ordersSyncState.id);
+      }
+      
+      // Fetch orders from Square with date range
+      console.log(`Fetching orders for ${startDate.toLocaleString()} to ${endDate.toLocaleString()}...`);
+      const orders = await squareClient.fetchOrders(startDate, endDate);
+      console.log(`Fetched ${orders.length} total orders`);
+      
+      // Update sync state with total order count
+      ordersSyncState = await pgStorage.updateSyncState(ordersSyncState.id, {
+        totalCount: orders.length,
+        status: 'processing',
+      });
+      
+      // Process orders and identify gift cards with checkpoints
+      let giftCardSalesCount = 0;
+      let giftCardSalesAmount = 0;
+      let ordersProcessed = ordersCheckpoint?.lastPosition || 0;
+      let ordersErrorCount = 0;
+      
+      // Process each order to identify gift card sales
+      for (let i = ordersProcessed; i < orders.length; i++) {
+        try {
+          const order = orders[i];
+          ordersProcessed = i + 1;
+          
+          // Create checkpoint every 20 orders
+          if (ordersProcessed % 20 === 0) {
+            console.log(`Processing order ${ordersProcessed} of ${orders.length}...`);
+            
+            // Update checkpoint in database
+            await pgStorage.updateSyncState(ordersSyncState.id, {
+              processedCount: ordersProcessed,
+              lastSyncedAt: new Date(),
+              lastCheckpoint: { lastPosition: ordersProcessed }
+            });
+          }
+          
+          // Analyze order for gift card detection
+          if (order.lineItems) {
+            for (const lineItem of order.lineItems) {
+              const itemName = (lineItem.name || '').toLowerCase();
+              
+              // Check if this is a gift card line item
+              if (
+                itemName.includes('gift') || 
+                itemName.includes('gift card') || 
+                (lineItem.note && lineItem.note.toLowerCase().includes('gift')) ||
+                lineItem.itemType === 'GIFT_CARD'
+              ) {
+                giftCardSalesCount++;
+                
+                // Calculate the amount
+                const quantity = Number(lineItem.quantity || '1');
+                const unitPrice = lineItem.basePriceMoney && lineItem.basePriceMoney.amount
+                  ? Number(lineItem.basePriceMoney.amount) / 100
+                  : 0;
+                
+                const totalPrice = quantity * unitPrice;
+                giftCardSalesAmount += totalPrice;
+                
+                console.log(`Found gift card sale: ${lineItem.name}, amount: $${totalPrice.toFixed(2)}`);
+              }
+            }
+          }
+          
+          results.orders++; 
+          
+        } catch (orderError) {
+          // Log the error but continue processing
+          ordersErrorCount++;
+          console.error(`Error processing order at position ${i}:`, orderError);
+          
+          // Create a checkpoint so we don't lose progress
+          if (i % 10 === 0) {
+            await pgStorage.updateSyncState(ordersSyncState.id, {
+              processedCount: i,
+              lastSyncedAt: new Date(),
+              lastCheckpoint: { lastPosition: i },
+              errorMessage: `Skipped ${ordersErrorCount} order records with errors`
+            });
+          }
+          
+          // Continue with next record
+          continue;
+        }
+      }
+      
+      console.log(`Orders sync complete: ${ordersProcessed} processed, encountered ${ordersErrorCount} errors`);
+      console.log(`Gift card analysis: Found ${giftCardSalesCount} gift card items totaling $${giftCardSalesAmount.toFixed(2)}`);
+      
+      // Mark orders sync as complete
+      await pgStorage.updateSyncState(ordersSyncState.id, {
+        processedCount: orders.length,
+        isComplete: true,
+        status: 'completed',
+        lastSyncedAt: new Date()
+      });
+      
+      // STEP 3: Sync Gift Cards
+      // ----------------------
+      console.log("--- STEP 3: SYNCING GIFT CARDS ---");
+      
       // Check for existing gift cards sync state
       let giftCardsSyncState = await pgStorage.getSyncState('giftCards');
+      let giftCardsCheckpoint: any = null;
       
       if (giftCardsSyncState && !giftCardsSyncState.isComplete) {
         // Resume from checkpoint
@@ -955,7 +912,7 @@ const hasSyncTimedOut = (): boolean => {
           processed: giftCardsSyncState.processedCount,
           total: giftCardsSyncState.totalCount
         });
-        lastCheckpoint = giftCardsSyncState.lastCheckpoint;
+        giftCardsCheckpoint = giftCardsSyncState.lastCheckpoint;
       } else {
         // Create a new sync state record or update existing one
         const syncData: InsertSyncState = {
@@ -978,9 +935,10 @@ const hasSyncTimedOut = (): boolean => {
         console.log("Created new gift cards sync state record:", giftCardsSyncState.id);
       }
       
-      // Fetch ALL gift cards from Square (with pagination)
+      // Fetch ALL gift cards from Square
+      console.log("Fetching all gift cards from Square...");
       const giftCards = await squareClient.fetchGiftCards();
-      console.log(`Fetched ${giftCards.length} total gift cards from Square`);
+      console.log(`Fetched ${giftCards.length} total gift cards`);
       
       // Update sync state with total gift card count
       giftCardsSyncState = await pgStorage.updateSyncState(giftCardsSyncState.id, {
@@ -988,11 +946,10 @@ const hasSyncTimedOut = (): boolean => {
         status: 'processing',
       });
       
-      // Process each gift card and save to database with periodic checkpoints
-      let giftCardPosition = lastCheckpoint?.lastPosition || 0;
+      // Process each gift card with error handling
+      let giftCardPosition = giftCardsCheckpoint?.lastPosition || 0;
       let giftCardErrorCount = 0;
       
-      // Start from the last checkpoint position with error handling
       for (let i = giftCardPosition; i < giftCards.length; i++) {
         try {
           const giftCard = giftCards[i];
@@ -1038,7 +995,7 @@ const hasSyncTimedOut = (): boolean => {
         }
       }
       
-      console.log(`Gift card processing complete: processed ${giftCardPosition} cards, encountered ${giftCardErrorCount} errors, added ${results.giftCards} new gift cards`);
+      console.log(`Gift card sync complete: processed ${giftCardPosition} cards, encountered ${giftCardErrorCount} errors, added ${results.giftCards} new gift cards`);
       
       // Mark gift cards sync as complete
       await pgStorage.updateSyncState(giftCardsSyncState.id, {
@@ -1048,7 +1005,8 @@ const hasSyncTimedOut = (): boolean => {
         lastSyncedAt: new Date()
       });
       
-      console.log(`Sync complete. Added ${results.transactions} new transactions and ${results.giftCards} new gift cards.`);
+      // All sync operations complete
+      console.log(`Unified sync complete. Added ${results.transactions} new transactions, processed ${results.orders} orders, added ${results.giftCards} new gift cards.`);
       
       // Release the lock
       isSyncRunning = false;
@@ -1062,6 +1020,10 @@ const hasSyncTimedOut = (): boolean => {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
           totalDays: Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+        },
+        giftCardSummary: {
+          count: giftCardSalesCount,
+          amount: giftCardSalesAmount
         }
       });
     } catch (error) {
@@ -1069,13 +1031,17 @@ const hasSyncTimedOut = (): boolean => {
       
       // Update sync state with error in database
       try {
-        const paymentsSyncState = await pgStorage.getSyncState('payments');
-        if (paymentsSyncState) {
-          await pgStorage.updateSyncState(paymentsSyncState.id, {
-            status: 'error',
-            errorMessage: error instanceof Error ? error.message : "Unknown error",
-            lastSyncedAt: new Date()
-          });
+        // Try to update all sync states
+        const syncTypes = ['payments', 'orders', 'giftCards'];
+        for (const syncType of syncTypes) {
+          const syncState = await pgStorage.getSyncState(syncType);
+          if (syncState) {
+            await pgStorage.updateSyncState(syncState.id, {
+              status: 'error',
+              errorMessage: error instanceof Error ? error.message : "Unknown error",
+              lastSyncedAt: new Date()
+            });
+          }
         }
       } catch (dbError) {
         console.error("Failed to update error state in database:", dbError);
@@ -1092,241 +1058,8 @@ const hasSyncTimedOut = (): boolean => {
     }
   });
   
-  // Special route to sync data specifically for February 25, 2025
-  apiRouter.post("/sync-feb25", async (req, res) => {
-    try {
-      // Check if a sync is already running
-      if (isSyncRunning) {
-        // If sync has been running too long, consider it stalled and allow a new one
-        if (hasSyncTimedOut()) {
-          console.log("Previous sync timed out after 30 minutes. Allowing new Feb 25 sync to start.");
-          isSyncRunning = false;
-        } else {
-          console.log("Sync already in progress. Skipping Feb 25 sync request.");
-          // Get current sync state from database for response
-          const paymentsSyncState = await pgStorage.getSyncState('payments');
-          const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
-          
-          return res.status(409).json({ 
-            success: false, 
-            error: "A sync is already in progress. Please try again later.",
-            lastSyncTime: lastSyncTime.toISOString()
-          });
-        }
-      }
-      
-      // Set the lock to prevent concurrent syncs
-      isSyncRunning = true;
-      syncStartTime = new Date();
-      
-      // Create a special Feb25 sync state record
-      const feb25SyncState: InsertSyncState = {
-        syncType: 'feb25',
-        lastSyncedAt: new Date(),
-        processedCount: 0,
-        totalCount: 0,
-        isComplete: false,
-        status: 'in_progress',
-        lastCheckpoint: null
-      };
-      
-      // Get or create the feb25 sync state
-      let syncState = await pgStorage.getSyncState('feb25');
-      if (syncState) {
-        syncState = await pgStorage.updateSyncState(syncState.id, feb25SyncState);
-      } else {
-        syncState = await pgStorage.createSyncState(feb25SyncState);
-      }
-      
-      console.log("Starting specialized sync for February 25, 2025...");
-      
-      // Check Square API connection status
-      const accessToken = process.env.SQUARE_ACCESS_TOKEN;
-      const locationId = process.env.SQUARE_LOCATION_ID;
-      
-      if (!accessToken || !locationId) {
-        console.error("Square API credentials are missing. Check environment variables.");
-        return res.status(500).json({ 
-          success: false,
-          error: "Square API credentials are missing." 
-        });
-      }
-      
-      console.log("Using Square API with Location ID:", locationId);
-      
-      // Create specific date range for Feb 25, 2025 (from 00:00:00 to 23:59:59)
-      const startDate = new Date('2025-02-25T00:00:00.000Z');
-      const endDate = new Date('2025-02-25T23:59:59.999Z');
-      
-      console.log(`Syncing data for Feb 25, 2025: ${startDate.toISOString()} to ${endDate.toISOString()}`);
-      
-      // Fetch both payments AND orders to identify gift card sales
-      console.log("Fetching Feb 25 payments from Square API...");
-      const payments = await squareClient.fetchPayments(startDate, endDate);
-      console.log(`Fetched ${payments.length} total payments for Feb 25, 2025`);
-      
-      console.log("Fetching Feb 25 orders from Square API...");
-      const orders = await squareClient.fetchOrders(startDate, endDate);
-      console.log(`Fetched ${orders.length} total orders for Feb 25, 2025`);
-      
-      // Identify gift card sales from order line items
-      console.log("Analyzing orders for gift card sales...");
-      let giftCardSalesCount = 0;
-      let giftCardSalesAmount = 0;
-      
-      // First scan orders for gift card line items
-      for (const order of orders) {
-        if (order.lineItems) {
-          for (const lineItem of order.lineItems) {
-            const itemName = (lineItem.name || '').toLowerCase();
-            
-            // Check if this is a gift card line item
-            if (
-              itemName.includes('gift') || 
-              itemName.includes('gift card') || 
-              (lineItem.note && lineItem.note.toLowerCase().includes('gift')) ||
-              lineItem.itemType === 'GIFT_CARD'
-            ) {
-              giftCardSalesCount++;
-              
-              // Calculate the amount
-              const quantity = Number(lineItem.quantity || '1');
-              const unitPrice = lineItem.basePriceMoney && lineItem.basePriceMoney.amount
-                ? Number(lineItem.basePriceMoney.amount) / 100
-                : 0;
-              
-              const totalPrice = quantity * unitPrice;
-              giftCardSalesAmount += totalPrice;
-              
-              console.log(`Found gift card sale: ${lineItem.name}, amount: $${totalPrice.toFixed(2)}`);
-            }
-          }
-        }
-      }
-      
-      console.log(`GIFT CARD SALES SUMMARY: Found ${giftCardSalesCount} gift card items totaling $${giftCardSalesAmount.toFixed(2)}`);
-      
-      // Calculate total amount for all payments
-      const totalAmount = payments.reduce((sum, payment) => {
-        const amountMoney = payment.amountMoney;
-        let amount = 0;
-        
-        if (amountMoney && amountMoney.amount !== undefined) {
-          // Check if it's a BigInt and convert appropriately
-          if (typeof amountMoney.amount === 'bigint') {
-            amount = Number(amountMoney.amount) / 100;
-          } else {
-            // Regular number conversion
-            amount = (Number(amountMoney.amount) || 0) / 100;
-          }
-        }
-        
-        return sum + amount;
-      }, 0);
-      
-      // Count transactions by status
-      const statuses = payments.reduce((acc, payment) => {
-        const status = payment.status || 'unknown';
-        acc[status] = (acc[status] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-      
-      // Process each payment and save to database (first clear existing records)
-      console.log("Clearing existing Feb 25 transactions from database...");
-      
-      // This is a special case where we want to replace all Feb 25 data
-      // First count existing transactions for Feb 25 in our database
-      const existingCount = await db.select({ count: sql`count(*)` })
-        .from(transactions)
-        .where(
-          and(
-            gte(transactions.timestamp, startDate),
-            lte(transactions.timestamp, endDate)
-          )
-        );
-      
-      const existingTotal = parseInt(existingCount[0]?.count?.toString() || '0');
-      console.log(`Found ${existingTotal} existing transactions for Feb 25, 2025 in database`);
-      
-      // Then delete them all
-      await db.delete(transactions)
-        .where(
-          and(
-            gte(transactions.timestamp, startDate),
-            lte(transactions.timestamp, endDate)
-          )
-        );
-      
-      console.log(`Deleted ${existingTotal} existing transactions for Feb 25, 2025`);
-      
-      console.log("Adding new Feb 25 transactions to database...");
-      let addedCount = 0;
-      
-      for (const payment of payments) {
-        // Convert to our model and save (no need to check for existing as we cleared them)
-        const transaction = squareClient.convertSquarePaymentToTransaction(payment);
-        await pgStorage.createTransaction(transaction);
-        addedCount++;
-        
-        if (addedCount % 20 === 0) {
-          console.log(`Added ${addedCount} of ${payments.length} transactions...`);
-        }
-      }
-      
-      console.log(`Feb 25 sync complete. Replaced with ${addedCount} transactions with total amount $${totalAmount.toFixed(2)}`);
-      
-      // Update sync state as complete
-      await pgStorage.updateSyncState(syncState.id, {
-        processedCount: payments.length,
-        totalCount: payments.length,
-        isComplete: true,
-        status: 'completed',
-        lastSyncedAt: new Date()
-      });
-      
-      // Release the lock
-      isSyncRunning = false;
-      
-      res.json({
-        success: true,
-        message: "Feb 25 sync completed successfully",
-        lastSyncTime: new Date().toISOString(),
-        stats: {
-          totalTransactions: payments.length,
-          totalAmount: totalAmount,
-          statuses,
-          date: "February 25, 2025"
-        }
-      });
-    } catch (error) {
-      console.error("Error syncing February 25 data:", error);
-      
-      // Update sync state with error in database if it exists
-      try {
-        // Retrieve the feb25 sync state
-        const febSyncState = await pgStorage.getSyncState('feb25');
-        
-        if (febSyncState) {
-          await pgStorage.updateSyncState(febSyncState.id, {
-            status: 'error',
-            errorMessage: error instanceof Error ? error.message : "Unknown error",
-            lastSyncedAt: new Date()
-          });
-        }
-      } catch (dbError) {
-        console.error("Failed to update error state in database:", dbError);
-      }
-      
-      // Release the lock even if there's an error
-      isSyncRunning = false;
-      
-      res.status(500).json({ 
-        success: false,
-        error: "Failed to sync February 25 data",
-        details: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
-  });
+  // The separate Feb 25 endpoint has been consolidated into the main sync endpoint
+  // All data is now handled through a single, unified sync process
 
   // Status endpoint for sync progress has been removed as the UI does not need it
   // Database-backed checkpoint system continues to track sync state internally

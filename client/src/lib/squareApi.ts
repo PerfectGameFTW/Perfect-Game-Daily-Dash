@@ -37,13 +37,7 @@ const buildQueryString = (
       dateRange,
       queryParams
     });
-    
-    // Special handling for predefined date ranges
-    if (dateRange === 'yesterday') {
-      console.log('🔍 Using predefined YESTERDAY date range with no custom dates');
-    } else if (dateRange === 'today') {
-      console.log('🔍 Using predefined TODAY date range with no custom dates');
-    }
+    // All date ranges are handled the same way - no special case handling
   }
   
   return queryParams;
@@ -110,11 +104,8 @@ export const fetchDetailedTransactions = async (
   return await response.json();
 };
 
-// Function to test gift card detection for Feb 25 transactions
-export const testGiftCardDetection = async (): Promise<any> => {
-  const response = await apiRequest('GET', `/api/test-gift-card-detection`);
-  return await response.json();
-};
+// Test gift card detection endpoint removed as part of unifying sync process
+// All gift card transactions are now identified through the standard sync process
 
 // Get the current sync status
 // Sync status endpoint has been removed
