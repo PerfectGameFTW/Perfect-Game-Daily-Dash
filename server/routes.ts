@@ -32,7 +32,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Get daily summary data
-      const summary = await storage.getDailySummary(parsedDateRange, startDate, endDate);
+      const summary = await pgStorage.getDailySummary(parsedDateRange, startDate, endDate);
       
       res.json(summary);
     } catch (error) {
@@ -63,7 +63,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
       
-      const transactions = await storage.getTransactions(parsedDateRange, startDate, endDate);
+      const transactions = await pgStorage.getTransactions(parsedDateRange, startDate, endDate);
       
       res.json(transactions);
     } catch (error) {
@@ -94,7 +94,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
       
-      const categoryRevenue = await storage.getCategoryRevenue(parsedDateRange, startDate, endDate);
+      const categoryRevenue = await pgStorage.getCategoryRevenue(parsedDateRange, startDate, endDate);
       
       res.json(categoryRevenue);
     } catch (error) {
@@ -125,7 +125,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
       
-      const hourlyRevenue = await storage.getHourlyRevenue(parsedDateRange, startDate, endDate);
+      const hourlyRevenue = await pgStorage.getHourlyRevenue(parsedDateRange, startDate, endDate);
       
       res.json(hourlyRevenue);
     } catch (error) {
@@ -156,7 +156,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
       
-      const giftCardSummary = await storage.getGiftCardSummary(parsedDateRange, startDate, endDate);
+      const giftCardSummary = await pgStorage.getGiftCardSummary(parsedDateRange, startDate, endDate);
       
       res.json(giftCardSummary);
     } catch (error) {

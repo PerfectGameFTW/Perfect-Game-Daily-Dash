@@ -1,4 +1,4 @@
-import { SquareClient, SquareEnvironment, SquareError } from 'square';
+import { Client as SquareClient, Environment as SquareEnvironment, ApiError as SquareError } from 'square';
 import { 
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
@@ -10,7 +10,7 @@ dotenv.config();
 
 // Initialize Square client
 const squareClient = new SquareClient({
-  accessToken: process.env.SQUARE_ACCESS_TOKEN,
+  accessToken: process.env.SQUARE_ACCESS_TOKEN || '',
   environment: process.env.NODE_ENV === 'production' 
     ? SquareEnvironment.Production 
     : SquareEnvironment.Sandbox
@@ -60,7 +60,7 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     const endTime = end.toISOString();
     
     // Make API request to Square Orders API
-    const response = await squareClient.orders.searchOrders({
+    const response = await squareClient.ordersApi.searchOrders({
       locationIds: [process.env.SQUARE_LOCATION_ID!],
       query: {
         filter: {
@@ -100,17 +100,14 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     const endTime = end.toISOString();
     
     // Make API request to Square Payments API
-    const response = await squareClient.payments.listPayments(
-      startTime,
-      endTime,
-      undefined, // Cursor
-      undefined, // Location ID (we'll filter client-side)
-      100 // Limit
-    );
+    const response = await squareClient.paymentsApi.listPayments({
+      beginTime: startTime,
+      endTime: endTime,
+      locationId: process.env.SQUARE_LOCATION_ID,
+      limit: 100
+    });
     
-    // Filter for our location
-    return (response.result.payments || [])
-      .filter(payment => payment.locationId === process.env.SQUARE_LOCATION_ID);
+    return response.result.payments || [];
   } catch (error) {
     console.error('Error fetching payments from Square:', error);
     return [];
@@ -165,7 +162,9 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
 // Fetch gift cards from Square API
 export async function fetchGiftCards(): Promise<any[]> {
   try {
-    const response = await squareClient.giftCards.listGiftCards();
+    const response = await squareClient.giftCardsApi.listGiftCards({
+      type: 'DIGITAL' // You can change this based on your requirements
+    });
     return response.result.giftCards || [];
   } catch (error) {
     console.error('Error fetching gift cards from Square:', error);
