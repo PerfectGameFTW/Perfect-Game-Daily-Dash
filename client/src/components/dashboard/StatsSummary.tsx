@@ -72,28 +72,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
       {/* Metric Items */}
       <div className="space-y-5">
-        {/* Net Sales Item */}
-        <div className="flex justify-between py-3 border-b border-zinc-800">
-          <span className="text-white">Net sales</span>
-          <div className="flex items-center">
-            <span className="text-white mr-3">{formatCurrency(data?.totalRevenue || 0)}</span>
-            <div 
-              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
-                isPositiveChange(data?.revenueChange || 0)
-                  ? "bg-green-900/30 text-green-400"
-                  : "bg-red-900/30 text-red-400"
-              }`}
-            >
-              {isPositiveChange(data?.revenueChange || 0) ? (
-                <ChevronUp className="mr-0.5 h-3 w-3" />
-              ) : (
-                <ChevronDown className="mr-0.5 h-3 w-3" />
-              )}
-              {formatPercentage(Math.abs(data?.revenueChange || 0))}
-            </div>
-          </div>
-        </div>
-
         {/* Gross Sales Item */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Gross sales</span>
@@ -134,6 +112,28 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 <ChevronDown className="mr-0.5 h-3 w-3" />
               )}
               {formatPercentage(Math.abs(data?.ordersChange || 0))}
+            </div>
+          </div>
+        </div>
+
+        {/* Net Sales Item */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Net sales</span>
+          <div className="flex items-center">
+            <span className="text-white mr-3">{formatCurrency(data?.totalRevenue || 0)}</span>
+            <div 
+              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
+                isPositiveChange(data?.revenueChange || 0)
+                  ? "bg-green-900/30 text-green-400"
+                  : "bg-red-900/30 text-red-400"
+              }`}
+            >
+              {isPositiveChange(data?.revenueChange || 0) ? (
+                <ChevronUp className="mr-0.5 h-3 w-3" />
+              ) : (
+                <ChevronDown className="mr-0.5 h-3 w-3" />
+              )}
+              {formatPercentage(Math.abs(data?.revenueChange || 0))}
             </div>
           </div>
         </div>
