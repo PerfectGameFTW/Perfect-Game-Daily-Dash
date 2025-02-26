@@ -112,6 +112,16 @@ export const fetchSyncStatus = async (): Promise<{
     error: string | null;
   };
 }> => {
-  const response = await apiRequest('GET', '/api/sync-status');
-  return await response.json();
+  try {
+    // Make direct fetch request to bypass potential API wrapper issues
+    const response = await fetch('/api/sync-status');
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("Error fetching sync status:", error);
+    throw error;
+  }
 };
