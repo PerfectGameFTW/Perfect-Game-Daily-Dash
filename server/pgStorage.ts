@@ -152,21 +152,23 @@ export class PgStorage implements IStorage {
         )
       );
     
-    // Calculate current period metrics
-    const totalRevenue = currentTransactions.reduce((sum, t) => sum + t.amount, 0);
-    const totalOrders = currentTransactions.length;
+    // Calculate current period metrics - only count completed transactions
+    const completedTransactions = currentTransactions.filter(t => t.status === 'completed');
+    const totalRevenue = completedTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const totalOrders = completedTransactions.length;
     const averageOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0;
     
-    // Gift card sales
-    const giftCardSales = currentTransactions
+    // Gift card sales - only count completed transactions
+    const giftCardSales = completedTransactions
       .filter(t => t.categoryId === 'giftCard')
       .reduce((sum, t) => sum + t.amount, 0);
     
-    // Calculate previous period metrics for change percentages
-    const prevTotalRevenue = prevTransactions.reduce((sum, t) => sum + t.amount, 0);
-    const prevTotalOrders = prevTransactions.length;
+    // Calculate previous period metrics for change percentages - only count completed transactions
+    const completedPrevTransactions = prevTransactions.filter(t => t.status === 'completed');
+    const prevTotalRevenue = completedPrevTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const prevTotalOrders = completedPrevTransactions.length;
     const prevAverageOrder = prevTotalOrders > 0 ? prevTotalRevenue / prevTotalOrders : 0;
-    const prevGiftCardSales = prevTransactions
+    const prevGiftCardSales = completedPrevTransactions
       .filter(t => t.categoryId === 'giftCard')
       .reduce((sum, t) => sum + t.amount, 0);
     
@@ -214,10 +216,11 @@ export class PgStorage implements IStorage {
     
     const currentTransactions = await this.getTransactions(dateRange, start, end);
     
-    // Group by category and calculate totals
+    // Group by category and calculate totals - only count completed transactions
     const categoryMap = new Map<string, number>();
     
-    currentTransactions.forEach(transaction => {
+    const completedTransactions = currentTransactions.filter(t => t.status === 'completed');
+    completedTransactions.forEach(transaction => {
       const currentAmount = categoryMap.get(transaction.categoryId) || 0;
       categoryMap.set(transaction.categoryId, currentAmount + transaction.amount);
     });
@@ -252,8 +255,9 @@ export class PgStorage implements IStorage {
     
     const currentTransactions = await this.getTransactions(dateRange, start, end);
     
-    // Group transactions by hour
-    currentTransactions.forEach(transaction => {
+    // Group transactions by hour - only count completed transactions
+    const completedTransactions = currentTransactions.filter(t => t.status === 'completed');
+    completedTransactions.forEach(transaction => {
       const date = new Date(transaction.timestamp);
       const hour = date.getHours();
       
@@ -282,12 +286,13 @@ export class PgStorage implements IStorage {
     console.log(`Gift Card Summary - Date Range: ${start.toISOString()} to ${end.toISOString()}`);
     
     // IMPROVED: Get transactions specifically for gift card sales
-    // We need to query transactions directly with categoryId = 'giftCard'
+    // We need to query completed transactions directly with categoryId = 'giftCard'
     const giftCardSales = await db.select()
       .from(transactions)
       .where(
         and(
           eq(transactions.categoryId, 'giftCard'),
+          eq(transactions.status, 'completed'),  // Only include completed transactions
           gte(transactions.timestamp, start),
           lte(transactions.timestamp, end)
         )
@@ -308,7 +313,7 @@ export class PgStorage implements IStorage {
         )
       );
     
-    // Calculate gift card sales
+    // Calculate gift card sales (already filtered for completed transactions in the query)
     const soldCount = giftCardSales.length;
     const soldAmount = giftCardSales.reduce((sum, t) => sum + t.amount, 0);
     
