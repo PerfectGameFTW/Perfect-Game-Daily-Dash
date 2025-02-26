@@ -1,12 +1,21 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
 import { fetchHourlyRevenue } from "@/lib/squareApi";
-import { DateRange } from "@shared/schema";
+import { DateRange, HourlyRevenue } from "@shared/schema";
 import { formatCurrency } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
-import Chart from "chart.js/auto";
-import { Clock } from "lucide-react";
+import { Clock, TrendingUp } from "lucide-react";
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip,
+  ResponsiveContainer,
+  LabelList
+} from 'recharts';
 
 interface HourlyRevenueChartProps {
   dateRange: DateRange;
@@ -14,140 +23,64 @@ interface HourlyRevenueChartProps {
   customEndDate?: Date;
 }
 
+// Format data for Recharts
+const formatDataForChart = (data: HourlyRevenue[]) => {
+  return data.map(item => ({
+    name: item.hour,
+    value: item.amount,
+    formattedValue: formatCurrency(item.amount)
+  }));
+};
+
 export default function HourlyRevenueChart({ 
   dateRange, 
   customStartDate, 
   customEndDate 
 }: HourlyRevenueChartProps) {
-  const chartRef = useRef<HTMLCanvasElement>(null);
-  const chartInstance = useRef<Chart | null>(null);
-
   const { data, isLoading } = useQuery({
     queryKey: ['/api/hourly-revenue', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchHourlyRevenue(dateRange, customStartDate, customEndDate),
   });
-
+  
+  const [chartData, setChartData] = useState<Array<{name: string; value: number; formattedValue: string}>>([]);
+  
   // Find the peak hour
   const peakHour = data && data.length > 0 
     ? data.reduce((max, item) => (item.amount > max.amount ? item : max), data[0])
     : null;
 
   useEffect(() => {
-    // Cleanup previous chart
-    if (chartInstance.current) {
-      chartInstance.current.destroy();
+    if (data && data.length > 0) {
+      setChartData(formatDataForChart(data));
     }
+  }, [data]);
 
-    if (!chartRef.current || isLoading || !data) return;
-
-    // Create new chart
-    const ctx = chartRef.current.getContext('2d');
-    if (!ctx) return;
-
-    const primaryColor = '#375de7'; // Main blue color
-    const accentColor = 'rgba(55, 93, 231, 0.1)'; // Lighter blue for background
-
-    chartInstance.current = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: data.map(item => item.hour),
-        datasets: [{
-          label: 'Revenue',
-          data: data.map(item => item.amount),
-          borderColor: primaryColor,
-          backgroundColor: accentColor,
-          borderWidth: 3,
-          tension: 0.4,
-          fill: true,
-          pointBackgroundColor: primaryColor,
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          pointRadius: 4,
-          pointHoverRadius: 6
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: false
-          },
-          tooltip: {
-            backgroundColor: 'rgba(17, 24, 39, 0.9)',
-            titleColor: '#fff',
-            bodyColor: '#fff',
-            padding: 12,
-            boxPadding: 8,
-            cornerRadius: 6,
-            displayColors: false,
-            callbacks: {
-              label: function(context) {
-                return formatCurrency(context.parsed.y);
-              }
-            }
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            grid: {
-              color: 'rgba(255, 255, 255, 0.1)'
-              // Remove borderDash property as it's not supported
-            },
-            ticks: {
-              color: 'rgba(255, 255, 255, 0.7)',
-              padding: 10,
-              callback: function(value) {
-                return formatCurrency(value as number);
-              }
-            }
-          },
-          x: {
-            grid: {
-              color: 'rgba(255, 255, 255, 0.05)',
-              display: false
-            },
-            ticks: {
-              color: 'rgba(255, 255, 255, 0.7)',
-              padding: 10
-            }
-          }
-        },
-        elements: {
-          line: {
-            tension: 0.4
-          }
-        },
-        interaction: {
-          mode: 'index',
-          intersect: false
-        },
-        animation: {
-          duration: 1000
-        }
-      }
-    });
-
-    // Cleanup on unmount
-    return () => {
-      if (chartInstance.current) {
-        chartInstance.current.destroy();
-      }
-    };
-  }, [data, isLoading, dateRange]);
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-background/90 p-3 rounded-md shadow-md border border-border">
+          <p className="text-sm font-medium">{payload[0].payload.name}</p>
+          <p className="text-primary font-bold">
+            {formatCurrency(payload[0].payload.value)}
+          </p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <Card className="overflow-hidden dashboard-card transition-all duration-200 border border-border/40 bg-card/50 backdrop-blur-sm">
       <CardHeader className="px-6 py-5 flex flex-row items-center justify-between space-y-0">
         <div className="space-y-1">
-          <CardTitle className="text-xl font-semibold flex items-center space-x-2">
+          <CardTitle className="text-xl font-semibold flex items-center">
             <Clock size={20} className="mr-2 text-primary" />
             <span>Hourly Revenue</span>
           </CardTitle>
           {peakHour && !isLoading && (
-            <CardDescription>
-              Peak hour: {peakHour.hour} ({formatCurrency(peakHour.amount)})
+            <CardDescription className="flex items-center">
+              <TrendingUp size={16} className="mr-1 text-green-500" />
+              <span>Peak: {peakHour.hour} ({formatCurrency(peakHour.amount)})</span>
             </CardDescription>
           )}
         </div>
@@ -159,7 +92,45 @@ export default function HourlyRevenueChart({
           </div>
         ) : (
           <div className="h-72">
-            <canvas ref={chartRef}></canvas>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={chartData}
+                margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.1} />
+                <XAxis 
+                  dataKey="name" 
+                  tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
+                  tickLine={false}
+                  axisLine={{ stroke: 'var(--border)', strokeWidth: 1 }}
+                />
+                <YAxis 
+                  tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
+                  tickLine={false}
+                  axisLine={{ stroke: 'var(--border)', strokeWidth: 1 }}
+                  tickFormatter={(value) => `$${value}`}
+                />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'var(--primary-foreground)', opacity: 0.1 }} />
+                <Bar 
+                  dataKey="value" 
+                  fill="var(--primary)" 
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={50}
+                  animationDuration={1500}
+                >
+                  <LabelList 
+                    dataKey="formattedValue" 
+                    position="top" 
+                    style={{ 
+                      fontSize: '10px',
+                      fill: 'var(--muted-foreground)',
+                      fontWeight: 500
+                    }}
+                    formatter={(value: string) => value !== '$0.00' ? value : ''}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         )}
       </CardContent>

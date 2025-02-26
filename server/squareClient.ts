@@ -116,7 +116,18 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
 export function convertSquarePaymentToTransaction(payment: Record<string, any>): InsertTransaction {
   // Extract the amount
   const amountMoney = payment.amountMoney;
-  const amount = amountMoney ? (amountMoney.amount || 0) / 100 : 0; // Convert from cents to dollars
+  let amount = 0;
+  
+  // Handle BigInt conversion safely
+  if (amountMoney && amountMoney.amount !== undefined) {
+    // Check if it's a BigInt and convert appropriately
+    if (typeof amountMoney.amount === 'bigint') {
+      amount = Number(amountMoney.amount) / 100;
+    } else {
+      // Regular number conversion
+      amount = (Number(amountMoney.amount) || 0) / 100;
+    }
+  }
   
   // Determine category based on payment information
   let category: Category = 'retail'; // Default
@@ -229,9 +240,21 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     });
   }
   
+  // Handle amount safely for potential BigInt values
+  let amount = 0;
+  if (giftCard.balance_money && giftCard.balance_money.amount !== undefined) {
+    // Check if it's a BigInt and convert appropriately
+    if (typeof giftCard.balance_money.amount === 'bigint') {
+      amount = Number(giftCard.balance_money.amount) / 100;
+    } else {
+      // Regular number conversion
+      amount = (Number(giftCard.balance_money.amount) || 0) / 100;
+    }
+  }
+  
   const card: InsertGiftCard = {
     squareId: giftCard.id,
-    amount: giftCard.balance_money ? (giftCard.balance_money.amount || 0) / 100 : 0,
+    amount: amount,
     redeemedAmount: 0, // May need to calculate this separately
     isActive: giftCard.state === 'ACTIVE',
     purchaseDate,
