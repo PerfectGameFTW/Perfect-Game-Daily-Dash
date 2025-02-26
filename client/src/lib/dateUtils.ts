@@ -42,6 +42,9 @@ export function navigateDate(
   startDate?: Date, 
   endDate?: Date 
 } {
+  // Log inputs for debugging
+  console.log('Navigate Date:', { direction, currentDateRange, customStartDate, customEndDate });
+  
   const today = new Date();
   
   // Reset hours, minutes, seconds, and milliseconds for consistent date comparisons

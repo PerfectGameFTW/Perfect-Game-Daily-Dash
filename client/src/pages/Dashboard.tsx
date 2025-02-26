@@ -19,14 +19,20 @@ export default function Dashboard() {
   const { toast } = useToast();
 
   const handleDateRangeChange = (newRange: DateRange, start?: Date, end?: Date) => {
+    console.log('Dashboard date range change:', { newRange, start, end });
     setDateRange(newRange);
-    if (newRange === "custom") {
-      setCustomStartDate(start);
-      setCustomEndDate(end);
-    } else {
-      setCustomStartDate(undefined);
-      setCustomEndDate(undefined);
-    }
+    
+    // Always set start and end dates, regardless of range type
+    // This allows dates like "yesterday" to be stored as actual dates
+    setCustomStartDate(start);
+    setCustomEndDate(end);
+    
+    // After updating the state, invalidate queries to refresh data
+    queryClient.invalidateQueries({ queryKey: ['/api/summary'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/revenue-by-category'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/hourly-revenue'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/gift-card-summary'] });
   };
 
   const handleSync = async () => {

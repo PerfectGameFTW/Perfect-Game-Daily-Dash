@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { DateRange } from "@shared/schema";
-import { format } from "date-fns";
+import { format, isSameDay, subDays } from "date-fns";
 import { navigateDate, getFormattedDate } from "@/lib/dateUtils";
 
 interface HeaderProps {
@@ -18,33 +18,55 @@ export default function Header({
   onDateRangeChange,
   onOpenTimeframeModal
 }: HeaderProps) {
-  // Format the current display date
+  // Format the current display date 
   const today = new Date();
-  const displayDate = dateRange === 'custom' && customStartDate && customEndDate 
-    ? `${format(customStartDate, 'MMM d')} - ${format(customEndDate, 'MMM d')}` 
-    : dateRange === 'today' 
-      ? customStartDate 
-        ? `${format(customStartDate, 'MMM d')}`
-        : `Today, ${format(today, 'MMM d')}`
+  
+  let displayDate;
+  
+  if (customStartDate) {
+    // If we have a custom start date, always use it for display
+    if (customEndDate && !isSameDay(customStartDate, customEndDate)) {
+      displayDate = `${format(customStartDate, 'MMM d')} - ${format(customEndDate, 'MMM d')}`;
+    } else {
+      displayDate = format(customStartDate, 'MMM d, yyyy');
+    }
+  } else {
+    // Fall back to standard labels when no custom date is set
+    displayDate = dateRange === 'today' 
+      ? `Today, ${format(today, 'MMM d')}`
       : dateRange === 'yesterday'
-        ? `Yesterday, ${format(new Date(new Date().setDate(today.getDate() - 1)), 'MMM d')}`
+        ? `Yesterday, ${format(subDays(new Date(), 1), 'MMM d')}`
         : dateRange === 'thisMonth'
           ? `This Month`
           : dateRange === 'last7days'
             ? 'This Week'
             : dateRange === 'last30days'
               ? 'This Year'
-              : `Custom Range`;
+              : dateRange === 'custom' && !customStartDate
+                ? 'Custom Range'
+                : format(today, 'MMM d, yyyy');
+  }
+  
+  console.log('Display date:', {
+    displayDate,
+    dateRange,
+    customStartDate: customStartDate?.toISOString(),
+    customEndDate: customEndDate?.toISOString()
+  });
 
   const handlePrevDate = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent the drawer from opening
+    console.log('Clicked previous arrow');
     const result = navigateDate('prev', dateRange, customStartDate, customEndDate);
+    console.log('Navigation result:', result);
     onDateRangeChange(result.dateRange, result.startDate, result.endDate);
   };
 
   const handleNextDate = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent the drawer from opening
+    console.log('Clicked next arrow');
     const result = navigateDate('next', dateRange, customStartDate, customEndDate);
+    console.log('Navigation result:', result);
     onDateRangeChange(result.dateRange, result.startDate, result.endDate);
   };
 
