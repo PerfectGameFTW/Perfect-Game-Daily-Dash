@@ -130,6 +130,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         {/* Detailed Transaction Breakdown - now as separate items */}
         {!isDetailedLoading && detailedTransactions && (
           <>
+            {/* Gift Card Sales - Moved to top as requested */}
+            <div className="flex justify-between py-3 border-b border-zinc-800">
+              <span className="text-white">Gift Card Sales</span>
+              <span className="text-white">{formatCurrency(detailedTransactions.giftCardSales || 0)}</span>
+            </div>
+            
             {/* Partywirks */}
             <div className="flex justify-between py-3 border-b border-zinc-800">
               <span className="text-white">Partywirks</span>
@@ -170,12 +176,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             <div className="flex justify-between py-3 border-b border-zinc-800">
               <span className="text-white">Discounts & Comps</span>
               <span className="text-white">{formatCurrency(detailedTransactions.discountsAndComps || 0)}</span>
-            </div>
-            
-            {/* Gift Card Sales */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Gift Card Sales</span>
-              <span className="text-white">{formatCurrency(detailedTransactions.giftCardSales || 0)}</span>
             </div>
           </>
         )}
