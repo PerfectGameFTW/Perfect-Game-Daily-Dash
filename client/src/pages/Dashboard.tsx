@@ -7,8 +7,6 @@ import TimeframeModal from "@/components/dashboard/TimeframeModal";
 import { DateRange } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import useMobile from "@/hooks/use-mobile";
-import { ArrowUpRight, CalendarDays, LayoutGrid, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { queryClient } from "@/lib/queryClient";
 
 export default function Dashboard() {
@@ -89,49 +87,6 @@ export default function Dashboard() {
 
       {/* Dashboard Content */}
       <main className="flex-1 overflow-y-auto px-4 py-4 space-y-6 max-w-7xl mx-auto">
-        {/* Control Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-          <div className="inline-flex items-center gap-2">
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={() => setTimeframeModalOpen(true)}
-              className="flex items-center gap-1"
-            >
-              <CalendarDays size={16} />
-              <span>Timeframe</span>
-            </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={handleSync}
-              disabled={isSyncing}
-              className="flex items-center gap-1"
-            >
-              <RefreshCw size={16} className={isSyncing ? "animate-spin" : ""} />
-              <span>{isSyncing ? "Syncing..." : "Sync"}</span>
-            </Button>
-          </div>
-          <div className="inline-flex items-center gap-2">
-            <Button 
-              variant="secondary" 
-              size="sm" 
-              className="flex items-center gap-1"
-            >
-              <LayoutGrid size={16} />
-              <span>Dashboard</span>
-            </Button>
-            <Button 
-              variant="default" 
-              size="sm"
-              className="flex items-center gap-1"
-            >
-              <span>Square Portal</span>
-              <ArrowUpRight size={16} />
-            </Button>
-          </div>
-        </div>
-
         {/* Stats Overview */}
         <StatsSummary 
           dateRange={dateRange} 
