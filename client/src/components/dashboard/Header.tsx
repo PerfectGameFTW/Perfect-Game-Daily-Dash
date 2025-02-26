@@ -71,6 +71,15 @@ export default function Header({
       newEndDate: result.endDate?.toISOString()
     });
     
+    // For debugging - add a detailed log about which path we're taking
+    if (dateRange === 'today' && !customStartDate) {
+      console.log('🔍 Going from TODAY to YESTERDAY via arrow');
+    } else if (dateRange === 'yesterday' && !customStartDate) {
+      console.log('🔍 Going from YESTERDAY to custom date via arrow');
+    } else if (customStartDate) {
+      console.log('🔍 Navigating from custom date', customStartDate, 'to previous day');
+    }
+    
     onDateRangeChange(result.dateRange, result.startDate, result.endDate);
   };
 

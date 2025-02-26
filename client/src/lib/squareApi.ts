@@ -24,7 +24,7 @@ const buildQueryString = (
     const endDateString = endDateObj.toISOString().split('T')[0];
     queryParams += `&endDate=${endDateString}`;
     
-    console.log('API Request with dates:', {
+    console.log('API Request with custom dates:', {
       dateRange,
       startDateObj: startDateObj.toISOString(),
       endDateObj: endDateObj.toISOString(),
@@ -37,6 +37,13 @@ const buildQueryString = (
       dateRange,
       queryParams
     });
+    
+    // Special handling for predefined date ranges
+    if (dateRange === 'yesterday') {
+      console.log('🔍 Using predefined YESTERDAY date range with no custom dates');
+    } else if (dateRange === 'today') {
+      console.log('🔍 Using predefined TODAY date range with no custom dates');
+    }
   }
   
   return queryParams;

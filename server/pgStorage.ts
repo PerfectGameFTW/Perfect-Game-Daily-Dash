@@ -308,6 +308,23 @@ export class PgStorage implements IStorage {
     
     const now = new Date();
     
+    // If explicit dates are provided, they take precedence over the dateRange
+    if (startDate && (dateRange === 'custom' || endDate)) {
+      // For custom range or when both dates are specified
+      start = startOfDay(startDate);
+      end = endOfDay(endDate || startDate);
+      
+      console.log('Using explicit date range:', {
+        dateRange,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        isCustom: true
+      });
+      
+      return { start, end };
+    }
+    
+    // Otherwise, use the predefined dateRange
     switch (dateRange) {
       case 'today':
         start = startOfDay(now);
@@ -335,16 +352,19 @@ export class PgStorage implements IStorage {
         end = endOfMonth(lastMonth);
         break;
       case 'custom':
-        if (!startDate || !endDate) {
-          throw new Error('Start date and end date must be provided for custom date range');
-        }
-        start = startOfDay(startDate);
-        end = endOfDay(endDate);
-        break;
+        // Should only get here if custom range was selected without dates
+        throw new Error('Start date and end date must be provided for custom date range');
       default:
         start = startOfDay(now);
         end = endOfDay(now);
     }
+    
+    console.log('Using predefined date range:', {
+      dateRange,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      isCustom: false
+    });
     
     return { start, end };
   }

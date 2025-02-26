@@ -76,7 +76,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Log incoming date strings for debugging
           console.log('Summary API - Parsing dates:', {
             startDateStr: req.query.startDate,
-            endDateStr: req.query.endDate
+            endDateStr: req.query.endDate,
+            dateRange: dateRange
           });
           
           // Handle different date formats (ISO string or simple date)
@@ -101,10 +102,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           console.log('Summary API - Parsed dates:', {
             startDate: startDate?.toISOString(),
-            endDate: endDate?.toISOString()
+            endDate: endDate?.toISOString(),
+            dateRange: dateRange
           });
         } catch (err) {
           console.error('Error parsing dates:', err);
+        }
+      } else {
+        // Log when we're using a predefined date range with no custom dates
+        console.log('Summary API - Using predefined date range:', {
+          dateRange: dateRange
+        });
+        
+        if (dateRange === 'yesterday') {
+          console.log('🔍 SERVER: Processing YESTERDAY request with no custom dates');
         }
       }
       
