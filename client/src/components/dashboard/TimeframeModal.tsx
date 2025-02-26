@@ -50,15 +50,20 @@ export default function TimeframeModal({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="bg-black border-t border-zinc-800 rounded-t-xl overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
-          <DrawerTitle className="text-xl font-semibold text-white">Timeframe</DrawerTitle>
-          <DrawerClose asChild>
-            <Button variant="outline" className="bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700 px-4 py-1 h-auto">
-              Done
-            </Button>
-          </DrawerClose>
-        </div>
+      <DrawerContent className="bg-black border-t border-zinc-800 rounded-t-xl overflow-y-auto" aria-describedby="timeframe-description">
+        <DrawerHeader>
+          <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+            <DrawerTitle className="text-xl font-semibold text-white">Timeframe</DrawerTitle>
+            <DrawerClose asChild>
+              <Button variant="outline" className="bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700 px-4 py-1 h-auto">
+                Done
+              </Button>
+            </DrawerClose>
+          </div>
+          <div className="sr-only" id="timeframe-description">
+            Select a timeframe for your dashboard data
+          </div>
+        </DrawerHeader>
         <div className="px-6 py-4 overflow-y-auto">
           {timeframes.map((timeframe) => (
             <div 

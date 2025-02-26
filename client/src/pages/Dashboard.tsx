@@ -3,8 +3,13 @@ import Header from "@/components/dashboard/Header";
 import StatsSummary from "@/components/dashboard/StatsSummary";
 import BottomNavigation from "@/components/dashboard/BottomNavigation";
 import TimeframeModal from "@/components/dashboard/TimeframeModal";
+import RevenueByCategoryChart from "@/components/dashboard/RevenueByCategoryChart";
+import HourlyRevenueChart from "@/components/dashboard/HourlyRevenueChart";
+import RecentTransactionsTable from "@/components/dashboard/RecentTransactionsTable";
+import GiftCardActivity from "@/components/dashboard/GiftCardActivity";
 import { DateRange } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Dashboard() {
   const [dateRange, setDateRange] = useState<DateRange>("today");
@@ -36,13 +41,53 @@ export default function Dashboard() {
       />
 
       {/* Dashboard Content */}
-      <main className="flex-1 overflow-y-auto px-4">
+      <main className="flex-1 overflow-y-auto px-4 space-y-6">
         {/* Stats Overview */}
         <StatsSummary 
           dateRange={dateRange} 
           customStartDate={customStartDate}
           customEndDate={customEndDate}
         />
+        
+        {/* Revenue Charts */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <RevenueByCategoryChart 
+            dateRange={dateRange}
+            customStartDate={customStartDate}
+            customEndDate={customEndDate}
+          />
+          <HourlyRevenueChart 
+            dateRange={dateRange}
+            customStartDate={customStartDate}
+            customEndDate={customEndDate}
+          />
+        </div>
+        
+        {/* Tabbed Content for Transactions and Gift Cards */}
+        <Tabs defaultValue="transactions" className="w-full">
+          <TabsList className="bg-zinc-900 border border-zinc-800">
+            <TabsTrigger value="transactions" className="data-[state=active]:bg-zinc-800">
+              Recent Transactions
+            </TabsTrigger>
+            <TabsTrigger value="giftcards" className="data-[state=active]:bg-zinc-800">
+              Gift Card Activity
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="transactions">
+            <RecentTransactionsTable 
+              dateRange={dateRange}
+              customStartDate={customStartDate}
+              customEndDate={customEndDate}
+            />
+          </TabsContent>
+          <TabsContent value="giftcards">
+            <GiftCardActivity 
+              dateRange={dateRange}
+              customStartDate={customStartDate}
+              customEndDate={customEndDate}
+            />
+          </TabsContent>
+        </Tabs>
       </main>
       
       {/* Bottom Navigation */}
