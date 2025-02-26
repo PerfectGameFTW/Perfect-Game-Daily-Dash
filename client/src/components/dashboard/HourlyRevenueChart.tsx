@@ -93,7 +93,7 @@ export default function HourlyRevenueChart({
             beginAtZero: true,
             grid: {
               color: 'rgba(255, 255, 255, 0.1)',
-              drawBorder: false
+              borderDash: [4, 4]
             },
             ticks: {
               color: 'rgba(255, 255, 255, 0.7)',
@@ -106,7 +106,6 @@ export default function HourlyRevenueChart({
           x: {
             grid: {
               color: 'rgba(255, 255, 255, 0.05)',
-              drawBorder: false,
               display: false
             },
             ticks: {

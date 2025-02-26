@@ -189,6 +189,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         giftCards: 0
       };
       
+      // Check Square API connection status
+      const accessToken = process.env.SQUARE_ACCESS_TOKEN;
+      const locationId = process.env.SQUARE_LOCATION_ID;
+      
+      if (!accessToken || !locationId) {
+        console.error("Square API credentials are missing. Check environment variables.");
+        return res.status(500).json({ 
+          success: false,
+          error: "Square API credentials are missing." 
+        });
+      }
+      
+      console.log("Using Square API with Location ID:", locationId);
+      console.log("Using production Square API environment");
+      
       // Fetch payments from Square
       const payments = await squareClient.fetchPayments();
       console.log(`Fetched ${payments.length} payments from Square`);
@@ -229,7 +244,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error syncing with Square:", error);
-      res.status(500).json({ error: "Failed to sync with Square" });
+      res.status(500).json({ 
+        success: false,
+        error: "Failed to sync with Square" 
+      });
     }
   });
 

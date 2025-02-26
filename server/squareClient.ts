@@ -8,12 +8,10 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Initialize Square client
+// Initialize Square client with production environment
 const squareClient = new Client({
   accessToken: process.env.SQUARE_ACCESS_TOKEN || '',
-  environment: process.env.NODE_ENV === 'production' 
-    ? Environment.Production 
-    : Environment.Sandbox
+  environment: Environment.Production  // Force production environment
 });
 
 // Map Square payment status to our TransactionStatus
