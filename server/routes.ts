@@ -413,21 +413,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate);
       
       // Calculate transaction breakdowns
-      // Mock data for now - in a real implementation we would analyze transaction data
+      // In a real implementation, we would have more accurate detection
       const detailedBreakdown = {
-        partywirks: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('partywirks'))
+        partywirks: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
+          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+          t.squareData.note.toLowerCase().includes('partywirks'))
           .reduce((sum, t) => sum + t.amount, 0),
-        tripleseat: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('tripleseat'))
+        tripleseat: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
+          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+          t.squareData.note.toLowerCase().includes('tripleseat'))
           .reduce((sum, t) => sum + t.amount, 0),
-        tips: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('tip'))
+        tips: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
+          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+          t.squareData.note.toLowerCase().includes('tip'))
           .reduce((sum, t) => sum + t.amount, 0),
-        serviceCharges: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('service charge'))
+        serviceCharges: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
+          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+          t.squareData.note.toLowerCase().includes('service charge'))
           .reduce((sum, t) => sum + t.amount, 0),
-        taxes: allTransactions.filter(t => t.squareData && t.squareData.note && t.squareData.note.toLowerCase().includes('tax'))
+        taxes: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
+          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+          t.squareData.note.toLowerCase().includes('tax'))
           .reduce((sum, t) => sum + t.amount, 0),
         refunds: allTransactions.filter(t => t.status === 'refunded')
           .reduce((sum, t) => sum + t.amount, 0),
-        discountsAndComps: allTransactions.filter(t => t.squareData && t.squareData.note && 
+        discountsAndComps: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
+          'note' in t.squareData && typeof t.squareData.note === 'string' && 
           (t.squareData.note.toLowerCase().includes('discount') || t.squareData.note.toLowerCase().includes('comp')))
           .reduce((sum, t) => sum + t.amount, 0),
         giftCardSales: allTransactions.filter(t => t.categoryId === 'giftCard')

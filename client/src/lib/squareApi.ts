@@ -100,6 +100,16 @@ export const fetchGiftCardSummary = async (
   return await response.json();
 };
 
+export const fetchDetailedTransactions = async (
+  dateRange: DateRange = 'today',
+  startDate?: Date,
+  endDate?: Date
+): Promise<DetailedTransactionBreakdown> => {
+  const queryString = buildQueryString(dateRange, startDate, endDate);
+  const response = await apiRequest('GET', `/api/detailed-transactions?${queryString}`);
+  return await response.json();
+};
+
 // Function to test gift card detection for Feb 25 transactions
 export const testGiftCardDetection = async (): Promise<any> => {
   const response = await apiRequest('GET', `/api/test-gift-card-detection`);

@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchDailySummary } from "@/lib/squareApi";
+import { fetchDailySummary, fetchDetailedTransactions } from "@/lib/squareApi";
 import { DateRange } from "@shared/schema";
 import { formatCurrency, formatPercentage, isPositiveChange } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import SimpleHourlyChart from "./SimpleHourlyChart";
 import { 
   ChevronUp, 
-  ChevronDown 
+  ChevronDown,
+  ChevronRight
 } from "lucide-react";
 
 interface StatsSummaryProps {
@@ -20,13 +21,23 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     queryKey: ['/api/summary', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchDailySummary(dateRange, customStartDate, customEndDate),
   });
+  
+  const { data: detailedTransactions, isLoading: isDetailedLoading } = useQuery({
+    queryKey: ['/api/detailed-transactions', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
+    queryFn: () => fetchDetailedTransactions(dateRange, customStartDate, customEndDate),
+  });
 
-  if (isLoading) {
+  if (isLoading || isDetailedLoading) {
     return (
       <div className="mt-6">
         <Skeleton className="h-6 w-32 mb-3" />
         <Skeleton className="h-10 w-48 mb-1" />
         <Skeleton className="h-56 w-full mb-6" />
+        <Skeleton className="h-6 w-40 mb-3" />
+        <Skeleton className="h-4 w-full mb-2" />
+        <Skeleton className="h-4 w-full mb-2" />
+        <Skeleton className="h-4 w-full mb-2" />
+        <Skeleton className="h-4 w-full mb-2" />
       </div>
     );
   }
@@ -115,6 +126,83 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
           </div>
         </div>
+        
+        {/* Detailed Transaction Breakdown */}
+        {!isDetailedLoading && detailedTransactions && (
+          <div className="ml-4 space-y-2">
+            {/* Partywirks */}
+            <div className="flex justify-between py-2 border-b border-zinc-800/50">
+              <span className="text-zinc-300 flex items-center text-sm">
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
+                Partywirks
+              </span>
+              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.partywirks || 0)}</span>
+            </div>
+            
+            {/* Tripleseat */}
+            <div className="flex justify-between py-2 border-b border-zinc-800/50">
+              <span className="text-zinc-300 flex items-center text-sm">
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
+                Tripleseat
+              </span>
+              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.tripleseat || 0)}</span>
+            </div>
+            
+            {/* Tips */}
+            <div className="flex justify-between py-2 border-b border-zinc-800/50">
+              <span className="text-zinc-300 flex items-center text-sm">
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
+                Tips
+              </span>
+              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.tips || 0)}</span>
+            </div>
+            
+            {/* Service Charges */}
+            <div className="flex justify-between py-2 border-b border-zinc-800/50">
+              <span className="text-zinc-300 flex items-center text-sm">
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
+                Service Charges
+              </span>
+              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.serviceCharges || 0)}</span>
+            </div>
+            
+            {/* Taxes */}
+            <div className="flex justify-between py-2 border-b border-zinc-800/50">
+              <span className="text-zinc-300 flex items-center text-sm">
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
+                Taxes
+              </span>
+              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.taxes || 0)}</span>
+            </div>
+            
+            {/* Refunds */}
+            <div className="flex justify-between py-2 border-b border-zinc-800/50">
+              <span className="text-zinc-300 flex items-center text-sm">
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
+                Refunds
+              </span>
+              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.refunds || 0)}</span>
+            </div>
+            
+            {/* Discounts & Comps */}
+            <div className="flex justify-between py-2 border-b border-zinc-800/50">
+              <span className="text-zinc-300 flex items-center text-sm">
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
+                Discounts & Comps
+              </span>
+              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.discountsAndComps || 0)}</span>
+            </div>
+            
+            {/* Gift Card Sales */}
+            <div className="flex justify-between py-2 border-b border-zinc-800/50">
+              <span className="text-zinc-300 flex items-center text-sm">
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-500" /> 
+                Gift Card Sales
+              </span>
+              <span className="text-zinc-300 text-sm">{formatCurrency(detailedTransactions.giftCardSales || 0)}</span>
+            </div>
+          </div>
+        )}
 
         {/* Net Sales Item */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
