@@ -36,7 +36,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
       <div className="mb-2">
         <h2 className="text-sm font-medium text-zinc-400">Gross sales</h2>
         <div className="flex items-center">
-          <p className="text-3xl font-bold text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
+          <p className="text-xl font-bold text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
           <div 
             className={`ml-2 px-2 py-1 rounded text-xs font-semibold flex items-center ${
               isPositiveChange(data?.revenueChange || 0)
