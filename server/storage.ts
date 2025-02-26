@@ -5,7 +5,7 @@ import {
   User, InsertUser,
   SyncState, InsertSyncState,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
-  DateRange
+  DateRange, TransactionStatus
 } from "@shared/schema";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
 
@@ -16,7 +16,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   
   // Transaction methods
-  getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<Transaction[]>;
+  getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status?: TransactionStatus): Promise<Transaction[]>;
   getTransactionById(id: number): Promise<Transaction | undefined>;
   getTransactionBySquareId(squareId: string): Promise<Transaction | undefined>;
   createTransaction(transaction: InsertTransaction): Promise<Transaction>;

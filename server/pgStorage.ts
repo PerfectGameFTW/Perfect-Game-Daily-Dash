@@ -5,7 +5,7 @@ import {
   User, InsertUser,
   SyncState, InsertSyncState,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
-  DateRange,
+  DateRange, TransactionStatus,
   transactions, giftCards, giftCardRedemptions, users, syncState
 } from "@shared/schema";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
@@ -44,14 +44,15 @@ export class PgStorage implements IStorage {
   }
 
   // Transaction methods
-  async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<Transaction[]> {
+  async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status: TransactionStatus = 'completed'): Promise<Transaction[]> {
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     const result = await db.select()
       .from(transactions)
       .where(
         and(
           gte(transactions.timestamp, start),
-          lte(transactions.timestamp, end)
+          lte(transactions.timestamp, end),
+          eq(transactions.status, status)
         )
       )
       .orderBy(sql`${transactions.timestamp} DESC`);
