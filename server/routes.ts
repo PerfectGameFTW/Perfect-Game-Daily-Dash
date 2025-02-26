@@ -752,30 +752,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Mutex for sync process - only used to prevent concurrent sync operations
-// The actual state is stored in the database
+  // Simple mutex to prevent concurrent syncs
 let isSyncRunning = false;
+let syncStartTime: Date | null = null;
+
+// Function to check if sync has been running too long (30 minutes)
+const hasSyncTimedOut = (): boolean => {
+  if (!syncStartTime) return false;
+  
+  const timeoutMinutes = 30; // Consider sync stalled after 30 minutes
+  const now = new Date();
+  const diffMs = now.getTime() - syncStartTime.getTime();
+  const diffMinutes = diffMs / (1000 * 60);
+  
+  return diffMinutes > timeoutMinutes;
+};
 
 // Sync route to pull data from Square into our database with checkpoints
   apiRouter.post("/sync", async (req, res) => {
     try {
       // Check if a sync is already running
       if (isSyncRunning) {
-        console.log("Sync already in progress. Skipping new sync request.");
-        
-        // Get current sync state from database for response
-        const paymentsSyncState = await pgStorage.getSyncState('payments');
-        const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
-        
-        return res.status(409).json({ 
-          success: false, 
-          error: "A sync is already in progress. Please try again later.",
-          lastSyncTime: lastSyncTime.toISOString()
-        });
+        // If sync has been running too long, consider it stalled and allow a new one
+        if (hasSyncTimedOut()) {
+          console.log("Previous sync timed out after 30 minutes. Allowing new sync to start.");
+          isSyncRunning = false;
+        } else {
+          console.log("Sync already in progress. Skipping new sync request.");
+          
+          // Get current sync state from database for response
+          const paymentsSyncState = await pgStorage.getSyncState('payments');
+          const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
+          
+          return res.status(409).json({ 
+            success: false, 
+            error: "A sync is already in progress. Please try again later.",
+            lastSyncTime: lastSyncTime.toISOString()
+          });
+        }
       }
       
       // Set the lock to prevent concurrent syncs
       isSyncRunning = true;
+      syncStartTime = new Date();
       
       console.log("Starting sync with Square API using database checkpoints...");
       const results = {
@@ -864,35 +883,57 @@ let isSyncRunning = false;
       // Process each payment and save to database with periodic checkpoints
       let processedCount = lastCheckpoint?.lastPosition || 0;
       let existingCount = 0;
+      let errorCount = 0;
       
-      // Start from the last checkpoint position
+      // Start from the last checkpoint position with robust error handling
       for (let i = processedCount; i < payments.length; i++) {
-        const payment = payments[i];
-        processedCount = i + 1;
-        
-        // Create checkpoint every 50 records
-        if (processedCount % 50 === 0) {
-          console.log(`Processing payment ${processedCount} of ${payments.length}...`);
+        try {
+          const payment = payments[i];
+          processedCount = i + 1;
           
-          // Update checkpoint in database
-          await pgStorage.updateSyncState(paymentsSyncState.id, {
-            processedCount: processedCount,
-            lastSyncedAt: new Date(),
-            lastCheckpoint: { lastPosition: processedCount }
-          });
-        }
-        
-        // Check if we already have this transaction
-        const existing = await pgStorage.getTransactionBySquareId(payment.id);
-        if (!existing) {
-          // Convert to our model and save
-          const transaction = squareClient.convertSquarePaymentToTransaction(payment);
-          await pgStorage.createTransaction(transaction);
-          results.transactions++;
-        } else {
-          existingCount++;
+          // Create checkpoint every 50 records
+          if (processedCount % 50 === 0) {
+            console.log(`Processing payment ${processedCount} of ${payments.length}...`);
+            
+            // Update checkpoint in database
+            await pgStorage.updateSyncState(paymentsSyncState.id, {
+              processedCount: processedCount,
+              lastSyncedAt: new Date(),
+              lastCheckpoint: { lastPosition: processedCount }
+            });
+          }
+          
+          // Check if we already have this transaction
+          const existing = await pgStorage.getTransactionBySquareId(payment.id);
+          if (!existing) {
+            // Convert to our model and save
+            const transaction = squareClient.convertSquarePaymentToTransaction(payment);
+            await pgStorage.createTransaction(transaction);
+            results.transactions++;
+          } else {
+            existingCount++;
+          }
+        } catch (recordError) {
+          // Log the error but continue processing
+          errorCount++;
+          console.error(`Error processing payment at position ${i}:`, recordError);
+          
+          // Create a checkpoint so we don't lose progress
+          if (i % 10 === 0) {
+            await pgStorage.updateSyncState(paymentsSyncState.id, {
+              processedCount: i,
+              lastSyncedAt: new Date(),
+              lastCheckpoint: { lastPosition: i },
+              errorMessage: `Skipped ${errorCount} records with errors`
+            });
+          }
+          
+          // Continue with next record
+          continue;
         }
       }
+      
+      console.log(`Payment processing complete: ${processedCount} processed, ${existingCount} already existed, ${errorCount} errors, added ${results.transactions} new transactions`);
       
       console.log(`Processed ${processedCount} payments, ${existingCount} already existed, added ${results.transactions} new transactions`);
       
@@ -949,33 +990,55 @@ let isSyncRunning = false;
       
       // Process each gift card and save to database with periodic checkpoints
       let giftCardPosition = lastCheckpoint?.lastPosition || 0;
+      let giftCardErrorCount = 0;
       
-      // Start from the last checkpoint position
+      // Start from the last checkpoint position with error handling
       for (let i = giftCardPosition; i < giftCards.length; i++) {
-        const giftCard = giftCards[i];
-        giftCardPosition = i + 1;
-        
-        // Create checkpoint every 10 gift cards
-        if (giftCardPosition % 10 === 0) {
-          console.log(`Processing gift card ${giftCardPosition} of ${giftCards.length}...`);
+        try {
+          const giftCard = giftCards[i];
+          giftCardPosition = i + 1;
           
-          // Update checkpoint in database
-          await pgStorage.updateSyncState(giftCardsSyncState.id, {
-            processedCount: giftCardPosition,
-            lastSyncedAt: new Date(),
-            lastCheckpoint: { lastPosition: giftCardPosition }
-          });
-        }
-        
-        // Check if we already have this gift card
-        const existing = await pgStorage.getGiftCardBySquareId(giftCard.id);
-        if (!existing) {
-          // Convert to our model and save
-          const card = squareClient.convertSquareGiftCardToGiftCard(giftCard);
-          await pgStorage.createGiftCard(card);
-          results.giftCards++;
+          // Create checkpoint every 10 gift cards
+          if (giftCardPosition % 10 === 0) {
+            console.log(`Processing gift card ${giftCardPosition} of ${giftCards.length}...`);
+            
+            // Update checkpoint in database
+            await pgStorage.updateSyncState(giftCardsSyncState.id, {
+              processedCount: giftCardPosition,
+              lastSyncedAt: new Date(),
+              lastCheckpoint: { lastPosition: giftCardPosition }
+            });
+          }
+          
+          // Check if we already have this gift card
+          const existing = await pgStorage.getGiftCardBySquareId(giftCard.id);
+          if (!existing) {
+            // Convert to our model and save
+            const card = squareClient.convertSquareGiftCardToGiftCard(giftCard);
+            await pgStorage.createGiftCard(card);
+            results.giftCards++;
+          }
+        } catch (giftCardError) {
+          // Log the error but continue processing
+          giftCardErrorCount++;
+          console.error(`Error processing gift card at position ${i}:`, giftCardError);
+          
+          // Create a checkpoint so we don't lose progress
+          if (i % 5 === 0) {
+            await pgStorage.updateSyncState(giftCardsSyncState.id, {
+              processedCount: i,
+              lastSyncedAt: new Date(),
+              lastCheckpoint: { lastPosition: i },
+              errorMessage: `Skipped ${giftCardErrorCount} gift card records with errors`
+            });
+          }
+          
+          // Continue with next record
+          continue;
         }
       }
+      
+      console.log(`Gift card processing complete: processed ${giftCardPosition} cards, encountered ${giftCardErrorCount} errors, added ${results.giftCards} new gift cards`);
       
       // Mark gift cards sync as complete
       await pgStorage.updateSyncState(giftCardsSyncState.id, {
@@ -1034,20 +1097,27 @@ let isSyncRunning = false;
     try {
       // Check if a sync is already running
       if (isSyncRunning) {
-        console.log("Sync already in progress. Skipping Feb 25 sync request.");
-        // Get current sync state from database for response
-        const paymentsSyncState = await pgStorage.getSyncState('payments');
-        const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
-        
-        return res.status(409).json({ 
-          success: false, 
-          error: "A sync is already in progress. Please try again later.",
-          lastSyncTime: lastSyncTime.toISOString()
-        });
+        // If sync has been running too long, consider it stalled and allow a new one
+        if (hasSyncTimedOut()) {
+          console.log("Previous sync timed out after 30 minutes. Allowing new Feb 25 sync to start.");
+          isSyncRunning = false;
+        } else {
+          console.log("Sync already in progress. Skipping Feb 25 sync request.");
+          // Get current sync state from database for response
+          const paymentsSyncState = await pgStorage.getSyncState('payments');
+          const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
+          
+          return res.status(409).json({ 
+            success: false, 
+            error: "A sync is already in progress. Please try again later.",
+            lastSyncTime: lastSyncTime.toISOString()
+          });
+        }
       }
       
       // Set the lock to prevent concurrent syncs
       isSyncRunning = true;
+      syncStartTime = new Date();
       
       // Create a special Feb25 sync state record
       const feb25SyncState: InsertSyncState = {
