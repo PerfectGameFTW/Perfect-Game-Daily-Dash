@@ -1,72 +1,61 @@
-import { Menu, Bell } from "lucide-react";
+import { Settings, Bell, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import DateRangePicker from "./DateRangePicker";
 import { DateRange } from "@shared/schema";
-import { getFormattedDate } from "@/lib/dateUtils";
+import { format } from "date-fns";
 
 interface HeaderProps {
-  openSidebar: () => void;
   dateRange: DateRange;
   customStartDate?: Date;
   customEndDate?: Date;
   onDateRangeChange: (range: DateRange, start?: Date, end?: Date) => void;
+  onOpenTimeframeModal: () => void;
 }
 
 export default function Header({ 
-  openSidebar, 
   dateRange, 
   customStartDate, 
   customEndDate, 
-  onDateRangeChange 
+  onDateRangeChange,
+  onOpenTimeframeModal
 }: HeaderProps) {
-  const formattedDate = getFormattedDate(dateRange, customStartDate, customEndDate);
+  // Format the current display date
+  const today = new Date();
+  const displayDate = dateRange === 'custom' && customStartDate && customEndDate 
+    ? `${format(customStartDate, 'MMM d, yyyy')} - ${format(customEndDate, 'MMM d, yyyy')}` 
+    : dateRange === 'today' 
+      ? `${format(today, 'MMM d, yyyy')} · All day`
+      : dateRange === 'yesterday'
+        ? `${format(new Date(today.setDate(today.getDate() - 1)), 'MMM d, yyyy')} · All day`
+        : `${dateRange.replace(/([A-Z])/g, ' $1').trim()} · All day`;
 
   return (
-    <div className="relative z-10 flex-shrink-0 flex h-16 bg-white shadow">
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={openSidebar}
-        className="md:hidden px-4 text-gray-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
+    <div className="p-4 pt-8 pb-0">
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-3xl font-bold">Perfect Game</h1>
+        <div className="flex gap-2">
+          <Button variant="outline" size="icon" className="bg-muted/30 border-none rounded-md">
+            <Settings className="h-5 w-5" />
+          </Button>
+          <Button variant="outline" size="icon" className="bg-muted/30 border-none rounded-md">
+            <Bell className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
+      
+      <Button 
+        variant="outline" 
+        className="w-full justify-between h-12 px-4 py-2 text-md border border-border rounded-md bg-muted/20 mb-6"
+        onClick={onOpenTimeframeModal}
       >
-        <span className="sr-only">Open sidebar</span>
-        <Menu className="h-6 w-6" />
+        <ChevronLeft className="h-5 w-5" />
+        <span className="flex-1 text-center">{displayDate}</span>
+        <ChevronRight className="h-5 w-5" />
       </Button>
       
-      <div className="flex-1 px-4 flex justify-between">
-        <div className="flex-1 flex items-center">
-          <DateRangePicker 
-            value={dateRange}
-            onValueChange={onDateRangeChange}
-            customStartDate={customStartDate}
-            customEndDate={customEndDate}
-          />
-          <span className="ml-2 text-sm text-gray-700">{formattedDate}</span>
-        </div>
-        
-        <div className="ml-4 flex items-center md:ml-6">
-          <Button variant="ghost" size="icon" className="p-1 rounded-full text-gray-400 hover:text-gray-500 focus:outline-none">
-            <span className="sr-only">View notifications</span>
-            <Bell className="h-6 w-6" />
-          </Button>
-
-          {/* Profile dropdown */}
-          <div className="ml-3 relative">
-            <div>
-              <Button
-                variant="ghost"
-                className="max-w-xs bg-white flex items-center text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
-              >
-                <span className="sr-only">Open user menu</span>
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&ixlib=rb-1.2.1&auto=format&fit=crop&w=100&q=80" alt="User avatar" />
-                  <AvatarFallback>US</AvatarFallback>
-                </Avatar>
-              </Button>
-            </div>
-          </div>
-        </div>
+      <div className="flex justify-end mb-2">
+        <Button variant="outline" size="icon" className="bg-muted/30 border-none rounded-md">
+          <Filter className="h-5 w-5" />
+        </Button>
       </div>
     </div>
   );
