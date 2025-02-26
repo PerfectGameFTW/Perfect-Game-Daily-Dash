@@ -1,7 +1,7 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { pgStorage } from "./pgStorage";
-import { dateRangeSchema } from "@shared/schema";
+import { dateRangeSchema, InsertTransaction, InsertGiftCard } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
 

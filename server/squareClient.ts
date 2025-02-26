@@ -1,4 +1,4 @@
-import { Client as SquareClient, Environment as SquareEnvironment, ApiError as SquareError } from 'square';
+import { SquareClient, SquareEnvironment, SquareError } from 'square';
 import { 
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
