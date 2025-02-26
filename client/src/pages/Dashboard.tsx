@@ -4,6 +4,7 @@ import Header from "@/components/dashboard/Header";
 import StatsSummary from "@/components/dashboard/StatsSummary";
 import BottomNavigation from "@/components/dashboard/BottomNavigation";
 import TimeframeModal from "@/components/dashboard/TimeframeModal";
+import SyncProgressBar from "@/components/dashboard/SyncProgressBar";
 import { DateRange } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import useMobile from "@/hooks/use-mobile";
@@ -135,6 +136,11 @@ export default function Dashboard() {
 
       {/* Dashboard Content */}
       <main className="flex-1 w-full overflow-y-auto px-4 py-4 space-y-6">
+        {/* Sync Status */}
+        <div className="w-full max-w-7xl mx-auto">
+          <SyncProgressBar />
+        </div>
+        
         {/* Stats Overview */}
         <div className="w-full max-w-7xl mx-auto">
           <StatsSummary 

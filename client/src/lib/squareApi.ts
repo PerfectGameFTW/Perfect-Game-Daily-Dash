@@ -98,3 +98,20 @@ export const testGiftCardDetection = async (): Promise<any> => {
   const response = await apiRequest('GET', `/api/test-gift-card-detection`);
   return await response.json();
 };
+
+// Get the current sync status
+export const fetchSyncStatus = async (): Promise<{
+  isRunning: boolean;
+  lastSyncTime: string;
+  progress: {
+    stage: 'idle' | 'fetching' | 'processing' | 'gift-cards' | 'complete';
+    totalItems: number;
+    processedItems: number;
+    startTime: string;
+    estimatedEndTime: string | null;
+    error: string | null;
+  };
+}> => {
+  const response = await apiRequest('GET', '/api/sync-status');
+  return await response.json();
+};
