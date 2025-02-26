@@ -37,7 +37,7 @@ export default function Header({
     <header className="border-b border-zinc-800 px-4 py-4">
       <div className="flex justify-between items-center">
         <div className="flex items-center">
-          <h1 className="text-lg font-semibold text-white">Perfect Game</h1>
+          <h1 className="text-2xl font-bold text-white">Perfect Game</h1>
         </div>
       </div>
       
