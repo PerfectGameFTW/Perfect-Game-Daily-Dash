@@ -227,6 +227,8 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   // Gift card PURCHASES - When a customer BUYS a gift card (this should be categorized as a gift card sale)
   // Gift card PAYMENTS - When a customer PAYS USING a gift card (this should NOT be categorized as gift card)
   
+  // ENHANCED GIFT CARD DETECTION LOGIC
+  
   // First check if this is a payment USING a gift card (not a gift card purchase)
   const paidWithGiftCard = 
     (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
@@ -246,19 +248,95 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   } 
   // If it's not paid with a gift card, check if it's a gift card PURCHASE
   else {
-    // Check if this payment is for a gift card purchase
-    // This requires checking the actual item description or notes
+    // Multiple ways to detect a gift card:
+    // 1. Check reference data for direct identification
+    const paymentId = payment.id || '';
+    const orderId = payment.orderId || '';
+    
+    // Known gift card transaction IDs for Feb 25 (could be expanded in future)
+    const knownGiftCardPaymentIds = [
+      // Add any known gift card payment IDs here if needed
+    ];
+    
+    // 2. Check catalog object IDs for known gift card items
+    const knownGiftCardCatalogIds = [
+      // Square uses specific formats for gift card catalog IDs
+      'GIFT_CARD'
+    ];
+    
+    // 3. Check transaction references in receipt/order/payment data
     const orderName = (payment.orderName || '').toLowerCase();
     const note = (payment.note || '').toLowerCase();
+    const receiptNumber = (payment.receiptNumber || '').toLowerCase();
+    const paymentNote = (payment.note || '').toLowerCase();
     
-    // Check for gift card purchases in order name or notes
-    const isPossibleGiftCardPurchase = 
+    // 4. Check for Square's internal gift card indicators
+    let hasGiftCardItems = false;
+    let hasGiftCardType = false;
+    
+    // 5. Check if there are itemizations with gift card references
+    if (payment.itemizations && Array.isArray(payment.itemizations)) {
+      hasGiftCardItems = payment.itemizations.some((item: any) => {
+        const itemName = (item.name || '').toLowerCase();
+        return itemName.includes('gift card') || 
+               itemName.includes('gift certificate') ||
+               (item.itemType && item.itemType === 'GIFT_CARD');
+      });
+    }
+    
+    // 6. Check for Square's gift card type markers
+    if (payment.type && payment.type === 'GIFT_CARD') {
+      hasGiftCardType = true;
+    }
+    
+    // 7. If the order has gift card details as part of the payment
+    const hasGiftCardDetails = payment.orderInfo && 
+      payment.orderInfo.giftCardInfo && 
+      payment.orderInfo.giftCardInfo.length > 0;
+      
+    // 8. Look for "buy gift card" or similar phrases
+    const hasBuyGiftCardPhrase = 
+      orderName.includes('buy gift card') || 
+      note.includes('buy gift card') ||
+      orderName.includes('purchase gift card') || 
+      note.includes('purchase gift card') ||
+      orderName.includes('gift card purchase') || 
+      note.includes('gift card purchase');
+      
+    // 9. Check for any partial gift card phrases (broader search)
+    const hasGiftCardPhrase = 
       orderName.includes('gift card') || 
       orderName.includes('gift certificate') ||
       note.includes('gift card') || 
-      note.includes('gift certificate');
+      note.includes('gift certificate') ||
+      (receiptNumber && receiptNumber.includes('gift')) ||
+      (paymentNote && paymentNote.includes('gift'));
     
-    if (isPossibleGiftCardPurchase) {
+    // 10. COMBINE ALL DETECTION METHODS to determine if this is likely a gift card purchase
+    const isLikelyGiftCardPurchase = 
+      knownGiftCardPaymentIds.includes(paymentId) ||
+      hasGiftCardItems || 
+      hasGiftCardType || 
+      hasGiftCardDetails ||
+      hasBuyGiftCardPhrase ||
+      hasGiftCardPhrase;
+    
+    // Log detailed gift card detection for specific dates of interest
+    const paymentDate = new Date(payment.createdAt || new Date());
+    const isFeb25 = 
+      paymentDate.getDate() === 25 && 
+      paymentDate.getMonth() === 1 && // 0-indexed (February)
+      paymentDate.getFullYear() === 2025;
+    
+    if (isFeb25 && (isLikelyGiftCardPurchase || hasGiftCardPhrase)) {
+      console.log(`🔍 FEB 25 GIFT CARD DETECTION - Payment ID: ${paymentId}`);
+      console.log(`💰 Amount: $${amount}`);
+      console.log(`📝 Order name: ${orderName}`);
+      console.log(`📝 Note: ${note}`);
+      console.log(`Gift card detection result: ${isLikelyGiftCardPurchase ? 'POSITIVE ✅' : 'NEGATIVE ❌'}`);
+    }
+    
+    if (isLikelyGiftCardPurchase) {
       category = 'giftCard';
       console.log(`Identified gift card PURCHASE: ${payment.id}, amount: $${amount}`);
     } 
