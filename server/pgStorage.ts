@@ -228,11 +228,17 @@ export class PgStorage implements IStorage {
     
     const currentTransactions = await this.getTransactions(dateRange, start, end);
     
-    // Initialize hourly buckets (9 AM to 5 PM)
+    // Initialize hourly buckets (midnight to 11 PM)
     const hourlyMap = new Map<string, number>();
     
-    for (let hour = 9; hour <= 17; hour++) {
-      const formattedHour = hour > 12 ? `${hour - 12} PM` : hour === 12 ? '12 PM' : `${hour} AM`;
+    for (let hour = 0; hour <= 23; hour++) {
+      const formattedHour = hour === 0 
+        ? '12 AM' 
+        : hour < 12 
+          ? `${hour} AM` 
+          : hour === 12 
+            ? '12 PM' 
+            : `${hour - 12} PM`;
       hourlyMap.set(formattedHour, 0);
     }
     
@@ -240,14 +246,20 @@ export class PgStorage implements IStorage {
     currentTransactions.forEach(transaction => {
       const date = new Date(transaction.timestamp);
       const hour = date.getHours();
-      if (hour >= 9 && hour <= 17) {
-        const formattedHour = hour > 12 ? `${hour - 12} PM` : hour === 12 ? '12 PM' : `${hour} AM`;
-        const currentAmount = hourlyMap.get(formattedHour) || 0;
-        hourlyMap.set(formattedHour, currentAmount + transaction.amount);
-      }
+      
+      const formattedHour = hour === 0 
+        ? '12 AM' 
+        : hour < 12 
+          ? `${hour} AM` 
+          : hour === 12 
+            ? '12 PM' 
+            : `${hour - 12} PM`;
+            
+      const currentAmount = hourlyMap.get(formattedHour) || 0;
+      hourlyMap.set(formattedHour, currentAmount + transaction.amount);
     });
     
-    // Format the result, maintaining the 9 AM to 5 PM order
+    // Format the result, maintaining the 24-hour order
     return Array.from(hourlyMap.entries()).map(([hour, amount]) => ({
       hour,
       amount
