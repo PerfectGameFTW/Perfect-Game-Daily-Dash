@@ -36,6 +36,13 @@ export default function Dashboard() {
     setCustomStartDate(start);
     setCustomEndDate(end);
     
+    // Log for debugging
+    console.log('Date state updated:', {
+      newDateRange: newRange,
+      newStartDate: start?.toISOString(),
+      newEndDate: end?.toISOString()
+    });
+    
     // Create an array of query keys to invalidate with the exact new parameters
     const queryKeys = [
       ['/api/summary', newRange, start?.toISOString(), end?.toISOString()],

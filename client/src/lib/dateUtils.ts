@@ -84,7 +84,12 @@ export function navigateDate(
         // If we're already viewing a specific day
         if (direction === 'prev') {
           const prevDate = subDays(normalizedStartDate, 1);
-          return { dateRange: 'today', startDate: prevDate, endDate: prevDate };
+          // For consistency, use "yesterday" range when going back one day from today
+          // This ensures data is looked up the same way regardless of navigation method
+          if (isSameDay(normalizedStartDate, today)) {
+            return { dateRange: 'yesterday', startDate: undefined, endDate: undefined };
+          }
+          return { dateRange: 'custom', startDate: prevDate, endDate: prevDate };
         } else {
           // Don't navigate past today
           if (isSameDay(normalizedStartDate, today)) {
@@ -97,13 +102,18 @@ export function navigateDate(
             return { dateRange: 'today', startDate: undefined, endDate: undefined };
           }
           
-          return { dateRange: 'today', startDate: nextDate, endDate: nextDate };
+          // If we're navigating to today, use the standard today range
+          if (isSameDay(nextDate, today)) {
+            return { dateRange: 'today', startDate: undefined, endDate: undefined };
+          }
+          
+          return { dateRange: 'custom', startDate: nextDate, endDate: nextDate };
         }
       } else {
         // If we're viewing actual today, can only go backward
         if (direction === 'prev') {
-          const yesterday = subDays(today, 1);
-          return { dateRange: 'today', startDate: yesterday, endDate: yesterday };
+          // Use the predefined "yesterday" range
+          return { dateRange: 'yesterday', startDate: undefined, endDate: undefined };
         }
         // Can't navigate past today
         return { dateRange: 'today', startDate: undefined, endDate: undefined };
@@ -113,7 +123,7 @@ export function navigateDate(
       // For yesterday's view, navigate by single days
       if (direction === 'prev') {
         const twoDaysAgo = subDays(today, 2);
-        return { dateRange: 'today', startDate: twoDaysAgo, endDate: twoDaysAgo };
+        return { dateRange: 'custom', startDate: twoDaysAgo, endDate: twoDaysAgo };
       } else {
         // Going forward from yesterday takes us to today
         return { dateRange: 'today', startDate: undefined, endDate: undefined };
