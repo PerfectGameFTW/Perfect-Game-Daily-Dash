@@ -752,24 +752,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Global variables for sync process
+  // Mutex for sync process - only used to prevent concurrent sync operations
+// The actual state is stored in the database
 let isSyncRunning = false;
-let lastSyncTime = new Date(0); // Initialize with epoch time
-let syncProgress = {
-  stage: 'idle', // 'idle', 'fetching', 'processing', 'gift-cards', 'complete'
-  totalItems: 0,
-  processedItems: 0,
-  startTime: new Date(0),
-  estimatedEndTime: null as Date | null,
-  error: null as string | null
-};
 
-// Sync route to pull data from Square into our database
+// Sync route to pull data from Square into our database with checkpoints
   apiRouter.post("/sync", async (req, res) => {
     try {
       // Check if a sync is already running
       if (isSyncRunning) {
         console.log("Sync already in progress. Skipping new sync request.");
+        
+        // Get current sync state from database for response
+        const paymentsSyncState = await pgStorage.getSyncState('payments');
+        const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
+        
         return res.status(409).json({ 
           success: false, 
           error: "A sync is already in progress. Please try again later.",
@@ -777,18 +774,10 @@ let syncProgress = {
         });
       }
       
-      // Set the lock and initialize progress
+      // Set the lock to prevent concurrent syncs
       isSyncRunning = true;
-      syncProgress = {
-        stage: 'fetching',
-        totalItems: 0,
-        processedItems: 0,
-        startTime: new Date(),
-        estimatedEndTime: null,
-        error: null
-      };
       
-      console.log("Starting sync with Square API...");
+      console.log("Starting sync with Square API using database checkpoints...");
       const results = {
         transactions: 0,
         giftCards: 0
@@ -800,6 +789,7 @@ let syncProgress = {
       
       if (!accessToken || !locationId) {
         console.error("Square API credentials are missing. Check environment variables.");
+        isSyncRunning = false;
         return res.status(500).json({ 
           success: false,
           error: "Square API credentials are missing." 
@@ -807,7 +797,6 @@ let syncProgress = {
       }
       
       console.log("Using Square API with Location ID:", locationId);
-      console.log("Using production Square API environment");
       
       // Get date parameters from request if provided
       let startDate: Date | undefined;
@@ -826,30 +815,71 @@ let syncProgress = {
         console.log(`Using default 90-day time window: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       }
       
-      // Fetch ALL payments from Square with date range (with pagination)
+      // Check for existing payments sync state
+      let paymentsSyncState = await pgStorage.getSyncState('payments');
+      let lastCheckpoint: any = null;
+      
+      if (paymentsSyncState && !paymentsSyncState.isComplete) {
+        // Resume from checkpoint
+        console.log("Resuming payments sync from checkpoint:", {
+          lastSyncAt: paymentsSyncState.lastSyncedAt,
+          processed: paymentsSyncState.processedCount,
+          total: paymentsSyncState.totalCount,
+          currentPage: paymentsSyncState.currentPage
+        });
+        lastCheckpoint = paymentsSyncState.lastCheckpoint;
+      } else {
+        // Create a new sync state record or update existing one
+        const syncData: InsertSyncState = {
+          syncType: 'payments',
+          lastSyncedAt: new Date(),
+          processedCount: 0,
+          totalCount: 0,
+          isComplete: false,
+          status: 'in_progress',
+          lastCheckpoint: { lastPosition: 0 }
+        };
+        
+        if (paymentsSyncState) {
+          // Update existing record
+          paymentsSyncState = await pgStorage.updateSyncState(paymentsSyncState.id, syncData);
+        } else {
+          // Create new record
+          paymentsSyncState = await pgStorage.createSyncState(syncData);
+        }
+        console.log("Created new payments sync state record:", paymentsSyncState.id);
+      }
+      
+      // Fetch payments from Square with date range (with pagination)
+      // In a real implementation, we'd use the cursor/checkpoint here
       const payments = await squareClient.fetchPayments(startDate, endDate);
       console.log(`Fetched ${payments.length} total payments from Square for date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       
-      // Update progress to processing stage
-      syncProgress.stage = 'processing';
-      syncProgress.totalItems = payments.length;
-      syncProgress.processedItems = 0;
+      // Update sync state with total payment count
+      paymentsSyncState = await pgStorage.updateSyncState(paymentsSyncState.id, {
+        totalCount: payments.length,
+        status: 'processing',
+      });
       
-      // Process each payment and save to database
-      let processedCount = 0;
+      // Process each payment and save to database with periodic checkpoints
+      let processedCount = lastCheckpoint?.lastPosition || 0;
       let existingCount = 0;
       
-      for (const payment of payments) {
-        processedCount++;
-        // Update progress every 50 records
+      // Start from the last checkpoint position
+      for (let i = processedCount; i < payments.length; i++) {
+        const payment = payments[i];
+        processedCount = i + 1;
+        
+        // Create checkpoint every 50 records
         if (processedCount % 50 === 0) {
           console.log(`Processing payment ${processedCount} of ${payments.length}...`);
-          syncProgress.processedItems = processedCount;
           
-          // Calculate estimated end time based on progress
-          const elapsedMs = new Date().getTime() - syncProgress.startTime.getTime();
-          const estimatedTotalMs = (elapsedMs / processedCount) * payments.length;
-          syncProgress.estimatedEndTime = new Date(syncProgress.startTime.getTime() + estimatedTotalMs);
+          // Update checkpoint in database
+          await pgStorage.updateSyncState(paymentsSyncState.id, {
+            processedCount: processedCount,
+            lastSyncedAt: new Date(),
+            lastCheckpoint: { lastPosition: processedCount }
+          });
         }
         
         // Check if we already have this transaction
@@ -866,26 +896,75 @@ let syncProgress = {
       
       console.log(`Processed ${processedCount} payments, ${existingCount} already existed, added ${results.transactions} new transactions`);
       
-      // Update progress to gift card stage
-      syncProgress.stage = 'gift-cards';
-      syncProgress.processedItems = payments.length;
+      // Mark payments sync as complete
+      await pgStorage.updateSyncState(paymentsSyncState.id, {
+        processedCount: payments.length,
+        isComplete: true,
+        status: 'completed',
+        lastSyncedAt: new Date()
+      });
+      
+      // Check for existing gift cards sync state
+      let giftCardsSyncState = await pgStorage.getSyncState('giftCards');
+      
+      if (giftCardsSyncState && !giftCardsSyncState.isComplete) {
+        // Resume from checkpoint
+        console.log("Resuming gift cards sync from checkpoint:", {
+          lastSyncAt: giftCardsSyncState.lastSyncedAt,
+          processed: giftCardsSyncState.processedCount,
+          total: giftCardsSyncState.totalCount
+        });
+        lastCheckpoint = giftCardsSyncState.lastCheckpoint;
+      } else {
+        // Create a new sync state record or update existing one
+        const syncData: InsertSyncState = {
+          syncType: 'giftCards',
+          lastSyncedAt: new Date(),
+          processedCount: 0,
+          totalCount: 0,
+          isComplete: false,
+          status: 'in_progress',
+          lastCheckpoint: { lastPosition: 0 }
+        };
+        
+        if (giftCardsSyncState) {
+          // Update existing record
+          giftCardsSyncState = await pgStorage.updateSyncState(giftCardsSyncState.id, syncData);
+        } else {
+          // Create new record
+          giftCardsSyncState = await pgStorage.createSyncState(syncData);
+        }
+        console.log("Created new gift cards sync state record:", giftCardsSyncState.id);
+      }
       
       // Fetch ALL gift cards from Square (with pagination)
       const giftCards = await squareClient.fetchGiftCards();
       console.log(`Fetched ${giftCards.length} total gift cards from Square`);
       
-      // Update progress for gift cards
-      syncProgress.totalItems = payments.length + giftCards.length;
+      // Update sync state with total gift card count
+      giftCardsSyncState = await pgStorage.updateSyncState(giftCardsSyncState.id, {
+        totalCount: giftCards.length,
+        status: 'processing',
+      });
       
-      // Process each gift card and save to database
-      let giftCardCount = 0;
-      for (const giftCard of giftCards) {
-        giftCardCount++;
+      // Process each gift card and save to database with periodic checkpoints
+      let giftCardPosition = lastCheckpoint?.lastPosition || 0;
+      
+      // Start from the last checkpoint position
+      for (let i = giftCardPosition; i < giftCards.length; i++) {
+        const giftCard = giftCards[i];
+        giftCardPosition = i + 1;
         
-        // Update progress every 10 gift cards
-        if (giftCardCount % 10 === 0) {
-          console.log(`Processing gift card ${giftCardCount} of ${giftCards.length}...`);
-          syncProgress.processedItems = payments.length + giftCardCount;
+        // Create checkpoint every 10 gift cards
+        if (giftCardPosition % 10 === 0) {
+          console.log(`Processing gift card ${giftCardPosition} of ${giftCards.length}...`);
+          
+          // Update checkpoint in database
+          await pgStorage.updateSyncState(giftCardsSyncState.id, {
+            processedCount: giftCardPosition,
+            lastSyncedAt: new Date(),
+            lastCheckpoint: { lastPosition: giftCardPosition }
+          });
         }
         
         // Check if we already have this gift card
@@ -898,21 +977,24 @@ let syncProgress = {
         }
       }
       
+      // Mark gift cards sync as complete
+      await pgStorage.updateSyncState(giftCardsSyncState.id, {
+        processedCount: giftCards.length,
+        isComplete: true,
+        status: 'completed',
+        lastSyncedAt: new Date()
+      });
+      
       console.log(`Sync complete. Added ${results.transactions} new transactions and ${results.giftCards} new gift cards.`);
       
-      // Mark sync as complete
-      syncProgress.stage = 'complete';
-      syncProgress.processedItems = syncProgress.totalItems;
-      
-      // Update last sync time and release the lock
-      lastSyncTime = new Date();
+      // Release the lock
       isSyncRunning = false;
       
       res.json({
         success: true,
         message: "Sync completed successfully",
         results,
-        lastSyncTime: lastSyncTime.toISOString(),
+        lastSyncTime: new Date().toISOString(),
         timeWindow: {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
@@ -922,8 +1004,19 @@ let syncProgress = {
     } catch (error) {
       console.error("Error syncing with Square:", error);
       
-      // Update progress with error
-      syncProgress.error = error instanceof Error ? error.message : "Unknown error";
+      // Update sync state with error in database
+      try {
+        const paymentsSyncState = await pgStorage.getSyncState('payments');
+        if (paymentsSyncState) {
+          await pgStorage.updateSyncState(paymentsSyncState.id, {
+            status: 'error',
+            errorMessage: error instanceof Error ? error.message : "Unknown error",
+            lastSyncedAt: new Date()
+          });
+        }
+      } catch (dbError) {
+        console.error("Failed to update error state in database:", dbError);
+      }
       
       // Release the lock even if there's an error
       isSyncRunning = false;
@@ -931,7 +1024,7 @@ let syncProgress = {
       res.status(500).json({ 
         success: false,
         error: "Failed to sync with Square",
-        details: syncProgress.error
+        details: error instanceof Error ? error.message : "Unknown error"
       });
     }
   });

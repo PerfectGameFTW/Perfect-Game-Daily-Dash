@@ -507,12 +507,12 @@ export class PgStorage implements IStorage {
     const giftCardsSyncState = await this.getSyncState('giftCards');
     
     // Calculate progress percentages
-    const paymentsProgress = paymentsSyncState && paymentsSyncState.totalCount > 0
-      ? Math.min(100, Math.round((paymentsSyncState.processedCount / paymentsSyncState.totalCount) * 100))
+    const paymentsProgress = paymentsSyncState && paymentsSyncState.totalCount && paymentsSyncState.totalCount > 0
+      ? Math.min(100, Math.round(((paymentsSyncState.processedCount || 0) / paymentsSyncState.totalCount) * 100))
       : 0;
       
-    const giftCardsProgress = giftCardsSyncState && giftCardsSyncState.totalCount > 0
-      ? Math.min(100, Math.round((giftCardsSyncState.processedCount / giftCardsSyncState.totalCount) * 100))
+    const giftCardsProgress = giftCardsSyncState && giftCardsSyncState.totalCount && giftCardsSyncState.totalCount > 0
+      ? Math.min(100, Math.round(((giftCardsSyncState.processedCount || 0) / giftCardsSyncState.totalCount) * 100))
       : 0;
     
     return {
