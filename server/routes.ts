@@ -21,15 +21,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid date range" });
       }
       
-      // Parse custom date range if needed
+      // Parse custom date range if provided, regardless of named range
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange.data === "custom") {
-        if (!req.query.startDate || !req.query.endDate) {
-          return res.status(400).json({ error: "Start date and end date are required for custom range" });
-        }
-        
+      if (req.query.startDate && req.query.endDate) {
         startDate = parse(req.query.startDate as string, "yyyy-MM-dd", new Date());
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
@@ -56,15 +52,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid date range" });
       }
       
-      // Parse custom date range if needed
+      // Parse custom date range if provided, regardless of named range
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange.data === "custom") {
-        if (!req.query.startDate || !req.query.endDate) {
-          return res.status(400).json({ error: "Start date and end date are required for custom range" });
-        }
-        
+      if (req.query.startDate && req.query.endDate) {
         startDate = parse(req.query.startDate as string, "yyyy-MM-dd", new Date());
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
@@ -90,15 +82,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid date range" });
       }
       
-      // Parse custom date range if needed
+      // Parse custom date range if provided, regardless of named range
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange.data === "custom") {
-        if (!req.query.startDate || !req.query.endDate) {
-          return res.status(400).json({ error: "Start date and end date are required for custom range" });
-        }
-        
+      if (req.query.startDate && req.query.endDate) {
         startDate = parse(req.query.startDate as string, "yyyy-MM-dd", new Date());
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }
@@ -124,15 +112,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid date range" });
       }
       
-      // Parse custom date range if needed
+      // Parse custom date range if provided, regardless of named range
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       
-      if (parsedDateRange.data === "custom") {
-        if (!req.query.startDate || !req.query.endDate) {
-          return res.status(400).json({ error: "Start date and end date are required for custom range" });
-        }
-        
+      if (req.query.startDate && req.query.endDate) {
         startDate = parse(req.query.startDate as string, "yyyy-MM-dd", new Date());
         endDate = parse(req.query.endDate as string, "yyyy-MM-dd", new Date());
       }

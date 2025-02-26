@@ -50,142 +50,54 @@ export function navigateDate(
   // Reset hours, minutes, seconds, and milliseconds for consistent date comparisons
   today.setHours(0, 0, 0, 0);
 
-  switch (currentDateRange) {
-    case "today": {
-      if (direction === 'prev') {
-        return { dateRange: "today", startDate: subDays(today, 1), endDate: subDays(today, 1) };
-      } else {
-        // If today is actually today, we can't go forward
-        const tomorrow = addDays(today, 1);
-        const nowDate = new Date();
-        nowDate.setHours(0, 0, 0, 0);
-        
-        if (isSameDay(tomorrow, nowDate) || tomorrow > nowDate) {
-          return { dateRange: "today", startDate: undefined, endDate: undefined };
-        }
-        return { dateRange: "today", startDate: tomorrow, endDate: tomorrow };
-      }
+  // Simplify navigation - ignore the named ranges and just treat all as custom date navigation
+  // This makes arrow navigation more intuitive
+  
+  // First, determine the reference date to work with
+  let referenceDate: Date;
+  
+  if (customStartDate) {
+    // If a custom date is set, use it as reference
+    referenceDate = new Date(customStartDate);
+  } else {
+    // If no custom date, use today for reference
+    referenceDate = new Date(today);
+  }
+  
+  // Now navigate forward or backward from the reference date
+  if (direction === 'prev') {
+    const prevDate = subDays(referenceDate, 1);
+    return { 
+      dateRange: "today", 
+      startDate: prevDate, 
+      endDate: prevDate 
+    };
+  } else { // direction === 'next'
+    // Don't navigate past today
+    if (isSameDay(referenceDate, today)) {
+      return { 
+        dateRange: "today", 
+        startDate: undefined, 
+        endDate: undefined 
+      };
     }
     
-    case "yesterday": {
-      if (direction === 'prev') {
-        return { dateRange: "yesterday", startDate: subDays(today, 2), endDate: subDays(today, 2) };
-      } else {
-        return { dateRange: "today" };
-      }
+    const nextDate = addDays(referenceDate, 1);
+    
+    // Don't go beyond today
+    if (nextDate > today) {
+      return { 
+        dateRange: "today", 
+        startDate: undefined, 
+        endDate: undefined 
+      };
     }
     
-    case "last7days": {
-      if (direction === 'prev') {
-        return { 
-          dateRange: "custom", 
-          startDate: subWeeks(customStartDate || subDays(today, 6), 1), 
-          endDate: subWeeks(customEndDate || today, 1)
-        };
-      } else {
-        const newEndDate = addWeeks(customEndDate || today, 1);
-        // Don't go beyond current date
-        if (newEndDate > today) {
-          return { dateRange: "last7days" };
-        }
-        return { 
-          dateRange: "custom", 
-          startDate: addWeeks(customStartDate || subDays(today, 6), 1), 
-          endDate: newEndDate
-        };
-      }
-    }
-    
-    case "thisMonth": {
-      if (direction === 'prev') {
-        const prevMonth = subMonths(today, 1);
-        return { 
-          dateRange: "custom", 
-          startDate: startOfMonth(prevMonth), 
-          endDate: endOfMonth(prevMonth)
-        };
-      } else {
-        const nextMonth = addMonths(today, 1);
-        // Don't go beyond current month
-        if (nextMonth.getMonth() === today.getMonth() || nextMonth > today) {
-          return { dateRange: "thisMonth" };
-        }
-        return { 
-          dateRange: "custom", 
-          startDate: startOfMonth(nextMonth), 
-          endDate: endOfMonth(nextMonth)
-        };
-      }
-    }
-    
-    case "last30days": {
-      if (direction === 'prev') {
-        return { 
-          dateRange: "custom", 
-          startDate: subDays(customStartDate || subDays(today, 29), 30), 
-          endDate: subDays(customEndDate || today, 30)
-        };
-      } else {
-        const newEndDate = addDays(customEndDate || today, 30);
-        // Don't go beyond current date
-        if (newEndDate > today) {
-          return { dateRange: "last30days" };
-        }
-        return { 
-          dateRange: "custom", 
-          startDate: addDays(customStartDate || subDays(today, 29), 30), 
-          endDate: newEndDate
-        };
-      }
-    }
-    
-    case "lastMonth": {
-      if (direction === 'prev') {
-        const prevMonth = subMonths(today, 2);
-        return { 
-          dateRange: "custom", 
-          startDate: startOfMonth(prevMonth), 
-          endDate: endOfMonth(prevMonth)
-        };
-      } else {
-        return { dateRange: "thisMonth" };
-      }
-    }
-    
-    case "custom": {
-      if (!customStartDate || !customEndDate) {
-        return { dateRange: "today" };
-      }
-      
-      // Calculate the duration between start and end dates
-      const diffInDays = Math.round((customEndDate.getTime() - customStartDate.getTime()) / (1000 * 60 * 60 * 24));
-      
-      if (direction === 'prev') {
-        return { 
-          dateRange: "custom", 
-          startDate: subDays(customStartDate, diffInDays + 1), 
-          endDate: subDays(customEndDate, diffInDays + 1)
-        };
-      } else {
-        const newEndDate = addDays(customEndDate, diffInDays + 1);
-        // Don't go beyond current date
-        if (newEndDate > today) {
-          return { 
-            dateRange: "custom", 
-            startDate: customStartDate, 
-            endDate: customEndDate
-          };
-        }
-        return { 
-          dateRange: "custom", 
-          startDate: addDays(customStartDate, diffInDays + 1), 
-          endDate: newEndDate
-        };
-      }
-    }
-    
-    default:
-      return { dateRange: currentDateRange };
+    return { 
+      dateRange: "today", 
+      startDate: nextDate, 
+      endDate: nextDate 
+    };
   }
 }
 

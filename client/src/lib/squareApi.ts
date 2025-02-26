@@ -9,8 +9,13 @@ const buildQueryString = (
 ): string => {
   let queryParams = `dateRange=${dateRange}`;
   
-  if (dateRange === 'custom' && startDate && endDate) {
-    queryParams += `&startDate=${startDate.toISOString().split('T')[0]}&endDate=${endDate.toISOString().split('T')[0]}`;
+  // Always add date parameters if they exist, regardless of the named dateRange
+  // This allows us to show specific days when using arrows
+  if (startDate) {
+    queryParams += `&startDate=${startDate.toISOString().split('T')[0]}`;
+    // If endDate is provided, use it; otherwise use startDate for single-day views
+    const finalEndDate = endDate || startDate;
+    queryParams += `&endDate=${finalEndDate.toISOString().split('T')[0]}`;
   }
   
   return queryParams;
