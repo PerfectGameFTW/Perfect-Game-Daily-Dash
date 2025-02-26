@@ -38,7 +38,7 @@ export default function Header({
     <header className="border-b border-zinc-800 px-4 py-4">
       <div className="flex justify-between items-center">
         <div className="flex items-center">
-          <h1 className="text-lg font-semibold text-white">Sales</h1>
+          <h1 className="text-lg font-semibold text-white">Perfect Game</h1>
           <ChevronDown className="h-5 w-5 text-zinc-400 ml-1" />
         </div>
         <Button 

@@ -50,7 +50,7 @@ export default function Sidebar({ open, setOpen }: SidebarProps) {
   const sidebarContent = (
     <>
       <div className="flex items-center h-16 flex-shrink-0 px-4 bg-gray-900">
-        <h1 className="text-xl font-semibold text-white">SalesTracker</h1>
+        <h1 className="text-xl font-semibold text-white">Perfect Game</h1>
       </div>
       <div className="h-0 flex-1 flex flex-col overflow-y-auto">
         <nav className="flex-1 px-2 py-4 space-y-1">
