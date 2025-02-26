@@ -137,26 +137,19 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Hourly Revenue Chart - Only chart above Metrics */}
+        <HourlyRevenueChart 
+          dateRange={dateRange}
+          customStartDate={customStartDate}
+          customEndDate={customEndDate}
+        />
+        
         {/* Stats Overview */}
         <StatsSummary 
           dateRange={dateRange} 
           customStartDate={customStartDate}
           customEndDate={customEndDate}
         />
-        
-        {/* Revenue Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <RevenueByCategoryChart 
-            dateRange={dateRange}
-            customStartDate={customStartDate}
-            customEndDate={customEndDate}
-          />
-          <HourlyRevenueChart 
-            dateRange={dateRange}
-            customStartDate={customStartDate}
-            customEndDate={customEndDate}
-          />
-        </div>
         
         {/* Tabbed Content for Transactions and Gift Cards */}
         <Tabs defaultValue="transactions" className="w-full">
