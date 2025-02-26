@@ -1,7 +1,8 @@
-import { ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 import { DateRange } from "@shared/schema";
 import { format, isSameDay, subDays } from "date-fns";
 import { navigateDate, getFormattedDate } from "@/lib/dateUtils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface HeaderProps {
   dateRange: DateRange;
@@ -79,27 +80,48 @@ export default function Header({
       </div>
       
       <div className="flex justify-center items-center py-3 mt-2">
-        <div className="flex items-center">
-          <div
-            className="p-2 cursor-pointer hover:bg-zinc-800 rounded-full transition-colors"
-            onClick={handlePrevDate}
-          >
-            <ChevronLeft className="h-5 w-5 text-blue-400" />
-          </div>
+        <div className="flex items-center bg-zinc-900 p-1 rounded-lg shadow-md">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="p-2 cursor-pointer hover:bg-zinc-800 rounded-full transition-colors"
+                  onClick={handlePrevDate}
+                  aria-label="Previous date"
+                >
+                  <ChevronLeft className="h-5 w-5 text-blue-400" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Previous {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : 'period'}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           
-          <span 
-            className="text-center font-medium text-white mx-3 cursor-pointer px-3 py-1 hover:bg-zinc-800 rounded-md transition-colors"
+          <button 
+            className="flex items-center gap-2 text-center font-medium text-white mx-2 cursor-pointer px-4 py-1.5 hover:bg-zinc-800 rounded-md transition-colors"
             onClick={onOpenTimeframeModal}
           >
-            {displayDate}
-          </span>
+            <Calendar className="h-4 w-4 text-blue-400" />
+            <span>{displayDate}</span>
+          </button>
           
-          <div
-            className="p-2 cursor-pointer hover:bg-zinc-800 rounded-full transition-colors"
-            onClick={handleNextDate}
-          >
-            <ChevronRight className="h-5 w-5 text-blue-400" />
-          </div>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="p-2 cursor-pointer hover:bg-zinc-800 rounded-full transition-colors"
+                  onClick={handleNextDate}
+                  aria-label="Next date"
+                >
+                  <ChevronRight className="h-5 w-5 text-blue-400" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Next {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : 'period'}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
     </header>
