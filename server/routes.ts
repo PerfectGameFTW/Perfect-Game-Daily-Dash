@@ -123,17 +123,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const hourlyRevenue = await pgStorage.getHourlyRevenue(parsedDateRange.data, startDate, endDate);
       
-      // For the frontend chart, we want to separate regular sales and gift card sales
-      // This is a simulated distinction since our current data structure doesn't separate them
-      // In a real implementation, you would fetch this data directly from the database
+      // Get gift card sales by hour for the same period to accurately split the revenue
+      const giftCardSalesByHour = await pgStorage.getGiftCardSalesByHour(parsedDateRange.data, startDate, endDate);
+      
+      // Combine the regular hourly revenue with gift card data
       const enhancedHourlyRevenue = hourlyRevenue.map(hour => {
-        // For now, we'll simulate gift card sales as 15% of total amount when there are sales
-        const giftCardAmount = hour.amount > 0 ? hour.amount * 0.15 : 0;
+        // Find corresponding gift card sales for this hour, if any
+        const giftCardData = giftCardSalesByHour.find(gc => gc.hour === hour.hour);
+        const giftCardAmount = giftCardData ? giftCardData.amount : 0;
+        
+        // Calculate regular sales (total minus gift card sales)
         const regularSales = hour.amount - giftCardAmount;
         
         return {
           ...hour,
-          regularSales,
+          regularSales: regularSales > 0 ? regularSales : 0,
           giftCardSales: giftCardAmount
         };
       });
@@ -199,9 +203,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Using Square API with Location ID:", locationId);
       console.log("Using production Square API environment");
       
-      // Fetch payments from Square
-      const payments = await squareClient.fetchPayments();
-      console.log(`Fetched ${payments.length} payments from Square`);
+      // Get date parameters from request if provided
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      
+      if (req.query.startDate && req.query.endDate) {
+        startDate = new Date(req.query.startDate as string);
+        endDate = new Date(req.query.endDate as string);
+      } else {
+        // Default to last 90 days if no dates specified
+        const now = new Date();
+        startDate = new Date(now);
+        startDate.setDate(startDate.getDate() - 90);
+        endDate = now;
+      }
+      
+      // Fetch payments from Square with date range
+      const payments = await squareClient.fetchPayments(startDate, endDate);
+      console.log(`Fetched ${payments.length} payments from Square for date range ${startDate.toISOString()} to ${endDate.toISOString()}`);
       
       // Process each payment and save to database
       for (const payment of payments) {

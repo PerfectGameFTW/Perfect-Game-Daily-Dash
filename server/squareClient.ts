@@ -94,13 +94,29 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
 // Fetch payments from Square API
 export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]> {
   try {
-    // In Square API 29.0.0, we need to use a different approach
-    // First try without dates to get default recent payments
-    const response = await squareClient.paymentsApi.listPayments();
+    const now = new Date();
+    const start = startDate || new Date(now.setDate(now.getDate() - 30)); // Default to last 30 days
+    const end = endDate || new Date();
+    
+    // Format dates for Square API
+    const beginTime = start.toISOString();
+    const endTime = end.toISOString();
+    
+    console.log(`Fetching payments from ${beginTime} to ${endTime}`);
+    
+    // Use date range with listPayments - Square API v29 requires specific parameters
+    const response = await squareClient.paymentsApi.listPayments(
+      beginTime,
+      endTime,
+      undefined, // cursor
+      undefined, // locationId - we use all available locations
+      undefined, // total
+      undefined  // sort order
+    );
     
     // Extract payments from the response
     const payments = response.result.payments || [];
-    console.log(`Fetched ${payments.length} payments from Square`);
+    console.log(`Fetched ${payments.length} payments from Square for date range ${beginTime} to ${endTime}`);
     return payments;
   } catch (error) {
     console.error('Error fetching payments from Square:', error);
