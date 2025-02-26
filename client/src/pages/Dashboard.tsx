@@ -4,7 +4,6 @@ import Header from "@/components/dashboard/Header";
 import StatsSummary from "@/components/dashboard/StatsSummary";
 import BottomNavigation from "@/components/dashboard/BottomNavigation";
 import TimeframeModal from "@/components/dashboard/TimeframeModal";
-import GiftCardActivity from "@/components/dashboard/GiftCardActivity";
 import { DateRange } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import useMobile from "@/hooks/use-mobile";
@@ -145,25 +144,11 @@ export default function Dashboard() {
       <main className="flex-1 w-full overflow-y-auto px-4 py-4 space-y-6">
         {/* Stats Overview */}
         <div className="w-full max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Stats Summary - Takes up 2 columns on desktop */}
-            <div className="lg:col-span-2">
-              <StatsSummary 
-                dateRange={dateRange} 
-                customStartDate={customStartDate}
-                customEndDate={customEndDate}
-              />
-            </div>
-            
-            {/* Gift Card Activity - Takes up 1 column on desktop */}
-            <div className="lg:col-span-1">
-              <GiftCardActivity 
-                dateRange={dateRange}
-                customStartDate={customStartDate}
-                customEndDate={customEndDate}
-              />
-            </div>
-          </div>
+          <StatsSummary 
+            dateRange={dateRange} 
+            customStartDate={customStartDate}
+            customEndDate={customEndDate}
+          />
         </div>
       </main>
       

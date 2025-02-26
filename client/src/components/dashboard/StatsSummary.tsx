@@ -133,7 +133,9 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           <>
             {/* Gift Card Sales - Moved to top as requested */}
             <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Gift Card Sales</span>
+              <span className="text-white">
+                Gift Card Sales
+              </span>
               <span className="text-white">
                 {/* Use our utility function to get the correct gift card amount */}
                 {formatCurrency(
