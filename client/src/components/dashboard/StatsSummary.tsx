@@ -2,13 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchDailySummary } from "@/lib/squareApi";
 import { DateRange } from "@shared/schema";
 import { formatCurrency, formatPercentage, isPositiveChange } from "@/lib/dateUtils";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { 
-  DollarSign, 
-  ShoppingBag, 
-  BarChart2, 
-  GiftIcon, 
   ChevronUp, 
   ChevronDown 
 } from "lucide-react";
@@ -25,90 +20,141 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     queryFn: () => fetchDailySummary(dateRange, customStartDate, customEndDate),
   });
 
-  const statsItems = [
-    {
-      title: "Total Revenue",
-      value: data?.totalRevenue || 0,
-      change: data?.revenueChange || 0,
-      icon: DollarSign,
-      color: "bg-primary",
-    },
-    {
-      title: "Total Orders",
-      value: data?.totalOrders || 0,
-      change: data?.ordersChange || 0,
-      icon: ShoppingBag,
-      color: "bg-secondary",
-      isCurrency: false,
-    },
-    {
-      title: "Average Order",
-      value: data?.averageOrder || 0,
-      change: data?.averageOrderChange || 0,
-      icon: BarChart2,
-      color: "bg-accent",
-    },
-    {
-      title: "Gift Card Sales",
-      value: data?.giftCardSales || 0,
-      change: data?.giftCardSalesChange || 0,
-      icon: GiftIcon,
-      color: "bg-amber-500",
-    },
-  ];
+  if (isLoading) {
+    return (
+      <div className="mt-6">
+        <Skeleton className="h-6 w-32 mb-3" />
+        <Skeleton className="h-10 w-48 mb-1" />
+        <Skeleton className="h-56 w-full mb-6" />
+      </div>
+    );
+  }
 
   return (
-    <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-      {statsItems.map((item, index) => (
-        <Card key={index} className="overflow-hidden shadow dashboard-card hover:shadow-lg transition-all duration-200 transform hover:-translate-y-1">
-          <CardContent className="p-0">
-            <div className="px-4 py-5 sm:p-6">
-              <div className="flex items-center">
-                <div className={`flex-shrink-0 ${item.color} rounded-md p-3`}>
-                  <item.icon className="h-6 w-6 text-white" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  {isLoading ? (
-                    <>
-                      <Skeleton className="h-5 w-24 mb-2" />
-                      <Skeleton className="h-7 w-36 mb-1" />
-                      <Skeleton className="h-5 w-16" />
-                    </>
-                  ) : (
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">
-                        {item.title}
-                      </dt>
-                      <dd className="flex items-baseline">
-                        <div className="text-2xl font-semibold text-gray-900">
-                          {item.isCurrency === false 
-                            ? item.value 
-                            : formatCurrency(item.value)}
-                        </div>
-                        <div className={`ml-2 flex items-baseline text-sm font-semibold ${
-                          isPositiveChange(item.change) 
-                            ? "text-green-600" 
-                            : "text-red-600"
-                        }`}>
-                          {isPositiveChange(item.change) ? (
-                            <ChevronUp className="self-center flex-shrink-0 h-5 w-5 text-green-500" />
-                          ) : (
-                            <ChevronDown className="self-center flex-shrink-0 h-5 w-5 text-red-500" />
-                          )}
-                          <span className="sr-only">
-                            {isPositiveChange(item.change) ? "Increased" : "Decreased"} by
-                          </span>
-                          {formatPercentage(Math.abs(item.change))}
-                        </div>
-                      </dd>
-                    </dl>
-                  )}
-                </div>
-              </div>
+    <div className="mt-4">
+      {/* Main Sales Section */}
+      <div className="mb-2">
+        <h2 className="text-sm font-medium text-zinc-400">Gross sales</h2>
+        <div className="flex items-center">
+          <p className="text-3xl font-bold text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
+          <div 
+            className={`ml-2 px-2 py-1 rounded text-xs font-semibold flex items-center ${
+              isPositiveChange(data?.revenueChange || 0)
+                ? "bg-green-900/30 text-green-400"
+                : "bg-red-900/30 text-red-400"
+            }`}
+          >
+            {isPositiveChange(data?.revenueChange || 0) ? (
+              <ChevronUp className="mr-0.5 h-3 w-3" />
+            ) : (
+              <ChevronDown className="mr-0.5 h-3 w-3" />
+            )}
+            {formatPercentage(Math.abs(data?.revenueChange || 0))}
+          </div>
+        </div>
+      </div>
+      
+      {/* Hourly Revenue Chart Placeholder */}
+      <div className="relative h-36 w-full mb-8 bg-black border-t border-b border-zinc-800">
+        <div className="absolute left-0 text-xs text-zinc-500">1k</div>
+        <div className="absolute left-0 top-1/2 text-xs text-zinc-500">522</div>
+        <div className="absolute left-0 bottom-0 text-xs text-zinc-500">0</div>
+        
+        <div className="flex justify-between items-end h-full px-5 pt-6 pb-2">
+          <div className="relative h-1/6 w-1 bg-blue-500"></div>
+          <div className="relative h-1/5 w-1 bg-blue-500"></div>
+          <div className="relative h-1/4 w-1 bg-blue-500"></div>
+          <div className="relative h-1/3 w-1 bg-blue-500"></div>
+          <div className="relative h-4/5 w-1 bg-blue-500"></div>
+          <div className="relative h-1/2 w-1 bg-blue-500"></div>
+        </div>
+        
+        <div className="flex justify-between px-3 text-xs text-zinc-500 mt-1">
+          <span>1am</span>
+          <span>5am</span>
+          <span>9am</span>
+          <span>1pm</span>
+          <span>5pm</span>
+          <span></span>
+        </div>
+      </div>
+
+      {/* Metrics Section */}
+      <div className="mb-3 flex justify-between items-center">
+        <h2 className="text-xl font-bold text-white">Metrics</h2>
+        <div className="bg-zinc-800 px-3 py-1 rounded-full text-sm text-zinc-300">
+          vs. Prior {dateRange === 'today' ? 'Day' : 'Period'}
+        </div>
+      </div>
+
+      {/* Metric Items */}
+      <div className="space-y-5">
+        {/* Net Sales Item */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Net sales</span>
+          <div className="flex items-center">
+            <span className="text-white mr-3">{formatCurrency(data?.totalRevenue || 0)}</span>
+            <div 
+              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
+                isPositiveChange(data?.revenueChange || 0)
+                  ? "bg-green-900/30 text-green-400"
+                  : "bg-red-900/30 text-red-400"
+              }`}
+            >
+              {isPositiveChange(data?.revenueChange || 0) ? (
+                <ChevronUp className="mr-0.5 h-3 w-3" />
+              ) : (
+                <ChevronDown className="mr-0.5 h-3 w-3" />
+              )}
+              {formatPercentage(Math.abs(data?.revenueChange || 0))}
             </div>
-          </CardContent>
-        </Card>
-      ))}
+          </div>
+        </div>
+
+        {/* Gross Sales Item */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Gross sales</span>
+          <div className="flex items-center">
+            <span className="text-white mr-3">{formatCurrency(data?.totalRevenue || 0)}</span>
+            <div 
+              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
+                isPositiveChange(data?.revenueChange || 0)
+                  ? "bg-green-900/30 text-green-400"
+                  : "bg-red-900/30 text-red-400"
+              }`}
+            >
+              {isPositiveChange(data?.revenueChange || 0) ? (
+                <ChevronUp className="mr-0.5 h-3 w-3" />
+              ) : (
+                <ChevronDown className="mr-0.5 h-3 w-3" />
+              )}
+              {formatPercentage(Math.abs(data?.revenueChange || 0))}
+            </div>
+          </div>
+        </div>
+
+        {/* Transactions Item */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Transactions</span>
+          <div className="flex items-center">
+            <span className="text-white mr-3">{data?.totalOrders || 0}</span>
+            <div 
+              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
+                isPositiveChange(data?.ordersChange || 0)
+                  ? "bg-green-900/30 text-green-400"
+                  : "bg-red-900/30 text-red-400"
+              }`}
+            >
+              {isPositiveChange(data?.ordersChange || 0) ? (
+                <ChevronUp className="mr-0.5 h-3 w-3" />
+              ) : (
+                <ChevronDown className="mr-0.5 h-3 w-3" />
+              )}
+              {formatPercentage(Math.abs(data?.ordersChange || 0))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

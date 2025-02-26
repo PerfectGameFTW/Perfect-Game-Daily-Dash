@@ -29,7 +29,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-background text-foreground pb-16">
+    <div className="flex flex-col min-h-screen bg-black text-white pb-16">
       {/* Header */}
       <Header 
         dateRange={dateRange}

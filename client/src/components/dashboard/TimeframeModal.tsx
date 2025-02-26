@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle 
-} from "@/components/ui/dialog";
+  Drawer, 
+  DrawerContent, 
+  DrawerHeader, 
+  DrawerTitle,
+  DrawerClose
+} from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { DateRange } from "@shared/schema";
 import { ChevronRight } from "lucide-react";
@@ -24,6 +25,11 @@ export default function TimeframeModal({
   onDateRangeChange
 }: TimeframeModalProps) {
   const [selectedRange, setSelectedRange] = useState<DateRange>(dateRange);
+  
+  // Update selected range when dateRange prop changes
+  useEffect(() => {
+    setSelectedRange(dateRange);
+  }, [dateRange]);
 
   const handleSelectRange = (newRange: DateRange) => {
     setSelectedRange(newRange);
@@ -43,47 +49,53 @@ export default function TimeframeModal({
   const reportingHours = "All day · 12:00 AM — 11:59 PM EST";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-md p-0 bg-background rounded-lg">
-        <DialogHeader className="pt-6 px-6 pb-3">
-          <DialogTitle className="text-2xl font-semibold">Timeframe</DialogTitle>
-        </DialogHeader>
-        <div className="px-6 pb-6">
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent className="bg-black border-t border-zinc-800 rounded-t-xl">
+        <div className="mx-auto mt-4 h-1.5 w-16 rounded-full bg-zinc-700" />
+        <DrawerHeader className="pt-4 px-6 pb-3">
+          <DrawerTitle className="text-2xl font-semibold text-white">Timeframe</DrawerTitle>
+        </DrawerHeader>
+        <div className="px-6 pb-10">
           {timeframes.map((timeframe) => (
             <div 
               key={timeframe.value}
-              className="py-4 border-b border-border flex items-center justify-between"
+              className="py-4 border-b border-zinc-800 flex items-center justify-between cursor-pointer"
               onClick={() => handleSelectRange(timeframe.value)}
             >
-              <span>{timeframe.label}</span>
+              <span className="text-white">{timeframe.label}</span>
               {selectedRange === timeframe.value && (
-                <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
                   <div className="w-2 h-2 rounded-full bg-white"></div>
+                </div>
+              )}
+              {selectedRange !== timeframe.value && (
+                <div className="w-5 h-5 rounded-full border border-zinc-600 flex items-center justify-center">
                 </div>
               )}
             </div>
           ))}
 
-          <div className="mt-6 border border-border rounded-lg">
+          <div className="mt-6 border border-zinc-800 rounded-lg bg-zinc-900">
             <div className="p-4 flex items-center justify-between">
-              <span className="font-medium">Reporting hours</span>
+              <span className="font-medium text-white">Reporting hours</span>
               <div className="flex items-center">
-                <span className="text-sm text-muted-foreground mr-2">
+                <span className="text-sm text-zinc-400 mr-2">
                   {reportingHours}
                 </span>
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                <ChevronRight className="h-4 w-4 text-zinc-400" />
               </div>
             </div>
           </div>
 
-          <Button 
-            className="w-full mt-4 justify-center"
-            onClick={() => onOpenChange(false)}
-          >
-            Done
-          </Button>
+          <DrawerClose asChild>
+            <Button 
+              className="w-full mt-4 justify-center bg-blue-500 hover:bg-blue-600 text-white"
+            >
+              Done
+            </Button>
+          </DrawerClose>
         </div>
-      </DialogContent>
-    </Dialog>
+      </DrawerContent>
+    </Drawer>
   );
 }
