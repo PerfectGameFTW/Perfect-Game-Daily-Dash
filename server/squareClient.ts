@@ -60,7 +60,7 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     const endTime = end.toISOString();
     
     // Make API request to Square Orders API
-    const response = await squareClient.ordersApi.searchOrders({
+    const response = await squareClient.orders.searchOrders({
       locationIds: [process.env.SQUARE_LOCATION_ID!],
       query: {
         filter: {
@@ -100,7 +100,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     const endTime = end.toISOString();
     
     // Make API request to Square Payments API
-    const response = await squareClient.paymentsApi.listPayments({
+    const response = await squareClient.payments.listPayments({
       beginTime: startTime,
       endTime: endTime,
       locationId: process.env.SQUARE_LOCATION_ID,
@@ -162,7 +162,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
 // Fetch gift cards from Square API
 export async function fetchGiftCards(): Promise<any[]> {
   try {
-    const response = await squareClient.giftCardsApi.listGiftCards({
+    const response = await squareClient.giftCards.listGiftCards({
       type: 'DIGITAL' // You can change this based on your requirements
     });
     return response.result.giftCards || [];
