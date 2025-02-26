@@ -1,4 +1,4 @@
-import { SquareClient, SquareEnvironment } from 'square';
+import { Client, Environment } from 'square';
 import { 
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
@@ -9,11 +9,11 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Initialize Square client
-const squareClient = new SquareClient({
+const squareClient = new Client({
   accessToken: process.env.SQUARE_ACCESS_TOKEN || '',
   environment: process.env.NODE_ENV === 'production' 
-    ? SquareEnvironment.Production 
-    : SquareEnvironment.Sandbox
+    ? Environment.Production 
+    : Environment.Sandbox
 });
 
 // Map Square payment status to our TransactionStatus
