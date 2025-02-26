@@ -117,28 +117,4 @@ export const testGiftCardDetection = async (): Promise<any> => {
 };
 
 // Get the current sync status
-export const fetchSyncStatus = async (): Promise<{
-  isRunning: boolean;
-  lastSyncTime: string;
-  progress: {
-    stage: 'idle' | 'fetching' | 'processing' | 'gift-cards' | 'complete';
-    totalItems: number;
-    processedItems: number;
-    startTime: string;
-    estimatedEndTime: string | null;
-    error: string | null;
-  };
-}> => {
-  try {
-    // Make direct fetch request to bypass potential API wrapper issues
-    const response = await fetch('/api/sync-status');
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error("Error fetching sync status:", error);
-    throw error;
-  }
-};
+// Sync status endpoint has been removed

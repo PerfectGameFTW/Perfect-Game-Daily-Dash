@@ -1231,10 +1231,13 @@ let isSyncRunning = false;
     } catch (error) {
       console.error("Error syncing February 25 data:", error);
       
-      // Update sync state with error in database
+      // Update sync state with error in database if it exists
       try {
-        if (syncState) {
-          await pgStorage.updateSyncState(syncState.id, {
+        // Retrieve the feb25 sync state
+        const febSyncState = await pgStorage.getSyncState('feb25');
+        
+        if (febSyncState) {
+          await pgStorage.updateSyncState(febSyncState.id, {
             status: 'error',
             errorMessage: error instanceof Error ? error.message : "Unknown error",
             lastSyncedAt: new Date()

@@ -1,8 +1,1 @@
-import React from 'react';
-
-// Empty component - sync status removed as requested
-const SyncProgressBar: React.FC = () => {
-  return null;
-};
-
-export default SyncProgressBar;
+// This file is intentionally left empty as the SyncProgressBar component has been removed.
