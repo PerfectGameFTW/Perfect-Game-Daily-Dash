@@ -28,12 +28,15 @@ export default function Dashboard() {
       currentEnd: customEndDate?.toISOString()
     });
     
-    // Store the new date range and dates
+    // First, invalidate current queries
+    queryClient.invalidateQueries();
+    
+    // Then store the new date range and dates
     setDateRange(newRange);
     setCustomStartDate(start);
     setCustomEndDate(end);
     
-    // Create an array of query keys to invalidate
+    // Create an array of query keys to invalidate with the exact new parameters
     const queryKeys = [
       ['/api/summary', newRange, start?.toISOString(), end?.toISOString()],
       ['/api/transactions', newRange, start?.toISOString(), end?.toISOString()],
@@ -43,16 +46,17 @@ export default function Dashboard() {
     ];
     
     // Invalidate all relevant queries with the new query keys
-    queryKeys.forEach(key => {
-      queryClient.invalidateQueries({ queryKey: key });
-    });
-    
-    // Also invalidate the general keys to be safe
-    queryClient.invalidateQueries({ queryKey: ['/api/summary'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/revenue-by-category'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/hourly-revenue'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/gift-card-summary'] });
+    setTimeout(() => {
+      // We use setTimeout to ensure React has updated the state before we refetch
+      queryKeys.forEach(key => {
+        queryClient.invalidateQueries({ queryKey: key });
+      });
+      
+      // Log the current query cache state
+      console.log('Query cache keys after invalidation:', 
+        queryClient.getQueryCache().getAll().map(q => q.queryKey)
+      );
+    }, 10);
   };
 
   const handleSync = async () => {
