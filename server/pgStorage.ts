@@ -9,6 +9,7 @@ import {
   transactions, giftCards, giftCardRedemptions, users, syncState
 } from "@shared/schema";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
+import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { IStorage } from "./storage";
 import pg from "pg";
 const { Pool } = pg;
@@ -335,18 +336,31 @@ export class PgStorage implements IStorage {
     };
   }
   
-  // Helper method for date range calculations
+  // Define Eastern Time Zone
+  private readonly EASTERN_TIMEZONE = 'America/New_York';
+  
+  // Helper method for date range calculations with Eastern timezone awareness
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
     let start: Date;
     let end: Date;
     
-    const now = new Date();
+    // Create 'now' in Eastern timezone
+    const now = toZonedTime(new Date(), this.EASTERN_TIMEZONE);
     
     // If explicit dates are provided, they take precedence over the dateRange
     if (startDate && (dateRange === 'custom' || endDate)) {
       // For custom range or when both dates are specified
-      start = startOfDay(startDate);
-      end = endOfDay(endDate || startDate);
+      // Convert the dates to Eastern timezone
+      const easternStartDate = utcToZonedTime(startDate, this.EASTERN_TIMEZONE);
+      const easternEndDate = endDate ? utcToZonedTime(endDate, this.EASTERN_TIMEZONE) : easternStartDate;
+      
+      // Apply start and end of day in Eastern timezone
+      start = startOfDay(easternStartDate);
+      end = endOfDay(easternEndDate);
+      
+      // Convert back to UTC for database queries
+      start = zonedTimeToUtc(start, this.EASTERN_TIMEZONE);
+      end = zonedTimeToUtc(end, this.EASTERN_TIMEZONE);
       
       console.log('Using explicit date range:', {
         dateRange,
@@ -358,40 +372,48 @@ export class PgStorage implements IStorage {
       return { start, end };
     }
     
-    // Otherwise, use the predefined dateRange
+    // Otherwise, use the predefined dateRange in Eastern timezone
+    // then convert back to UTC for the database query
+    let easternStart: Date;
+    let easternEnd: Date;
+    
     switch (dateRange) {
       case 'today':
-        start = startOfDay(now);
-        end = endOfDay(now);
+        easternStart = startOfDay(now);
+        easternEnd = endOfDay(now);
         break;
       case 'yesterday':
-        start = startOfDay(subDays(now, 1));
-        end = endOfDay(subDays(now, 1));
+        easternStart = startOfDay(subDays(now, 1));
+        easternEnd = endOfDay(subDays(now, 1));
         break;
       case 'last7days':
-        start = startOfDay(subDays(now, 6));
-        end = endOfDay(now);
+        easternStart = startOfDay(subDays(now, 6));
+        easternEnd = endOfDay(now);
         break;
       case 'last30days':
-        start = startOfDay(subDays(now, 29));
-        end = endOfDay(now);
+        easternStart = startOfDay(subDays(now, 29));
+        easternEnd = endOfDay(now);
         break;
       case 'thisMonth':
-        start = startOfMonth(now);
-        end = endOfMonth(now);
+        easternStart = startOfMonth(now);
+        easternEnd = endOfMonth(now);
         break;
       case 'lastMonth':
         const lastMonth = subDays(startOfMonth(now), 1);
-        start = startOfMonth(lastMonth);
-        end = endOfMonth(lastMonth);
+        easternStart = startOfMonth(lastMonth);
+        easternEnd = endOfMonth(lastMonth);
         break;
       case 'custom':
         // Should only get here if custom range was selected without dates
         throw new Error('Start date and end date must be provided for custom date range');
       default:
-        start = startOfDay(now);
-        end = endOfDay(now);
+        easternStart = startOfDay(now);
+        easternEnd = endOfDay(now);
     }
+    
+    // Convert Eastern times back to UTC for database queries
+    start = zonedTimeToUtc(easternStart, this.EASTERN_TIMEZONE);
+    end = zonedTimeToUtc(easternEnd, this.EASTERN_TIMEZONE);
     
     console.log('Using predefined date range:', {
       dateRange,

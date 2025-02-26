@@ -7,8 +7,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { fetchTransactions } from "@/lib/squareApi";
 import { DateRange } from "@shared/schema";
-import { format } from "date-fns";
-import { formatCurrency } from "@/lib/dateUtils";
+import { formatCurrency, formatInTimezone } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { 
   Table, 
@@ -38,7 +37,8 @@ export default function RecentTransactionsTable({
 
   const formatTime = (timestamp: string) => {
     // Convert UTC time to Eastern Time and format
-    return formatInTimezone(new Date(timestamp), "h:mm a");
+    const date = new Date(timestamp);
+    return formatInTimezone(date, "h:mm a");
   };
 
   const formatCategory = (category: string) => {
