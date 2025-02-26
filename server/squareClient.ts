@@ -146,7 +146,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   }
   
   // Convert payment data to handle BigInt values
-  let cleanedPaymentData;
+  let cleanedPaymentData: Record<string, any> = {};
   try {
     // Try the JSON parse/stringify approach with replacer
     cleanedPaymentData = JSON.parse(JSON.stringify(payment, (key, value) => 
@@ -155,20 +155,21 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   } catch (error) {
     console.warn(`Error stringifying payment ${payment.id}, using manual conversion:`, error);
     // Manual fallback - create a new object without BigInt values
-    cleanedPaymentData = {};
-    for (const key in payment) {
-      if (Object.prototype.hasOwnProperty.call(payment, key)) {
-        const value = payment[key];
-        if (typeof value === 'bigint') {
-          cleanedPaymentData[key] = value.toString();
-        } else if (typeof value === 'object' && value !== null) {
-          // For nested objects, we'll just store a simplified version
-          cleanedPaymentData[key] = `[Object: ${JSON.stringify(value)}]`;
-        } else {
-          cleanedPaymentData[key] = value;
+    Object.keys(payment).forEach(key => {
+      const value = (payment as Record<string, any>)[key];
+      if (typeof value === 'bigint') {
+        cleanedPaymentData[key] = value.toString();
+      } else if (typeof value === 'object' && value !== null) {
+        // For nested objects, we'll just store a simplified version
+        try {
+          cleanedPaymentData[key] = JSON.stringify(value);
+        } catch (e) {
+          cleanedPaymentData[key] = '[Complex Object]';
         }
+      } else {
+        cleanedPaymentData[key] = value;
       }
-    }
+    });
   }
   
   // Map to our transaction model
@@ -201,10 +202,32 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     purchaseDate = new Date();
   }
   
-  // Convert any BigInt values in the gift card data to strings
-  const cleanedGiftCardData = JSON.parse(JSON.stringify(giftCard, (key, value) => 
-    typeof value === 'bigint' ? value.toString() : value
-  ));
+  // Convert gift card data to handle BigInt values
+  let cleanedGiftCardData: Record<string, any> = {};
+  try {
+    // Try the JSON parse/stringify approach with replacer
+    cleanedGiftCardData = JSON.parse(JSON.stringify(giftCard, (key, value) => 
+      typeof value === 'bigint' ? value.toString() : value
+    ));
+  } catch (error) {
+    console.warn(`Error stringifying gift card ${giftCard.id}, using manual conversion:`, error);
+    // Manual fallback - create a new object without BigInt values
+    Object.keys(giftCard).forEach(key => {
+      const value = (giftCard as Record<string, any>)[key];
+      if (typeof value === 'bigint') {
+        cleanedGiftCardData[key] = value.toString();
+      } else if (typeof value === 'object' && value !== null) {
+        // For nested objects, we'll just store a simplified version
+        try {
+          cleanedGiftCardData[key] = JSON.stringify(value);
+        } catch (e) {
+          cleanedGiftCardData[key] = '[Complex Object]';
+        }
+      } else {
+        cleanedGiftCardData[key] = value;
+      }
+    });
+  }
   
   const card: InsertGiftCard = {
     squareId: giftCard.id,

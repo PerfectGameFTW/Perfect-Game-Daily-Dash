@@ -92,8 +92,8 @@ export default function HourlyRevenueChart({
           y: {
             beginAtZero: true,
             grid: {
-              color: 'rgba(255, 255, 255, 0.1)',
-              borderDash: [4, 4]
+              color: 'rgba(255, 255, 255, 0.1)'
+              // Remove borderDash property as it's not supported
             },
             ticks: {
               color: 'rgba(255, 255, 255, 0.7)',
