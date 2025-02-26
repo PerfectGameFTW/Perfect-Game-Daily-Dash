@@ -102,8 +102,8 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/gift-card-summary'] });
       
       toast({
-        title: "Sync Completed",
-        description: `Updated Square data successfully at ${new Date(result.lastSyncTime).toLocaleTimeString()}.`,
+        title: `${result.syncType === 'initial' ? 'Initial' : 'Incremental'} Sync Completed`,
+        description: `Updated Square data (${result.syncType} sync) successfully at ${new Date(result.lastSyncTime).toLocaleTimeString()}.`,
         variant: "default",
       });
     } catch (error) {

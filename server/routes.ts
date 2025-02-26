@@ -637,18 +637,36 @@ const hasSyncTimedOut = (): boolean => {
       // Get date parameters from request if provided
       let startDate: Date | undefined;
       let endDate: Date | undefined;
+      let isInitialSync = false;
       
       if (req.query.startDate && req.query.endDate) {
+        // Handle manually provided date range
         startDate = new Date(req.query.startDate as string);
         endDate = new Date(req.query.endDate as string);
         console.log(`Using provided date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       } else {
-        // Default to last 90 days if no dates specified
-        const now = new Date();
-        startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 90);
-        endDate = now;
-        console.log(`Using default 90-day time window: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
+        // Check if we've done a sync before
+        const lastPaymentSync = await pgStorage.getSyncState('payments');
+        
+        if (lastPaymentSync && lastPaymentSync.isComplete && lastPaymentSync.lastSyncedAt) {
+          // This is not initial sync - get data since last sync
+          console.log("Found previous complete sync at:", lastPaymentSync.lastSyncedAt);
+          
+          // Use last sync date as starting point with 1 day buffer for overlap
+          startDate = new Date(lastPaymentSync.lastSyncedAt);
+          startDate.setDate(startDate.getDate() - 1); // 1 day overlap for safety
+          endDate = new Date(); // Current time
+          
+          console.log(`Incremental sync from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
+        } else {
+          // First sync - use default 90-day window
+          const now = new Date();
+          startDate = new Date(now);
+          startDate.setDate(startDate.getDate() - 90);
+          endDate = now;
+          isInitialSync = true;
+          console.log(`Initial sync using default 90-day window: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
+        }
       }
       
       // STEP 1: Sync Payments
@@ -1006,14 +1024,16 @@ const hasSyncTimedOut = (): boolean => {
       });
       
       // All sync operations complete
-      console.log(`Unified sync complete. Added ${results.transactions} new transactions, processed ${results.orders} orders, added ${results.giftCards} new gift cards.`);
+      const syncType = isInitialSync ? 'initial (90 days)' : 'incremental';
+      console.log(`Unified ${syncType} sync complete. Added ${results.transactions} new transactions, processed ${results.orders} orders, added ${results.giftCards} new gift cards.`);
       
       // Release the lock
       isSyncRunning = false;
       
       res.json({
         success: true,
-        message: "Sync completed successfully",
+        message: `${isInitialSync ? 'Initial' : 'Incremental'} sync completed successfully`,
+        syncType: isInitialSync ? 'initial' : 'incremental',
         results,
         lastSyncTime: new Date().toISOString(),
         timeWindow: {
