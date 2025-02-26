@@ -4,7 +4,6 @@ import { DateRange } from "@shared/schema";
 import { formatCurrency, formatPercentage, isPositiveChange } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import SimpleHourlyChart from "./SimpleHourlyChart";
-import { isFeb25Case, getGiftCardAmount } from "@/lib/specialCases";
 import { 
   ChevronUp, 
   ChevronDown,
@@ -137,12 +136,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 Gift Card Sales
               </span>
               <span className="text-white">
-                {/* Use our utility function to get the correct gift card amount */}
-                {formatCurrency(
-                  isFeb25Case(dateRange) 
-                    ? getGiftCardAmount(dateRange) 
-                    : (detailedTransactions.giftCardSales || 0)
-                )}
+                {/* Display raw gift card sales data from API */}
+                {formatCurrency(detailedTransactions.giftCardSales || 0)}
               </span>
             </div>
             

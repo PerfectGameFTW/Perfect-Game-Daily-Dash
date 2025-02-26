@@ -6,37 +6,29 @@
 import { DateRange, GiftCardSummary } from "@shared/schema";
 
 /**
- * Checks if we're looking at Feb 25, 2025 data
- * (this is our special case with gift card data issues)
+ * Checks if we're looking at Feb 25, 2025 data - DISABLED
+ * This function always returns false now as we're using direct API data
  */
 export function isFeb25Case(dateRange: DateRange): boolean {
-  const today = new Date();
-  return (
-    dateRange === 'yesterday' && 
-    today.getDate() === 26 && 
-    today.getMonth() === 1 && // 0-indexed, so 1 = February
-    today.getFullYear() === 2025
-  );
+  return false; // We're no longer using hardcoded data for Feb 25
 }
 
 /**
- * Special gift card data for Feb 25, 2025 - hardcoded from Square dashboard
+ * Special gift card data for Feb 25, 2025 - DISABLED
+ * We're no longer using hardcoded data, this is kept for reference
  */
 export const FEB_25_GIFT_CARD_DATA: GiftCardSummary = {
-  soldCount: 6,
-  soldAmount: 1536.72,
+  soldCount: 0,
+  soldAmount: 0, 
   redeemedCount: 0,
   redeemedAmount: 0,
-  averageValue: 256.12
+  averageValue: 0
 };
 
 /**
  * Get the correct gift card amount for a given date range
- * This will return the hardcoded value for Feb 25, 2025, or the provided value otherwise
+ * This function no longer uses hardcoded values and just returns the API data
  */
 export function getGiftCardAmount(dateRange: DateRange, defaultAmount: number = 0): number {
-  if (isFeb25Case(dateRange)) {
-    return FEB_25_GIFT_CARD_DATA.soldAmount;
-  }
-  return defaultAmount;
+  return defaultAmount; // Always use the value from the API
 }
