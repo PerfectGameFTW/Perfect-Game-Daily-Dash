@@ -3,6 +3,7 @@ import { fetchDailySummary } from "@/lib/squareApi";
 import { DateRange } from "@shared/schema";
 import { formatCurrency, formatPercentage, isPositiveChange } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
+import SimpleHourlyChart from "./SimpleHourlyChart";
 import { 
   ChevronUp, 
   ChevronDown 
@@ -54,30 +55,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         </div>
       </div>
       
-      {/* Hourly Revenue Chart Placeholder */}
-      <div className="relative h-36 w-full mb-8 bg-black border-t border-b border-zinc-800">
-        <div className="absolute left-0 text-xs text-zinc-500">1k</div>
-        <div className="absolute left-0 top-1/2 text-xs text-zinc-500">522</div>
-        <div className="absolute left-0 bottom-0 text-xs text-zinc-500">0</div>
-        
-        <div className="flex justify-between items-end h-full px-5 pt-6 pb-2">
-          <div className="relative h-1/6 w-1 bg-blue-500"></div>
-          <div className="relative h-1/5 w-1 bg-blue-500"></div>
-          <div className="relative h-1/4 w-1 bg-blue-500"></div>
-          <div className="relative h-1/3 w-1 bg-blue-500"></div>
-          <div className="relative h-4/5 w-1 bg-blue-500"></div>
-          <div className="relative h-1/2 w-1 bg-blue-500"></div>
-        </div>
-        
-        <div className="flex justify-between px-3 text-xs text-zinc-500 mt-1">
-          <span>1am</span>
-          <span>5am</span>
-          <span>9am</span>
-          <span>1pm</span>
-          <span>5pm</span>
-          <span></span>
-        </div>
-      </div>
+      {/* Hourly Revenue Chart */}
+      <SimpleHourlyChart 
+        dateRange={dateRange}
+        customStartDate={customStartDate}
+        customEndDate={customEndDate}
+      />
 
       {/* Metrics Section */}
       <div className="mb-3 flex justify-between items-center">
