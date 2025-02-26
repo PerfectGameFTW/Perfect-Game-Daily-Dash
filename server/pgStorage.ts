@@ -477,6 +477,49 @@ export class PgStorage implements IStorage {
     
     return { start, end };
   }
+  
+  // Sync state management methods
+  async getSyncState(syncType: string): Promise<SyncState | undefined> {
+    const result = await db.select()
+      .from(syncState)
+      .where(eq(syncState.syncType, syncType));
+    return result[0];
+  }
+
+  async createSyncState(syncStateData: InsertSyncState): Promise<SyncState> {
+    const result = await db.insert(syncState)
+      .values(syncStateData)
+      .returning();
+    return result[0];
+  }
+
+  async updateSyncState(id: number, updates: Partial<InsertSyncState>): Promise<SyncState> {
+    const result = await db.update(syncState)
+      .set(updates)
+      .where(eq(syncState.id, id))
+      .returning();
+    return result[0];
+  }
+  
+  async getSyncProgress(): Promise<{ payments: number; giftCards: number }> {
+    // Get the payments sync state
+    const paymentsSyncState = await this.getSyncState('payments');
+    const giftCardsSyncState = await this.getSyncState('giftCards');
+    
+    // Calculate progress percentages
+    const paymentsProgress = paymentsSyncState && paymentsSyncState.totalCount > 0
+      ? Math.min(100, Math.round((paymentsSyncState.processedCount / paymentsSyncState.totalCount) * 100))
+      : 0;
+      
+    const giftCardsProgress = giftCardsSyncState && giftCardsSyncState.totalCount > 0
+      ? Math.min(100, Math.round((giftCardsSyncState.processedCount / giftCardsSyncState.totalCount) * 100))
+      : 0;
+    
+    return {
+      payments: paymentsProgress,
+      giftCards: giftCardsProgress
+    };
+  }
 }
 
 export const pgStorage = new PgStorage();
