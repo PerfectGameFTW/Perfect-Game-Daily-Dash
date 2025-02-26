@@ -10,4 +10,14 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
+
+  :root {
+    --chart-1: 223 89% 51%; /* Blue - primary */
+    --chart-2: 358 75% 59%; /* Red for gift cards */
+  }
+
+  .dark {
+    --chart-1: 223 89% 51%; /* Blue - primary */
+    --chart-2: 358 75% 59%; /* Red for gift cards */
+  }
 }

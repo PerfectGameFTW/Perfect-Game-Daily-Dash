@@ -1,21 +1,28 @@
-import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { useQuery } from "@tanstack/react-query";
-import { fetchHourlyRevenue } from "@/lib/squareApi";
-import { DateRange, HourlyRevenue } from "@shared/schema";
-import { formatCurrency } from "@/lib/dateUtils";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Clock, TrendingUp } from "lucide-react";
+"use client"
+
+import * as React from "react"
 import { 
-  BarChart, 
   Bar, 
-  XAxis, 
-  YAxis, 
+  BarChart, 
   CartesianGrid, 
-  Tooltip,
+  XAxis,
+  YAxis,
   ResponsiveContainer,
-  LabelList
-} from 'recharts';
+  Legend 
+} from "recharts"
+import { Clock, TrendingUp } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
+import { fetchHourlyRevenue } from "@/lib/squareApi"
+import { DateRange, HourlyRevenue } from "@shared/schema"
+import { formatCurrency } from "@/lib/dateUtils"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart"
 
 interface HourlyRevenueChartProps {
   dateRange: DateRange;
@@ -23,51 +30,61 @@ interface HourlyRevenueChartProps {
   customEndDate?: Date;
 }
 
-// Format data for Recharts
+// Format data for Recharts - simulating sales vs gift card data
 const formatDataForChart = (data: HourlyRevenue[]) => {
-  return data.map(item => ({
-    name: item.hour,
-    value: item.amount,
-    formattedValue: formatCurrency(item.amount)
-  }));
+  return data.map(item => {
+    // Simulate gift card sales as 15% of total amount when amount > 0
+    const giftCardAmount = item.amount > 0 ? item.amount * 0.15 : 0;
+    const regularSales = item.amount - giftCardAmount;
+    
+    return {
+      hour: item.hour,
+      sales: regularSales,
+      giftCards: giftCardAmount,
+      formattedSales: formatCurrency(regularSales),
+      formattedGiftCards: formatCurrency(giftCardAmount),
+      date: item.hour // For tooltip
+    };
+  });
 };
+
+// Chart configuration - blue for sales, red for gift cards
+const chartConfig = {
+  hours: {
+    label: "Hour",
+  },
+  sales: {
+    label: "Regular Sales",
+    color: "hsl(var(--chart-1))", // Blue
+  },
+  giftCards: {
+    label: "Gift Card Sales",
+    color: "hsl(var(--chart-2))", // Red
+  },
+} satisfies ChartConfig;
 
 export default function HourlyRevenueChart({ 
   dateRange, 
   customStartDate, 
   customEndDate 
 }: HourlyRevenueChartProps) {
+  const [activeChart, setActiveChart] = React.useState<"combined" | "sales" | "giftCards">("combined");
+  
   const { data, isLoading } = useQuery({
     queryKey: ['/api/hourly-revenue', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchHourlyRevenue(dateRange, customStartDate, customEndDate),
   });
   
-  const [chartData, setChartData] = useState<Array<{name: string; value: number; formattedValue: string}>>([]);
-  
-  // Find the peak hour
-  const peakHour = data && data.length > 0 
-    ? data.reduce((max, item) => (item.amount > max.amount ? item : max), data[0])
-    : null;
-
-  useEffect(() => {
-    if (data && data.length > 0) {
-      setChartData(formatDataForChart(data));
-    }
+  const chartData = React.useMemo(() => {
+    if (!data || data.length === 0) return [];
+    return formatDataForChart(data);
   }, [data]);
-
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-background/90 p-3 rounded-md shadow-md border border-border">
-          <p className="text-sm font-medium">{payload[0].payload.name}</p>
-          <p className="text-primary font-bold">
-            {formatCurrency(payload[0].payload.value)}
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
+  
+  // Find the peak hour for all sales
+  const peakHour = React.useMemo(() => {
+    if (!data || data.length === 0) return null;
+    return data.reduce((max, item) => (item.amount > max.amount ? item : max), data[0]);
+  }, [data]);
 
   return (
     <Card className="overflow-hidden dashboard-card transition-all duration-200 border border-border/40 bg-card/50 backdrop-blur-sm">
@@ -92,45 +109,66 @@ export default function HourlyRevenueChart({
           </div>
         ) : (
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={chartData}
-                margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.1} />
-                <XAxis 
-                  dataKey="name" 
-                  tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
-                  tickLine={false}
-                  axisLine={{ stroke: 'var(--border)', strokeWidth: 1 }}
-                />
-                <YAxis 
-                  tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
-                  tickLine={false}
-                  axisLine={{ stroke: 'var(--border)', strokeWidth: 1 }}
-                  tickFormatter={(value) => `$${value}`}
-                />
-                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'var(--primary-foreground)', opacity: 0.1 }} />
-                <Bar 
-                  dataKey="value" 
-                  fill="var(--primary)" 
-                  radius={[4, 4, 0, 0]}
-                  maxBarSize={50}
-                  animationDuration={1500}
+            <ChartContainer
+              config={chartConfig}
+              className="aspect-auto h-full w-full"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={chartData}
+                  margin={{
+                    top: 20,
+                    right: 10,
+                    left: 10,
+                    bottom: 20,
+                  }}
+                  barGap={0}
+                  barCategoryGap={8}
                 >
-                  <LabelList 
-                    dataKey="formattedValue" 
-                    position="top" 
-                    style={{ 
-                      fontSize: '10px',
-                      fill: 'var(--muted-foreground)',
-                      fontWeight: 500
-                    }}
-                    formatter={(value: string) => value !== '$0.00' ? value : ''}
+                  <CartesianGrid vertical={false} opacity={0.1} />
+                  <XAxis
+                    dataKey="hour"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    fontSize={12}
                   />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+                  <YAxis 
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value) => `$${value}`}
+                    fontSize={12}
+                  />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        className="w-[150px]"
+                        labelFormatter={(value) => {
+                          return `${value}`;
+                        }}
+                      />
+                    }
+                  />
+                  <Bar 
+                    dataKey="sales" 
+                    stackId="a"
+                    name="Regular Sales"
+                    fill="var(--color-sales)" 
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={40}
+                  />
+                  <Bar 
+                    dataKey="giftCards" 
+                    stackId="a"
+                    name="Gift Card Sales"
+                    fill="var(--color-giftCards)" 
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={40}
+                  />
+                  <Legend />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartContainer>
           </div>
         )}
       </CardContent>
