@@ -423,24 +423,53 @@ export class PgStorage implements IStorage {
     // - 00:00:00 EST = 05:00:00 UTC same day
     // - 23:59:59 EST = 04:59:59 UTC next day
 
-    // Create date objects with day boundaries in Eastern Time
-    const easternStartStr = `${easternStart.getFullYear()}-${String(easternStart.getMonth() + 1).padStart(2, '0')}-${String(easternStart.getDate()).padStart(2, '0')}T00:00:00`;
-    const easternEndStr = `${easternEnd.getFullYear()}-${String(easternEnd.getMonth() + 1).padStart(2, '0')}-${String(easternEnd.getDate()).padStart(2, '0')}T23:59:59.999`;
+    // FIXED: The proper way to convert Eastern Time boundaries to UTC
+    // For Feb 2025, Eastern Time is EST (UTC-5)
     
-    // Parse these strings as Eastern Time dates
-    const easternStartMidnight = toZonedTime(new Date(easternStartStr), this.EASTERN_TIMEZONE);
-    const easternEndMidnight = toZonedTime(new Date(easternEndStr), this.EASTERN_TIMEZONE);
+    // Create Eastern Time date objects for midnight (00:00:00)
+    const easternMidnight = formatInTimeZone(
+      new Date(
+        easternStart.getFullYear(),
+        easternStart.getMonth(),
+        easternStart.getDate()
+      ), 
+      this.EASTERN_TIMEZONE, 
+      'yyyy-MM-dd'
+    ) + 'T00:00:00.000';
     
-    // Convert Eastern Time dates to their UTC equivalents
-    // This gives us the correct UTC time that corresponds to the Eastern Time boundaries
-    const utcStart = new Date(easternStartMidnight.valueOf() - (easternStartMidnight.getTimezoneOffset() * 60000));
-    const utcEnd = new Date(easternEndMidnight.valueOf() - (easternEndMidnight.getTimezoneOffset() * 60000));
+    // Create Eastern Time date objects for end of day (23:59:59.999)
+    const easternEndOfDay = formatInTimeZone(
+      new Date(
+        easternEnd.getFullYear(),
+        easternEnd.getMonth(),
+        easternEnd.getDate()
+      ), 
+      this.EASTERN_TIMEZONE, 
+      'yyyy-MM-dd'
+    ) + 'T23:59:59.999';
+    
+    // Parse these timestamps directly as UTC by specifying the timezone offset
+    const easternMidnightInUTC = formatInTimeZone(
+      new Date(easternMidnight), 
+      this.EASTERN_TIMEZONE,
+      "yyyy-MM-dd'T'HH:mm:ss.SSSX"
+    );
+    
+    const easternEndOfDayInUTC = formatInTimeZone(
+      new Date(easternEndOfDay), 
+      this.EASTERN_TIMEZONE,
+      "yyyy-MM-dd'T'HH:mm:ss.SSSX"
+    );
+    
+    // Create Date objects from these ISO strings
+    const utcStart = new Date(easternMidnightInUTC);
+    const utcEnd = new Date(easternEndOfDayInUTC);
     
     console.log('Converted to UTC for database query:', {
       utcStart: utcStart.toISOString(),
       utcEnd: utcEnd.toISOString(),
-      easternStart: formatInTimeZone(easternStartMidnight, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-      easternEnd: formatInTimeZone(easternEndMidnight, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      easternStart: formatInTimeZone(new Date(easternMidnight), this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+      easternEnd: formatInTimeZone(new Date(easternEndOfDay), this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
     });
     
     return { start: utcStart, end: utcEnd };
