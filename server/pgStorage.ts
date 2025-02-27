@@ -300,8 +300,7 @@ export class PgStorage implements IStorage {
   async getHourlyRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<HourlyRevenue[]> {
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     
-    // Import the EASTERN_TIMEZONE directly to avoid using this.EASTERN_TIMEZONE
-    const { EASTERN_TIMEZONE } = require('./dateUtils');
+    // Use the imported EASTERN_TIMEZONE constant
     
     // Initialize hourly buckets (midnight to 11 PM)
     const hourlyMap = new Map<string, number>();
@@ -404,10 +403,8 @@ export class PgStorage implements IStorage {
   
   // Use the Eastern date utility for consistent timezone handling
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
-    // Import the getEasternDateRange function from our dedicated utility
-    const { getEasternDateRange } = require('./dateUtils');
-    
-    // Use the simplified utility to get proper Eastern Time business days
+    // Use the imported getEasternDateRange function from our dedicated utility
+    // This correctly handles timezone conversions for database queries
     return getEasternDateRange(dateRange, startDate, endDate);
   }
   
