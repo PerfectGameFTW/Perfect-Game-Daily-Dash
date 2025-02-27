@@ -440,120 +440,98 @@ export class PgStorage implements IStorage {
       return { start: easternMidnightStart, end: easternMidnightEnd };
     }
     
-    // Standard flow for other dates
-    // Create 'now' in Eastern timezone for calculations
-    const now = new Date();
-    const easternNow = toZonedTime(now, this.EASTERN_TIMEZONE);
-    
-    // These will hold our Eastern timezone dates - specific dates, not necessarily with day boundaries
-    let easternDate: Date;
-    let easternEndDate: Date | null = null;
+    // UNIVERSAL SOLUTION FOR ALL DATE RANGES
+    // We use the same approach for all dates - consistently use Eastern Time business day definitions
+    // During EST: 5:00 UTC to 4:59:59.999 UTC the next day
+    // During EDT: 4:00 UTC to 3:59:59.999 UTC the next day
     
     console.log('DIAGNOSTIC - Processing date range request:', { dateRange, startDate, endDate });
     
-    // If explicit dates are provided, they take precedence over the dateRange
+    // Get the current date in Eastern Time for date range calculations
+    const now = new Date();
+    const easternNow = toZonedTime(now, this.EASTERN_TIMEZONE);
+    const todayEasternStr = format(easternNow, 'yyyy-MM-dd');
+    
+    // Variables to store our date range
+    let startDateStr: string;
+    let endDateStr: string;
+    
+    // Determine date strings based on range type
     if (startDate && (dateRange === 'custom' || endDate)) {
-      // For custom range or when both dates are specified
+      // For custom range, convert input dates to Eastern Time representation
+      const startInEastern = toZonedTime(startDate, this.EASTERN_TIMEZONE);
+      const endInEastern = endDate ? toZonedTime(endDate, this.EASTERN_TIMEZONE) : startInEastern;
       
-      // First convert to Eastern Time to handle timezone properly
-      // Extract the date portion in Eastern timezone to ensure proper day boundaries
-      const startAsEastern = formatInTimeZone(startDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
-      const endAsEastern = endDate ? formatInTimeZone(endDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd') : startAsEastern;
+      startDateStr = format(startInEastern, 'yyyy-MM-dd');
+      endDateStr = format(endInEastern, 'yyyy-MM-dd');
       
-      // Create Eastern Time midnight boundaries with proper timezone indicators
-      // Each date starts at 00:00:00.000 and ends at 23:59:59.999 in Eastern Time
-      const easternStartWithTz = `${startAsEastern}T00:00:00.000-05:00`; // EST timezone
-      const easternEndWithTz = `${endAsEastern}T23:59:59.999-05:00`;     // EST timezone
-      
-      // Create Date objects from the timezone-aware string
-      easternDate = new Date(easternStartWithTz);
-      easternEndDate = new Date(easternEndWithTz);
-      
-      console.log('CUSTOM DATE RANGE - Properly aligned with Eastern Time day boundaries:', {
-        originalStart: startDate.toISOString(),
-        originalEnd: endDate ? endDate.toISOString() : startDate.toISOString(),
-        easternStartDate: formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-        easternEndDate: formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-        utcStartIso: easternDate.toISOString(),
-        utcEndIso: easternEndDate.toISOString()
-      });
-      
-      // The detailed logging is already done above, no need for additional logging here
+      console.log('Custom date range in Eastern Time:', { startDateStr, endDateStr });
     } else {
-      // Otherwise, use the predefined dateRange in Eastern timezone
+      // For predefined ranges, calculate the dates in Eastern Time
       switch (dateRange) {
         case 'today':
-          // Eastern Time business day - full day at Eastern Time
-          easternDate = startOfDay(easternNow);        // 00:00:00 Eastern
-          easternEndDate = endOfDay(easternNow);       // 23:59:59.999 Eastern
-          console.log(`Today in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
+          startDateStr = todayEasternStr;
+          endDateStr = todayEasternStr;
           break;
           
         case 'yesterday':
-          // Eastern Time yesterday - full day at Eastern Time  
-          const yesterday = subDays(easternNow, 1);
-          easternDate = startOfDay(yesterday);         // 00:00:00 Eastern
-          easternEndDate = endOfDay(yesterday);        // 23:59:59.999 Eastern
-          console.log(`Yesterday in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
+          const yesterdayEastern = subDays(easternNow, 1);
+          startDateStr = format(yesterdayEastern, 'yyyy-MM-dd');
+          endDateStr = startDateStr; // Same day range
           break;
           
         case 'last7days':
-          // Eastern Time last 7 days - Eastern Time boundaries
-          easternDate = startOfDay(subDays(easternNow, 6));  // 00:00:00 Eastern, 6 days ago
-          easternEndDate = endOfDay(easternNow);             // 23:59:59.999 Eastern today
-          console.log(`Last 7 days in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
+          startDateStr = format(subDays(easternNow, 6), 'yyyy-MM-dd');
+          endDateStr = todayEasternStr;
           break;
           
         case 'last30days':
-          // Eastern Time last 30 days - Eastern Time boundaries
-          easternDate = startOfDay(subDays(easternNow, 29)); // 00:00:00 Eastern, 29 days ago
-          easternEndDate = endOfDay(easternNow);             // 23:59:59.999 Eastern today
-          console.log(`Last 30 days in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
+          startDateStr = format(subDays(easternNow, 29), 'yyyy-MM-dd');
+          endDateStr = todayEasternStr;
           break;
           
         case 'thisMonth':
-          // Eastern Time this month - Eastern Time boundaries
-          easternDate = startOfMonth(easternNow);      // 00:00:00 Eastern, first day of month
-          easternEndDate = endOfMonth(easternNow);     // 23:59:59.999 Eastern, last day of month
-          console.log(`This month in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
+          const firstOfMonth = startOfMonth(easternNow);
+          const lastOfMonth = endOfMonth(easternNow);
+          startDateStr = format(firstOfMonth, 'yyyy-MM-dd');
+          endDateStr = format(lastOfMonth, 'yyyy-MM-dd');
           break;
           
         case 'lastMonth':
-          // Eastern Time last month - Eastern Time boundaries
-          const lastMonth = subMonths(easternNow, 1);
-          easternDate = startOfMonth(lastMonth);       // 00:00:00 Eastern, first day of last month
-          easternEndDate = endOfMonth(lastMonth);      // 23:59:59.999 Eastern, last day of last month
-          console.log(`Last month in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
+          const lastMonthDate = subMonths(easternNow, 1);
+          const firstOfLastMonth = startOfMonth(lastMonthDate);
+          const lastOfLastMonth = endOfMonth(lastMonthDate);
+          startDateStr = format(firstOfLastMonth, 'yyyy-MM-dd');
+          endDateStr = format(lastOfLastMonth, 'yyyy-MM-dd');
           break;
           
         case 'custom':
-          // Should only get here if custom range was selected without dates
           throw new Error('Start date and end date must be provided for custom date range');
           
         default:
-          // Default to today Eastern Time
-          easternDate = startOfDay(easternNow);        // 00:00:00 Eastern
-          easternEndDate = endOfDay(easternNow);       // 23:59:59.999 Eastern
-          console.log(`Default (today) in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
+          // Default to today
+          startDateStr = todayEasternStr;
+          endDateStr = todayEasternStr;
       }
       
-      console.log('DIAGNOSTIC - Predefined date range with boundaries:', {
-        dateRange,
-        easternDate: formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-        easternEndDate: formatInTimeZone(easternEndDate!, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
-      });
+      console.log(`Date range ${dateRange} in Eastern Time:`, { startDateStr, endDateStr });
     }
     
-    // Now convert Eastern Time dates directly to UTC format for database query
-    // We need to use the dateString + offset approach to ensure proper conversion
+    // Now consistently convert Eastern dates to UTC database query format
+    // During EST (UTC-5):
+    //   - 00:00:00 Eastern = 05:00:00 UTC same day
+    //   - 23:59:59 Eastern = 04:59:59 UTC next day
     
-    // Format dates with offset indicators for precise timezone conversion
-    const eastStartISO = formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
-    const eastEndISO = formatInTimeZone(easternEndDate!, this.EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
+    // Create start time: midnight (00:00:00) Eastern Time = 05:00:00 UTC
+    const utcStart = new Date(`${startDateStr}T05:00:00.000Z`);
     
-    // Create UTC dates from these ISO strings (with offsets included)
-    const utcStart = new Date(eastStartISO);
-    const utcEnd = new Date(eastEndISO);
+    // Create end time: 11:59:59 PM Eastern Time = 04:59:59 UTC of the next day
+    // Get the next day after the end date
+    const nextDayDate = new Date(endDateStr);
+    nextDayDate.setDate(nextDayDate.getDate() + 1);
+    const nextDayStr = format(nextDayDate, 'yyyy-MM-dd');
+    // Set to 04:59:59.999 UTC of next day (11:59:59.999 PM Eastern)
+    const utcEnd = new Date(`${nextDayStr}T04:59:59.999Z`);
     
     // Add transaction diagnostics for any date range being analyzed
     // This helps us verify that our timezone calculations are working correctly
@@ -603,8 +581,8 @@ export class PgStorage implements IStorage {
     console.log('FINAL DATABASE QUERY RANGE:', {
       utcStart: utcStart.toISOString(),
       utcEnd: utcEnd.toISOString(),
-      easternStart: formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-      easternEnd: formatInTimeZone(easternEndDate!, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      easternStart: formatInTimeZone(utcStart, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+      easternEnd: formatInTimeZone(utcEnd, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
     });
     
     return { start: utcStart, end: utcEnd };
