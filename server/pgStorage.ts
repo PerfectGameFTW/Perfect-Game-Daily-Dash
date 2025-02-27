@@ -411,39 +411,36 @@ export class PgStorage implements IStorage {
       });
     }
     
-    // FIXED: Convert Eastern Time dates to correct UTC equivalents
+    // FIXED: Convert Eastern Time dates to correct UTC equivalents for database query
     // The database stores UTC timestamps, but we want to query based on
     // Eastern Time business days (midnight to midnight in Eastern Time)
     
-    // We need to:
-    // 1. Get the Eastern Time date range (already have it in easternStart/easternEnd)
-    // 2. Convert it to UTC for database queries, accounting for timezone offset
+    // We need the UTC date/time that corresponds to:
+    // 1. 00:00:00.000 Eastern Time on the start date
+    // 2. 23:59:59.999 Eastern Time on the end date
     
-    // Get timezone offset for start date (it might be different due to DST)
-    const easternStartDate = new Date(
-      easternStart.getFullYear(),
-      easternStart.getMonth(),
-      easternStart.getDate(),
-      0, 0, 0, 0
-    );
-    // Adjust for timezone - get UTC equivalent of Eastern midnight
-    const utcStart = new Date(easternStartDate);
-    utcStart.setMinutes(utcStart.getMinutes() - easternStartDate.getTimezoneOffset());
+    // For Eastern Time -> UTC in Feb 2025 (EST, UTC-5):
+    // - 00:00:00 EST = 05:00:00 UTC same day
+    // - 23:59:59 EST = 04:59:59 UTC next day
+
+    // Create date objects with day boundaries in Eastern Time
+    const easternStartStr = `${easternStart.getFullYear()}-${String(easternStart.getMonth() + 1).padStart(2, '0')}-${String(easternStart.getDate()).padStart(2, '0')}T00:00:00`;
+    const easternEndStr = `${easternEnd.getFullYear()}-${String(easternEnd.getMonth() + 1).padStart(2, '0')}-${String(easternEnd.getDate()).padStart(2, '0')}T23:59:59.999`;
     
-    // Get timezone offset for end date (it might be different due to DST)
-    const easternEndDate = new Date(
-      easternEnd.getFullYear(),
-      easternEnd.getMonth(),
-      easternEnd.getDate(),
-      23, 59, 59, 999
-    );
-    // Adjust for timezone - get UTC equivalent of Eastern 23:59:59.999
-    const utcEnd = new Date(easternEndDate);
-    utcEnd.setMinutes(utcEnd.getMinutes() - easternEndDate.getTimezoneOffset());
+    // Parse these strings as Eastern Time dates
+    const easternStartMidnight = toZonedTime(new Date(easternStartStr), this.EASTERN_TIMEZONE);
+    const easternEndMidnight = toZonedTime(new Date(easternEndStr), this.EASTERN_TIMEZONE);
+    
+    // Convert Eastern Time dates to their UTC equivalents
+    // This gives us the correct UTC time that corresponds to the Eastern Time boundaries
+    const utcStart = new Date(easternStartMidnight.valueOf() - (easternStartMidnight.getTimezoneOffset() * 60000));
+    const utcEnd = new Date(easternEndMidnight.valueOf() - (easternEndMidnight.getTimezoneOffset() * 60000));
     
     console.log('Converted to UTC for database query:', {
       utcStart: utcStart.toISOString(),
-      utcEnd: utcEnd.toISOString()
+      utcEnd: utcEnd.toISOString(),
+      easternStart: formatInTimeZone(easternStartMidnight, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+      easternEnd: formatInTimeZone(easternEndMidnight, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
     });
     
     return { start: utcStart, end: utcEnd };
