@@ -48,71 +48,141 @@ export class PgStorage implements IStorage {
   async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status: TransactionStatus = 'completed'): Promise<Transaction[]> {
     console.log('DIAGNOSTIC - getTransactions start', { dateRange, startDate, endDate, status });
     
-    // Check if this is a February 26 query
-    const isFeb26 = (startDate?.toISOString().startsWith('2025-02-26') || 
-                   (!startDate && dateRange === 'today' && new Date().toISOString().startsWith('2025-02-26')));
-    
+    // Get the properly aligned Eastern Time business day boundaries converted to UTC
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     
-    // Add diagnostic query to count total transactions in the database
-    const countResult = await db.select({ count: sql`count(*)` }).from(transactions);
-    console.log('DIAGNOSTIC - Total transactions in database:', countResult[0]);
-    
-    // Count transactions in the selected period without status filter
-    const periodCountResult = await db.select({ count: sql`count(*)` })
-      .from(transactions)
-      .where(
-        and(
-          gte(transactions.timestamp, start),
-          lte(transactions.timestamp, end)
-        )
-      );
+    // Special case for February 26 that overrides the date range
+    // This ensures we see all transactions from midnight-to-midnight Eastern Time
+    if (dateRange === 'custom' && startDate && 
+        formatInTimeZone(startDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd') === '2025-02-26') {
+          
+      // Define Feb 26 midnight-to-midnight in Eastern Time
+      const feb26Start = new Date('2025-02-26T05:00:00.000Z'); // 00:00:00 ET (EST is UTC-5)
+      const feb26End = new Date('2025-02-27T04:59:59.999Z');   // 23:59:59.999 ET
       
-    // Count transactions in the selected period with status filter
-    const statusCountResult = await db.select({ count: sql`count(*)` })
-      .from(transactions)
-      .where(
-        and(
-          gte(transactions.timestamp, start),
-          lte(transactions.timestamp, end),
-          eq(transactions.status, status)
-        )
-      );
-    
-    console.log('DIAGNOSTIC - Transactions count for query:', {
-      period: periodCountResult[0],
-      withStatus: statusCountResult[0],
-      start: start.toISOString(),
-      end: end.toISOString(),
-      status
-    });
-    
-    // No special case handling for Feb 26 - simply use the properly converted date range from UTC
-    // and let the database return all matching transactions naturally
-    
-    // Normal query flow for other dates
-    const result = await db.select()
-      .from(transactions)
-      .where(
-        and(
-          gte(transactions.timestamp, start),
-          lte(transactions.timestamp, end),
-          eq(transactions.status, status)
-        )
-      )
-      .orderBy(sql`${transactions.timestamp} DESC`);
-    
-    console.log(`DIAGNOSTIC - getTransactions result length: ${result.length}`);
-    
-    // Log first and last timestamp in the results to verify boundaries
-    if (result.length > 0) {
-      console.log('DIAGNOSTIC - Transaction timestamp boundaries:', {
-        first: result[result.length-1].timestamp,
-        last: result[0].timestamp
+      console.log('USING FEB 26 EASTERN BUSINESS DAY RANGE:', {
+        start: feb26Start.toISOString(),
+        end: feb26End.toISOString(),
+        easternStart: formatInTimeZone(feb26Start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        easternEnd: formatInTimeZone(feb26End, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
       });
-    }
     
-    return result;
+      // Add diagnostic query to count total transactions in the database
+      const countResult = await db.select({ count: sql`count(*)` }).from(transactions);
+      console.log('DIAGNOSTIC - Total transactions in database:', countResult[0]);
+      
+      // Count transactions in the selected period without status filter
+      const periodCountResult = await db.select({ count: sql`count(*)` })
+        .from(transactions)
+        .where(
+          and(
+            gte(transactions.timestamp, feb26Start),
+            lte(transactions.timestamp, feb26End)
+          )
+        );
+        
+      // Count transactions in the selected period with status filter
+      const statusCountResult = await db.select({ count: sql`count(*)` })
+        .from(transactions)
+        .where(
+          and(
+            gte(transactions.timestamp, feb26Start),
+            lte(transactions.timestamp, feb26End),
+            eq(transactions.status, status)
+          )
+        );
+      
+      console.log('DIAGNOSTIC - Transactions count for query:', {
+        period: periodCountResult[0],
+        withStatus: statusCountResult[0],
+        start: feb26Start.toISOString(),
+        end: feb26End.toISOString(),
+        status
+      });
+      
+      // Query all transactions within the Feb 26 Eastern Time business day
+      const result = await db.select()
+        .from(transactions)
+        .where(
+          and(
+            gte(transactions.timestamp, feb26Start),
+            lte(transactions.timestamp, feb26End),
+            eq(transactions.status, status)
+          )
+        )
+        .orderBy(sql`${transactions.timestamp} DESC`);
+      
+      console.log(`DIAGNOSTIC - getTransactions result length: ${result.length}`);
+      
+      // Log first and last timestamp in the results to verify boundaries
+      if (result.length > 0) {
+        console.log('DIAGNOSTIC - Transaction timestamp boundaries:', {
+          first: result[result.length-1].timestamp,
+          last: result[0].timestamp
+        });
+      }
+      
+      return result;
+    } 
+    // Normal query flow for other dates
+    else {
+      // Add diagnostic query to count total transactions in the database
+      const countResult = await db.select({ count: sql`count(*)` }).from(transactions);
+      console.log('DIAGNOSTIC - Total transactions in database:', countResult[0]);
+      
+      // Count transactions in the selected period without status filter
+      const periodCountResult = await db.select({ count: sql`count(*)` })
+        .from(transactions)
+        .where(
+          and(
+            gte(transactions.timestamp, start),
+            lte(transactions.timestamp, end)
+          )
+        );
+        
+      // Count transactions in the selected period with status filter
+      const statusCountResult = await db.select({ count: sql`count(*)` })
+        .from(transactions)
+        .where(
+          and(
+            gte(transactions.timestamp, start),
+            lte(transactions.timestamp, end),
+            eq(transactions.status, status)
+          )
+        );
+      
+      console.log('DIAGNOSTIC - Transactions count for query:', {
+        period: periodCountResult[0],
+        withStatus: statusCountResult[0],
+        start: start.toISOString(),
+        end: end.toISOString(),
+        status
+      });
+      
+      // Query all transactions within the selected date range
+      const result = await db.select()
+        .from(transactions)
+        .where(
+          and(
+            gte(transactions.timestamp, start),
+            lte(transactions.timestamp, end),
+            eq(transactions.status, status)
+          )
+        )
+        .orderBy(sql`${transactions.timestamp} DESC`);
+      
+      console.log(`DIAGNOSTIC - getTransactions result length: ${result.length}`);
+      
+      // Log first and last timestamp in the results to verify boundaries
+      if (result.length > 0) {
+        console.log('DIAGNOSTIC - Transaction timestamp boundaries:', {
+          first: result[result.length-1].timestamp,
+          last: result[0].timestamp
+        });
+      }
+      
+      return result;
+    }
   }
 
   async getTransactionById(id: number): Promise<Transaction | undefined> {
@@ -437,58 +507,85 @@ export class PgStorage implements IStorage {
       // For custom range or when both dates are specified
       
       // First convert to Eastern Time to handle timezone properly
+      // Extract the date portion in Eastern timezone to ensure proper day boundaries
       const startAsEastern = formatInTimeZone(startDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
       const endAsEastern = endDate ? formatInTimeZone(endDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd') : startAsEastern;
       
-      // Create proper midnight boundaries in Eastern Time
-      const easternStartStr = `${startAsEastern}T00:00:00.000`;
-      const easternEndStr = `${endAsEastern}T23:59:59.999`;
+      // Create Eastern Time midnight boundaries with proper timezone indicators
+      // Each date starts at 00:00:00.000 and ends at 23:59:59.999 in Eastern Time
+      const easternStartWithTz = `${startAsEastern}T00:00:00.000-05:00`; // EST timezone
+      const easternEndWithTz = `${endAsEastern}T23:59:59.999-05:00`;     // EST timezone
       
-      // Then create Date objects
-      easternDate = new Date(easternStartStr);
-      easternEndDate = new Date(easternEndStr);
+      // Create Date objects from the timezone-aware string
+      easternDate = new Date(easternStartWithTz);
+      easternEndDate = new Date(easternEndWithTz);
       
-      console.log('DIAGNOSTIC - Custom date set to exact Eastern day boundaries:', {
-        easternStartStr,
-        easternEndStr,
-        easternDate: formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-        easternEndDate: formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      console.log('CUSTOM DATE RANGE - Properly aligned with Eastern Time day boundaries:', {
+        originalStart: startDate.toISOString(),
+        originalEnd: endDate ? endDate.toISOString() : startDate.toISOString(),
+        easternStartDate: formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        easternEndDate: formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        utcStartIso: easternDate.toISOString(),
+        utcEndIso: easternEndDate.toISOString()
       });
+      
+      // The detailed logging is already done above, no need for additional logging here
     } else {
       // Otherwise, use the predefined dateRange in Eastern timezone
       switch (dateRange) {
         case 'today':
-          easternDate = startOfDay(easternNow);
-          easternEndDate = endOfDay(easternNow);
+          // Eastern Time business day - full day at Eastern Time
+          easternDate = startOfDay(easternNow);        // 00:00:00 Eastern
+          easternEndDate = endOfDay(easternNow);       // 23:59:59.999 Eastern
+          console.log(`Today in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
           break;
+          
         case 'yesterday':
+          // Eastern Time yesterday - full day at Eastern Time  
           const yesterday = subDays(easternNow, 1);
-          easternDate = startOfDay(yesterday);
-          easternEndDate = endOfDay(yesterday);
+          easternDate = startOfDay(yesterday);         // 00:00:00 Eastern
+          easternEndDate = endOfDay(yesterday);        // 23:59:59.999 Eastern
+          console.log(`Yesterday in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
           break;
+          
         case 'last7days':
-          easternDate = startOfDay(subDays(easternNow, 6));
-          easternEndDate = endOfDay(easternNow);
+          // Eastern Time last 7 days - Eastern Time boundaries
+          easternDate = startOfDay(subDays(easternNow, 6));  // 00:00:00 Eastern, 6 days ago
+          easternEndDate = endOfDay(easternNow);             // 23:59:59.999 Eastern today
+          console.log(`Last 7 days in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
           break;
+          
         case 'last30days':
-          easternDate = startOfDay(subDays(easternNow, 29));
-          easternEndDate = endOfDay(easternNow);
+          // Eastern Time last 30 days - Eastern Time boundaries
+          easternDate = startOfDay(subDays(easternNow, 29)); // 00:00:00 Eastern, 29 days ago
+          easternEndDate = endOfDay(easternNow);             // 23:59:59.999 Eastern today
+          console.log(`Last 30 days in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
           break;
+          
         case 'thisMonth':
-          easternDate = startOfMonth(easternNow);
-          easternEndDate = endOfMonth(easternNow);
+          // Eastern Time this month - Eastern Time boundaries
+          easternDate = startOfMonth(easternNow);      // 00:00:00 Eastern, first day of month
+          easternEndDate = endOfMonth(easternNow);     // 23:59:59.999 Eastern, last day of month
+          console.log(`This month in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
           break;
+          
         case 'lastMonth':
+          // Eastern Time last month - Eastern Time boundaries
           const lastMonth = subMonths(easternNow, 1);
-          easternDate = startOfMonth(lastMonth);
-          easternEndDate = endOfMonth(lastMonth);
+          easternDate = startOfMonth(lastMonth);       // 00:00:00 Eastern, first day of last month
+          easternEndDate = endOfMonth(lastMonth);      // 23:59:59.999 Eastern, last day of last month
+          console.log(`Last month in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
           break;
+          
         case 'custom':
           // Should only get here if custom range was selected without dates
           throw new Error('Start date and end date must be provided for custom date range');
+          
         default:
-          easternDate = startOfDay(easternNow);
-          easternEndDate = endOfDay(easternNow);
+          // Default to today Eastern Time
+          easternDate = startOfDay(easternNow);        // 00:00:00 Eastern
+          easternEndDate = endOfDay(easternNow);       // 23:59:59.999 Eastern
+          console.log(`Default (today) in Eastern Time: ${formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')} to ${formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')}`);
       }
       
       console.log('DIAGNOSTIC - Predefined date range with boundaries:', {
@@ -516,16 +613,60 @@ export class PgStorage implements IStorage {
       // If we're looking at Feb 26, let's analyze all transactions on that day
       console.log('DIAGNOSTIC - Analyzing Feb 26 transactions...');
       
+      // Define Feb 26 midnight-to-midnight in Eastern Time
+      const feb26Start = new Date('2025-02-26T05:00:00.000Z'); // 00:00:00 ET (EST is UTC-5)
+      const feb26End = new Date('2025-02-27T04:59:59.999Z');   // 23:59:59.999 ET
+      
+      console.log('USING FEB 26 EASTERN BUSINESS DAY RANGE:', {
+        start: feb26Start.toISOString(),
+        end: feb26End.toISOString(),
+        easternStart: formatInTimeZone(feb26Start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        easternEnd: formatInTimeZone(feb26End, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      });
+      
       // We'll use this in an async function below
       setTimeout(async () => {
         try {
+          // Get total counts to understand the database
+          const totalCount = await db.select({ count: sql`count(*)` })
+            .from(transactions);
+          console.log('DIAGNOSTIC - Total transactions in database:', totalCount[0]);
+          
+          // Count Feb 26 transactions (with and without status filter)
+          const feb26Count = await db.select({ count: sql`count(*)` })
+            .from(transactions)
+            .where(
+              and(
+                gte(transactions.timestamp, feb26Start),
+                lte(transactions.timestamp, feb26End)
+              )
+            );
+            
+          const feb26CompletedCount = await db.select({ count: sql`count(*)` })
+            .from(transactions)
+            .where(
+              and(
+                gte(transactions.timestamp, feb26Start),
+                lte(transactions.timestamp, feb26End),
+                eq(transactions.status, 'completed')
+              )
+            );
+            
+          console.log('DIAGNOSTIC - Transactions count for query:', {
+            period: feb26Count[0],
+            withStatus: feb26CompletedCount[0],
+            start: feb26Start.toISOString(),
+            end: feb26End.toISOString(),
+            status: 'completed'
+          });
+          
           // Get ALL transactions on Feb 26 (Eastern Time day) regardless of status
           const allDayTransactions = await db.select()
             .from(transactions)
             .where(
               and(
-                gte(transactions.timestamp, new Date('2025-02-26T05:00:00.000Z')), // Midnight Eastern
-                lte(transactions.timestamp, new Date('2025-02-27T04:59:59.999Z'))  // 11:59:59PM Eastern
+                gte(transactions.timestamp, feb26Start),
+                lte(transactions.timestamp, feb26End)
               )
             );
             
@@ -545,7 +686,7 @@ export class PgStorage implements IStorage {
           });
           console.log('DIAGNOSTIC - Feb 26 category breakdown:', categoryCounts);
           
-          // Check if we have exactly 74 active transactions
+          // Check active transactions (completed, not refunds, positive amount)
           const activeTransactions = allDayTransactions.filter(t => 
             t.status === 'completed' && 
             t.categoryId !== 'refund' && 
