@@ -51,138 +51,71 @@ export class PgStorage implements IStorage {
     // Get the properly aligned Eastern Time business day boundaries converted to UTC
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     
-    // Special case for February 26 that overrides the date range
-    // This ensures we see all transactions from midnight-to-midnight Eastern Time
-    if (dateRange === 'custom' && startDate && 
-        formatInTimeZone(startDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd') === '2025-02-26') {
-          
-      // Define Feb 26 midnight-to-midnight in Eastern Time
-      const feb26Start = new Date('2025-02-26T05:00:00.000Z'); // 00:00:00 ET (EST is UTC-5)
-      const feb26End = new Date('2025-02-27T04:59:59.999Z');   // 23:59:59.999 ET
-      
-      console.log('USING FEB 26 EASTERN BUSINESS DAY RANGE:', {
-        start: feb26Start.toISOString(),
-        end: feb26End.toISOString(),
-        easternStart: formatInTimeZone(feb26Start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-        easternEnd: formatInTimeZone(feb26End, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
-      });
+    // No special case handling - consistent timezone handling for all dates
+    // Diagnostic logging to verify Eastern Time business day boundaries
+    console.log('USING EASTERN BUSINESS DAY RANGE:', {
+      start: start.toISOString(),
+      end: end.toISOString(),
+      easternStart: formatInTimeZone(start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+      easternEnd: formatInTimeZone(end, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+    });
     
-      // Add diagnostic query to count total transactions in the database
-      const countResult = await db.select({ count: sql`count(*)` }).from(transactions);
-      console.log('DIAGNOSTIC - Total transactions in database:', countResult[0]);
-      
-      // Count transactions in the selected period without status filter
-      const periodCountResult = await db.select({ count: sql`count(*)` })
-        .from(transactions)
-        .where(
-          and(
-            gte(transactions.timestamp, feb26Start),
-            lte(transactions.timestamp, feb26End)
-          )
-        );
-        
-      // Count transactions in the selected period with status filter
-      const statusCountResult = await db.select({ count: sql`count(*)` })
-        .from(transactions)
-        .where(
-          and(
-            gte(transactions.timestamp, feb26Start),
-            lte(transactions.timestamp, feb26End),
-            eq(transactions.status, status)
-          )
-        );
-      
-      console.log('DIAGNOSTIC - Transactions count for query:', {
-        period: periodCountResult[0],
-        withStatus: statusCountResult[0],
-        start: feb26Start.toISOString(),
-        end: feb26End.toISOString(),
-        status
-      });
-      
-      // Query all transactions within the Feb 26 Eastern Time business day
-      const result = await db.select()
-        .from(transactions)
-        .where(
-          and(
-            gte(transactions.timestamp, feb26Start),
-            lte(transactions.timestamp, feb26End),
-            eq(transactions.status, status)
-          )
+    // Add diagnostic query to count total transactions in the database
+    const countResult = await db.select({ count: sql`count(*)` }).from(transactions);
+    console.log('DIAGNOSTIC - Total transactions in database:', countResult[0]);
+    
+    // Count transactions in the selected period without status filter
+    const periodCountResult = await db.select({ count: sql`count(*)` })
+      .from(transactions)
+      .where(
+        and(
+          gte(transactions.timestamp, start),
+          lte(transactions.timestamp, end)
         )
-        .orderBy(sql`${transactions.timestamp} DESC`);
+      );
       
-      console.log(`DIAGNOSTIC - getTransactions result length: ${result.length}`);
-      
-      // Log first and last timestamp in the results to verify boundaries
-      if (result.length > 0) {
-        console.log('DIAGNOSTIC - Transaction timestamp boundaries:', {
-          first: result[result.length-1].timestamp,
-          last: result[0].timestamp
-        });
-      }
-      
-      return result;
-    } 
-    // Normal query flow for other dates
-    else {
-      // Add diagnostic query to count total transactions in the database
-      const countResult = await db.select({ count: sql`count(*)` }).from(transactions);
-      console.log('DIAGNOSTIC - Total transactions in database:', countResult[0]);
-      
-      // Count transactions in the selected period without status filter
-      const periodCountResult = await db.select({ count: sql`count(*)` })
-        .from(transactions)
-        .where(
-          and(
-            gte(transactions.timestamp, start),
-            lte(transactions.timestamp, end)
-          )
-        );
-        
-      // Count transactions in the selected period with status filter
-      const statusCountResult = await db.select({ count: sql`count(*)` })
-        .from(transactions)
-        .where(
-          and(
-            gte(transactions.timestamp, start),
-            lte(transactions.timestamp, end),
-            eq(transactions.status, status)
-          )
-        );
-      
-      console.log('DIAGNOSTIC - Transactions count for query:', {
-        period: periodCountResult[0],
-        withStatus: statusCountResult[0],
-        start: start.toISOString(),
-        end: end.toISOString(),
-        status
-      });
-      
-      // Query all transactions within the selected date range
-      const result = await db.select()
-        .from(transactions)
-        .where(
-          and(
-            gte(transactions.timestamp, start),
-            lte(transactions.timestamp, end),
-            eq(transactions.status, status)
-          )
+    // Count transactions in the selected period with status filter
+    const statusCountResult = await db.select({ count: sql`count(*)` })
+      .from(transactions)
+      .where(
+        and(
+          gte(transactions.timestamp, start),
+          lte(transactions.timestamp, end),
+          eq(transactions.status, status)
         )
-        .orderBy(sql`${transactions.timestamp} DESC`);
-      
-      console.log(`DIAGNOSTIC - getTransactions result length: ${result.length}`);
-      
-      // Log first and last timestamp in the results to verify boundaries
-      if (result.length > 0) {
-        console.log('DIAGNOSTIC - Transaction timestamp boundaries:', {
-          first: result[result.length-1].timestamp,
-          last: result[0].timestamp
-        });
-      }
-      
-      return result;
+      );
+    
+    console.log('DIAGNOSTIC - Transactions count for query:', {
+      period: periodCountResult[0],
+      withStatus: statusCountResult[0],
+      start: start.toISOString(),
+      end: end.toISOString(),
+      status
+    });
+    
+    // Query all transactions within the selected date range
+    const result = await db.select()
+      .from(transactions)
+      .where(
+        and(
+          gte(transactions.timestamp, start),
+          lte(transactions.timestamp, end),
+          eq(transactions.status, status)
+        )
+      )
+      .orderBy(sql`${transactions.timestamp} DESC`);
+    
+    console.log(`DIAGNOSTIC - getTransactions result length: ${result.length}`);
+    
+    // Log first and last timestamp in the results to verify boundaries
+    if (result.length > 0) {
+      console.log('DIAGNOSTIC - Transaction timestamp boundaries:', {
+        first: result[result.length-1].timestamp,
+        last: result[0].timestamp
+      });
     }
+    
+    return result;
   }
 
   async getTransactionById(id: number): Promise<Transaction | undefined> {
