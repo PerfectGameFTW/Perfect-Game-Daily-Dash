@@ -1,0 +1,50 @@
+I have a JavaScript/TypeScript project in Replit using the Square Payments API, Drizzle ORM, and PostgreSQL. My goal is to update the timestamp handling in the file containing convertSquarePaymentToTransaction and convertSquareGiftCardToGiftCard to convert Square API timestamps (which are in UTC, e.g., ‘2025-02-26T03:56:00Z’) to Eastern Time (EST/EDT, e.g., ‘2025-02-25 22:56:00’ for EST or ‘2025-02-25 23:56:00’ for EDT) before inserting them into my PostgreSQL database. The database uses TIMESTAMP WITHOUT TIME ZONE columns, and I want the timestamps stored as literal EST/EDT strings (e.g., ‘yyyy-MM-dd HH:mm:ss’).
+
+Here’s the current code for convertSquarePaymentToTransaction and convertSquareGiftCardToGiftCard (you can find it in my project files, likely in a file with Square API integration). I need you to:
+
+	1.	Install the date-fns-tz package if it’s not already installed (npm install date-fns-tz).
+	2.	Import { toZonedTime, formatInTimeZone } from ‘date-fns-tz’ at the top of the file.
+	3.	Modify convertSquarePaymentToTransaction to:
+	•	Parse the payment.createdAt UTC timestamp into a Date object.
+	•	Use toZonedTime to convert it to Eastern Time using the time zone ‘America/New_York’.
+	•	Use formatInTimeZone to format it as a string in the format ‘yyyy-MM-dd HH:mm:ss’ for EST/EDT.
+	•	Update the timestamp in the InsertTransaction object to be this EST/EDT string instead of a Date object.
+	•	Add console logs to debug the original UTC timestamp and the converted EST/EDT timestamp.
+	•	Handle errors by using the current date in Eastern Time if parsing fails.
+	4.	Do the same for convertSquareGiftCardToGiftCard, replacing giftCard.created_at with the purchaseDate in the InsertGiftCard object, formatted as an EST/EDT string.
+	5.	Ensure the InsertTransaction and InsertGiftCard types (defined in ‘@shared/schema’) are updated to expect string for timestamp and purchaseDate respectively, if they currently expect Date.
+
+Here’s an example of how the updated convertSquarePaymentToTransaction should look:
+
+import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
+
+let timestamp: string;
+try {
+  const utcDate = new Date(payment.createdAt);
+  if (isNaN(utcDate.getTime())) {
+    console.warn(`Invalid timestamp for payment ${payment.id}, using current date instead`);
+    utcDate = new Date();
+  }
+  const estDate = toZonedTime(utcDate, 'America/New_York');
+  timestamp = formatInTimeZone(estDate, 'America/New_York', 'yyyy-MM-dd HH:mm:ss');
+  
+  console.log(`Payment ${payment.id} timestamp (EST/EDT):`, {
+    original: payment.createdAt,
+    parsed: timestamp
+  });
+} catch (error) {
+  console.warn(`Error parsing timestamp for payment ${payment.id}, using current date instead:`, error);
+  const fallbackDate = toZonedTime(new Date(), 'America/New_York');
+  timestamp = formatInTimeZone(fallbackDate, 'America/New_York', 'yyyy-MM-dd HH:mm:ss');
+}
+
+const transaction: InsertTransaction = {
+  squareId: payment.id,
+  amount,
+  categoryId: category,
+  status: mapSquareStatus(payment.status),
+  timestamp, // Now an EST/EDT string like '2025-02-25 22:56:00'
+  squareData: cleanedPaymentData
+};
+
+Do the same for convertSquareGiftCardToGiftCard, updating purchaseDate to a string in EST/EDT format. Make sure to update any import statements or dependencies needed, and check that the schema types are adjusted accordingly. Do not modify any other parts of the file unless necessary to support these changes. Let me know if you need to see the current file contents or if there are any errors during the update.
