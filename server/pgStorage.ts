@@ -10,6 +10,7 @@ import {
 } from "@shared/schema";
 import { format } from "date-fns";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
+import { EASTERN_TIMEZONE } from "./dateUtils";
 import { IStorage } from "./storage";
 import pg from "pg";
 const { Pool } = pg;
@@ -56,8 +57,8 @@ export class PgStorage implements IStorage {
     console.log('USING EASTERN BUSINESS DAY RANGE:', {
       start: start.toISOString(),
       end: end.toISOString(),
-      easternStart: formatInTimeZone(start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-      easternEnd: formatInTimeZone(end, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      easternStart: formatInTimeZone(start, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+      easternEnd: formatInTimeZone(end, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
     });
     
     // Add diagnostic query to count total transactions in the database
@@ -394,9 +395,6 @@ export class PgStorage implements IStorage {
       averageValue
     };
   }
-  
-  // Eastern timezone constant
-  private readonly EASTERN_TIMEZONE = 'America/New_York';
   
   // Use the Eastern date utility for consistent timezone handling
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
