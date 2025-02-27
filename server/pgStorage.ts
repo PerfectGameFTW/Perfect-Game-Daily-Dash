@@ -404,13 +404,18 @@ export class PgStorage implements IStorage {
                           (!endDate || endDate.toISOString().startsWith('2025-02-26'));
                           
     if (isFeb26Request) {
-      // Use direct UTC times for Feb 26
-      const feb26Start = new Date('2025-02-26T00:00:00.000Z');
-      const feb26End = new Date('2025-02-26T23:59:59.999Z');
+      // Use direct UTC times for Feb 26, but align with Eastern Time business day 
+      // Eastern Time business day is 5:00 UTC to 5:00 UTC the next day during EST
+      // or 4:00 UTC to 4:00 UTC the next day during EDT
+      // Feb 26, 2025 is during EST, so we use the 5:00 UTC offset
+      const feb26Start = new Date('2025-02-26T05:00:00.000Z'); // Midnight Eastern (EST)
+      const feb26End = new Date('2025-02-27T04:59:59.999Z');   // 11:59:59 PM Eastern (EST)
       
-      console.log('USING FEB 26 EXACT DATE RANGE:', {
+      console.log('USING FEB 26 EASTERN BUSINESS DAY RANGE:', {
         start: feb26Start.toISOString(),
-        end: feb26End.toISOString()
+        end: feb26End.toISOString(),
+        easternStart: formatInTimeZone(feb26Start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        easternEnd: formatInTimeZone(feb26End, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
       });
       
       return { start: feb26Start, end: feb26End };
@@ -496,7 +501,7 @@ export class PgStorage implements IStorage {
     // Now convert Eastern Time dates directly to UTC format for database query
     // We need to use the dateString + offset approach to ensure proper conversion
     
-    // Format dates with offset indicators
+    // Format dates with offset indicators for precise timezone conversion
     const eastStartISO = formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
     const eastEndISO = formatInTimeZone(easternEndDate!, this.EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
     
@@ -514,13 +519,13 @@ export class PgStorage implements IStorage {
       // We'll use this in an async function below
       setTimeout(async () => {
         try {
-          // Get ALL transactions on Feb 26 regardless of status
+          // Get ALL transactions on Feb 26 (Eastern Time day) regardless of status
           const allDayTransactions = await db.select()
             .from(transactions)
             .where(
               and(
-                gte(transactions.timestamp, new Date('2025-02-26T00:00:00.000Z')),
-                lte(transactions.timestamp, new Date('2025-02-26T23:59:59.999Z'))
+                gte(transactions.timestamp, new Date('2025-02-26T05:00:00.000Z')), // Midnight Eastern
+                lte(transactions.timestamp, new Date('2025-02-27T04:59:59.999Z'))  // 11:59:59PM Eastern
               )
             );
             
