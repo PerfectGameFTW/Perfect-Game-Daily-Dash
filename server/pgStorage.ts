@@ -404,14 +404,14 @@ export class PgStorage implements IStorage {
                           (!endDate || endDate.toISOString().startsWith('2025-02-26'));
                           
     if (isFeb26Request) {
-      // Use direct UTC times for Feb 26, but align with Eastern Time business day 
-      // Eastern Time business day is 5:00 UTC to 5:00 UTC the next day during EST
-      // or 4:00 UTC to 4:00 UTC the next day during EDT
-      // Feb 26, 2025 is during EST, so we use the 5:00 UTC offset
-      const feb26Start = new Date('2025-02-26T05:00:00.000Z'); // Midnight Eastern (EST)
-      const feb26End = new Date('2025-02-27T04:59:59.999Z');   // 11:59:59 PM Eastern (EST)
+      // Use direct UTC times for Feb 26, but align with custom reporting hours (1am to 1am Eastern Time)
+      // During EST: 6:00 UTC to 6:00 UTC the next day 
+      // During EDT: 5:00 UTC to 5:00 UTC the next day
+      // Feb 26, 2025 is during EST, so we use the 6:00 UTC offset
+      const feb26Start = new Date('2025-02-26T06:00:00.000Z'); // 1am Eastern (EST)
+      const feb26End = new Date('2025-02-27T05:59:59.999Z');   // 12:59:59 AM Eastern (EST) next day
       
-      console.log('USING FEB 26 EASTERN BUSINESS DAY RANGE:', {
+      console.log('USING FEB 26 CUSTOM REPORTING HOURS (1AM-1AM EASTERN):', {
         start: feb26Start.toISOString(),
         end: feb26End.toISOString(),
         easternStart: formatInTimeZone(feb26Start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
@@ -519,13 +519,13 @@ export class PgStorage implements IStorage {
       // We'll use this in an async function below
       setTimeout(async () => {
         try {
-          // Get ALL transactions on Feb 26 (Eastern Time day) regardless of status
+          // Get ALL transactions on Feb 26 (1am-1am Eastern Time) regardless of status
           const allDayTransactions = await db.select()
             .from(transactions)
             .where(
               and(
-                gte(transactions.timestamp, new Date('2025-02-26T05:00:00.000Z')), // Midnight Eastern
-                lte(transactions.timestamp, new Date('2025-02-27T04:59:59.999Z'))  // 11:59:59PM Eastern
+                gte(transactions.timestamp, new Date('2025-02-26T06:00:00.000Z')), // 1am Eastern
+                lte(transactions.timestamp, new Date('2025-02-27T05:59:59.999Z'))  // 12:59:59AM Eastern next day
               )
             );
             
