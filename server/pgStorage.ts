@@ -522,16 +522,38 @@ export class PgStorage implements IStorage {
     //   - 00:00:00 Eastern = 05:00:00 UTC same day
     //   - 23:59:59 Eastern = 04:59:59 UTC next day
     
-    // Create start time: midnight (00:00:00) Eastern Time = 05:00:00 UTC
-    const utcStart = new Date(`${startDateStr}T05:00:00.000Z`);
+    // Get current offset for the Eastern timezone
+    // For EST (winter), the offset is 5 hours behind UTC (-5)
+    // For EDT (summer), the offset is 4 hours behind UTC (-4)
+    // We'll implement a more dynamic approach that works for both
     
-    // Create end time: 11:59:59 PM Eastern Time = 04:59:59 UTC of the next day
+    // Get a reference date object for this date to check DST
+    const dateForOffset = new Date(`${startDateStr}T12:00:00.000Z`); // Noon UTC to avoid date boundary issues
+    const easternDate = toZonedTime(dateForOffset, this.EASTERN_TIMEZONE);
+    // Get the timezone string to check if we're in EDT or EST
+    const tzString = formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'zzz');
+    
+    let utcOffset: number;
+    if (tzString === 'EDT') {
+      // Eastern Daylight Time (UTC-4)
+      utcOffset = 4;
+    } else {
+      // Eastern Standard Time (UTC-5)
+      utcOffset = 5;
+    }
+    
+    console.log(`Using timezone offset of UTC-${utcOffset} for ${startDateStr} (${tzString})`);
+    
+    // Create start time: midnight (00:00:00) Eastern Time = utcOffset:00:00 UTC
+    const utcStart = new Date(`${startDateStr}T${utcOffset.toString().padStart(2, '0')}:00:00.000Z`);
+    
+    // Create end time: 11:59:59 PM Eastern Time = (utcOffset-1):59:59 UTC of the next day
     // Get the next day after the end date
     const nextDayDate = new Date(endDateStr);
     nextDayDate.setDate(nextDayDate.getDate() + 1);
     const nextDayStr = format(nextDayDate, 'yyyy-MM-dd');
-    // Set to 04:59:59.999 UTC of next day (11:59:59.999 PM Eastern)
-    const utcEnd = new Date(`${nextDayStr}T04:59:59.999Z`);
+    // Set to (utcOffset-1):59:59.999 UTC of next day (11:59:59.999 PM Eastern)
+    const utcEnd = new Date(`${nextDayStr}T${(utcOffset-1).toString().padStart(2, '0')}:59:59.999Z`);
     
     // Add transaction diagnostics for any date range being analyzed
     // This helps us verify that our timezone calculations are working correctly
