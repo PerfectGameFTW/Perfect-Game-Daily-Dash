@@ -9,7 +9,7 @@ import {
   transactions, giftCards, giftCardRedemptions, users, syncState
 } from "@shared/schema";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, addDays } from "date-fns";
-import { formatInTimeZone, toZonedTime, utcToZonedTime } from "date-fns-tz";
+import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { IStorage } from "./storage";
 import pg from "pg";
 const { Pool } = pg;
@@ -403,42 +403,8 @@ export class PgStorage implements IStorage {
     // UNIVERSAL SOLUTION: Handle all dates with proper timezone alignment
     // This ensures that all dates are aligned with Eastern Time business days (midnight-to-midnight)
     
-    if (startDate) {
-      // First convert the input dates to their Eastern Time representation
-      // This is crucial for proper day boundary alignment
-      const startInEastern = toZonedTime(startDate, this.EASTERN_TIMEZONE);
-      const endInEastern = endDate ? toZonedTime(endDate, this.EASTERN_TIMEZONE) : startInEastern;
-      
-      // Get the date strings in Eastern Time (format: YYYY-MM-DD)
-      const startDateStr = format(startInEastern, 'yyyy-MM-dd');
-      const endDateStr = format(endInEastern, 'yyyy-MM-dd');
-      
-      // Calculate start time: midnight (00:00:00.000) Eastern Time on start date
-      // During EST (UTC-5), midnight ET = 05:00:00 UTC
-      // During EDT (UTC-4), midnight ET = 04:00:00 UTC
-      // We'll use UTC directly with the correct offset
-      
-      // For Eastern Standard Time (winter), midnight is 05:00 UTC
-      // This is the case in February 2025
-      const easternMidnightStart = new Date(`${startDateStr}T05:00:00.000Z`);
-      
-      // For end time, we want 23:59:59.999 Eastern Time on end date
-      // During EST, 23:59:59.999 ET = 04:59:59.999 UTC of the next day
-      // Get the next day after the end date for proper end time
-      const nextDayDate = new Date(endDateStr);
-      nextDayDate.setDate(nextDayDate.getDate() + 1);
-      const nextDayStr = format(nextDayDate, 'yyyy-MM-dd');
-      const easternMidnightEnd = new Date(`${nextDayStr}T04:59:59.999Z`);
-      
-      console.log(`UNIVERSAL TIMEZONE HANDLING - Eastern Time business day for ${startDateStr} to ${endDateStr}:`, {
-        start: easternMidnightStart.toISOString(),
-        end: easternMidnightEnd.toISOString(),
-        easternStart: formatInTimeZone(easternMidnightStart, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-        easternEnd: formatInTimeZone(easternMidnightEnd, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
-      });
-      
-      return { start: easternMidnightStart, end: easternMidnightEnd };
-    }
+    // Universal date handling for ALL date inputs, regardless of source
+    // We'll use the same pattern below for all date ranges
     
     // UNIVERSAL SOLUTION FOR ALL DATE RANGES
     // We use the same approach for all dates - consistently use Eastern Time business day definitions
