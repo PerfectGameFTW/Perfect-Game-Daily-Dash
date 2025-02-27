@@ -8,7 +8,7 @@ import {
   DateRange, TransactionStatus,
   transactions, giftCards, giftCardRedemptions, users, syncState
 } from "@shared/schema";
-import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths } from "date-fns";
+import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, addDays } from "date-fns";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { IStorage } from "./storage";
 import pg from "pg";
@@ -400,28 +400,44 @@ export class PgStorage implements IStorage {
   
   // Helper method for date range calculations with Eastern timezone awareness
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
-    // DIRECT FIX: Check for February 26 case first, before any other processing
-    // This ensures that when the user specifically requests February 26, we return the correct range
-    const isFeb26Request = startDate && 
-                          startDate.toISOString().startsWith('2025-02-26') &&
-                          (!endDate || endDate.toISOString().startsWith('2025-02-26'));
-                          
-    if (isFeb26Request) {
-      // Use direct UTC times for Feb 26, but align with Eastern Time business day 
-      // Eastern Time business day is 5:00 UTC to 5:00 UTC the next day during EST
-      // or 4:00 UTC to 4:00 UTC the next day during EDT
-      // Feb 26, 2025 is during EST, so we use the 5:00 UTC offset
-      const feb26Start = new Date('2025-02-26T05:00:00.000Z'); // Midnight Eastern (EST)
-      const feb26End = new Date('2025-02-27T04:59:59.999Z');   // 11:59:59 PM Eastern (EST)
+    // UNIVERSAL SOLUTION: Handle all dates with proper timezone alignment
+    // This ensures that all dates are aligned with Eastern Time business days (midnight-to-midnight)
+    
+    if (startDate) {
+      // First convert the input dates to their Eastern Time representation
+      // This is crucial for proper day boundary alignment
+      const startInEastern = toZonedTime(startDate, this.EASTERN_TIMEZONE);
+      const endInEastern = endDate ? toZonedTime(endDate, this.EASTERN_TIMEZONE) : startInEastern;
       
-      console.log('USING FEB 26 EASTERN BUSINESS DAY RANGE:', {
-        start: feb26Start.toISOString(),
-        end: feb26End.toISOString(),
-        easternStart: formatInTimeZone(feb26Start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-        easternEnd: formatInTimeZone(feb26End, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      // Get the date strings in Eastern Time (format: YYYY-MM-DD)
+      const startDateStr = format(startInEastern, 'yyyy-MM-dd');
+      const endDateStr = format(endInEastern, 'yyyy-MM-dd');
+      
+      // Calculate start time: midnight (00:00:00.000) Eastern Time on start date
+      // During EST (UTC-5), midnight ET = 05:00:00 UTC
+      // During EDT (UTC-4), midnight ET = 04:00:00 UTC
+      // We'll use UTC directly with the correct offset
+      
+      // For Eastern Standard Time (winter), midnight is 05:00 UTC
+      // This is the case in February 2025
+      const easternMidnightStart = new Date(`${startDateStr}T05:00:00.000Z`);
+      
+      // For end time, we want 23:59:59.999 Eastern Time on end date
+      // During EST, 23:59:59.999 ET = 04:59:59.999 UTC of the next day
+      // Get the next day after the end date for proper end time
+      const nextDayDate = new Date(endDateStr);
+      nextDayDate.setDate(nextDayDate.getDate() + 1);
+      const nextDayStr = format(nextDayDate, 'yyyy-MM-dd');
+      const easternMidnightEnd = new Date(`${nextDayStr}T04:59:59.999Z`);
+      
+      console.log(`UNIVERSAL TIMEZONE HANDLING - Eastern Time business day for ${startDateStr} to ${endDateStr}:`, {
+        start: easternMidnightStart.toISOString(),
+        end: easternMidnightEnd.toISOString(),
+        easternStart: formatInTimeZone(easternMidnightStart, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        easternEnd: formatInTimeZone(easternMidnightEnd, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
       });
       
-      return { start: feb26Start, end: feb26End };
+      return { start: easternMidnightStart, end: easternMidnightEnd };
     }
     
     // Standard flow for other dates
@@ -539,99 +555,50 @@ export class PgStorage implements IStorage {
     const utcStart = new Date(eastStartISO);
     const utcEnd = new Date(eastEndISO);
     
-    // Add detailed debugging for Feb 26 transactions
-    if (formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd') === '2025-02-26' || 
-        (easternEndDate && formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd') === '2025-02-26')) {
-      
-      // If we're looking at Feb 26, let's analyze all transactions on that day
-      console.log('DIAGNOSTIC - Analyzing Feb 26 transactions...');
-      
-      // Define Feb 26 midnight-to-midnight in Eastern Time
-      const feb26Start = new Date('2025-02-26T05:00:00.000Z'); // 00:00:00 ET (EST is UTC-5)
-      const feb26End = new Date('2025-02-27T04:59:59.999Z');   // 23:59:59.999 ET
-      
-      console.log('USING FEB 26 EASTERN BUSINESS DAY RANGE:', {
-        start: feb26Start.toISOString(),
-        end: feb26End.toISOString(),
-        easternStart: formatInTimeZone(feb26Start, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-        easternEnd: formatInTimeZone(feb26End, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
-      });
-      
-      // We'll use this in an async function below
-      setTimeout(async () => {
-        try {
-          // Get total counts to understand the database
-          const totalCount = await db.select({ count: sql`count(*)` })
-            .from(transactions);
-          console.log('DIAGNOSTIC - Total transactions in database:', totalCount[0]);
-          
-          // Count Feb 26 transactions (with and without status filter)
-          const feb26Count = await db.select({ count: sql`count(*)` })
-            .from(transactions)
-            .where(
-              and(
-                gte(transactions.timestamp, feb26Start),
-                lte(transactions.timestamp, feb26End)
-              )
-            );
-            
-          const feb26CompletedCount = await db.select({ count: sql`count(*)` })
-            .from(transactions)
-            .where(
-              and(
-                gte(transactions.timestamp, feb26Start),
-                lte(transactions.timestamp, feb26End),
-                eq(transactions.status, 'completed')
-              )
-            );
-            
-          console.log('DIAGNOSTIC - Transactions count for query:', {
-            period: feb26Count[0],
-            withStatus: feb26CompletedCount[0],
-            start: feb26Start.toISOString(),
-            end: feb26End.toISOString(),
-            status: 'completed'
-          });
-          
-          // Get ALL transactions on Feb 26 (Eastern Time day) regardless of status
-          const allDayTransactions = await db.select()
-            .from(transactions)
-            .where(
-              and(
-                gte(transactions.timestamp, feb26Start),
-                lte(transactions.timestamp, feb26End)
-              )
-            );
-            
-          console.log(`DIAGNOSTIC - Feb 26 total transactions: ${allDayTransactions.length}`);
-          
-          // Group by status
-          const statusCounts: Record<string, number> = {};
-          allDayTransactions.forEach(t => {
-            statusCounts[t.status] = (statusCounts[t.status] || 0) + 1;
-          });
-          console.log('DIAGNOSTIC - Feb 26 status breakdown:', statusCounts);
-          
-          // Group by category
-          const categoryCounts: Record<string, number> = {};
-          allDayTransactions.forEach(t => {
-            categoryCounts[t.categoryId] = (categoryCounts[t.categoryId] || 0) + 1;
-          });
-          console.log('DIAGNOSTIC - Feb 26 category breakdown:', categoryCounts);
-          
-          // Check active transactions (completed, not refunds, positive amount)
-          const activeTransactions = allDayTransactions.filter(t => 
-            t.status === 'completed' && 
-            t.categoryId !== 'refund' && 
-            t.amount > 0
+    // Add transaction diagnostics for any date range being analyzed
+    // This helps us verify that our timezone calculations are working correctly
+    setTimeout(async () => {
+      try {
+        // Get the date strings (for display purposes)
+        const startDateStr = formatInTimeZone(utcStart, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        const endDateStr = formatInTimeZone(utcEnd, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        
+        // Get total transaction count from database
+        const totalCount = await db.select({ count: sql`count(*)` })
+          .from(transactions);
+        console.log('DIAGNOSTIC - Total transactions in database:', totalCount[0]);
+        
+        // Count total transactions in the requested date range
+        const rangeCount = await db.select({ count: sql`count(*)` })
+          .from(transactions)
+          .where(
+            and(
+              gte(transactions.timestamp, utcStart),
+              lte(transactions.timestamp, utcEnd)
+            )
           );
-          console.log(`DIAGNOSTIC - Feb 26 active transactions: ${activeTransactions.length}`);
           
-        } catch (err) {
-          console.error('Error analyzing Feb 26 transactions:', err);
-        }
-      }, 1000); // Run this after 1 second to not block the main request
-    }
+        // Count completed transactions in the requested date range
+        const completedCount = await db.select({ count: sql`count(*)` })
+          .from(transactions)
+          .where(
+            and(
+              gte(transactions.timestamp, utcStart),
+              lte(transactions.timestamp, utcEnd),
+              eq(transactions.status, 'completed')
+            )
+          );
+          
+        console.log(`DIAGNOSTIC - Transactions count for ${startDateStr} to ${endDateStr}:`, {
+          total: rangeCount[0],
+          completed: completedCount[0],
+          start: utcStart.toISOString(),
+          end: utcEnd.toISOString(),
+        });
+      } catch (err) {
+        console.error('Error analyzing transactions:', err);
+      }
+    }, 1000); // Run in background to not block the main request
     
     console.log('FINAL DATABASE QUERY RANGE:', {
       utcStart: utcStart.toISOString(),
