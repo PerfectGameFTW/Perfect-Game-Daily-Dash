@@ -414,93 +414,193 @@ export class PgStorage implements IStorage {
     
     // If explicit dates are provided, they take precedence over the dateRange
     if (startDate && (dateRange === 'custom' || endDate)) {
-      // First convert to Eastern Time to handle timezone properly
-      const startAsEastern = formatInTimeZone(startDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
-      const endAsEastern = endDate ? formatInTimeZone(endDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd') : startAsEastern;
+      // Handle custom date range with precise 1am-1am business day boundaries
       
-      // Create 1am boundaries in Eastern Time for business day (1am to 1am)
-      const easternStartStr = `${startAsEastern}T01:00:00.000`;
-      let easternEndStr: string;
+      // Convert start date to Eastern timezone for proper day boundary
+      const startInEastern = toZonedTime(startDate, this.EASTERN_TIMEZONE);
+      const startDayEastern = startOfDay(startInEastern);
+      
+      // For end date, first check if it exists
+      let endDayEastern: Date;
       
       if (endDate) {
-        // For a date range, end date needs to be 1am of the day AFTER the selected end date
-        const endPlusOneDay = new Date(endDate);
-        endPlusOneDay.setDate(endPlusOneDay.getDate() + 1);
-        const endPlusOneDayEastern = formatInTimeZone(endPlusOneDay, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
-        easternEndStr = `${endPlusOneDayEastern}T00:59:59.999`;
+        // If end date provided, use it
+        const endInEastern = toZonedTime(endDate, this.EASTERN_TIMEZONE);
+        endDayEastern = startOfDay(endInEastern);
       } else {
-        // For a single day, add one day to get 1am of the next day
-        const startPlusOneDay = new Date(startDate);
-        startPlusOneDay.setDate(startPlusOneDay.getDate() + 1);
-        const startPlusOneDayEastern = formatInTimeZone(startPlusOneDay, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
-        easternEndStr = `${startPlusOneDayEastern}T00:59:59.999`;
+        // No end date means single day selection, use start date
+        endDayEastern = startDayEastern;
       }
       
-      // Then create Date objects
-      easternStartDate = new Date(easternStartStr);
-      easternEndDate = new Date(easternEndStr);
+      // Start boundary: 1am on start date
+      const startBoundary = new Date(startDayEastern);
+      startBoundary.setHours(1, 0, 0, 0);
+      easternStartDate = startBoundary;
       
-      console.log('DIAGNOSTIC - Custom date set to 1AM-1AM Eastern business day boundaries:', {
-        easternStartStr,
-        easternEndStr,
+      // End boundary: 12:59:59.999am on the day AFTER end date
+      const endBoundaryDay = new Date(endDayEastern);
+      endBoundaryDay.setDate(endBoundaryDay.getDate() + 1);
+      endBoundaryDay.setHours(1, 0, 0, 0);
+      const endBoundary = new Date(endBoundaryDay);
+      endBoundary.setMilliseconds(-1); // 00:59:59.999
+      easternEndDate = endBoundary;
+      
+      console.log('DIAGNOSTIC - Custom date set to precise 1AM-1AM Eastern business day boundaries:', {
+        startDate: formatInTimeZone(startDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        endDate: endDate ? formatInTimeZone(endDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz') : 'none',
         easternStartDate: formatInTimeZone(easternStartDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
         easternEndDate: formatInTimeZone(easternEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
       });
     } else {
       // Otherwise, use the predefined dateRange but with 1am-1am business day boundaries
-      let baseStartDate: Date;
-      let baseEndDate: Date;
+      // For predefined ranges, we need to be precise about the business day boundaries
       
-      // First determine the date range in calendar days
       switch (dateRange) {
-        case 'today':
-          baseStartDate = startOfDay(easternNow);
-          baseEndDate = endOfDay(easternNow);
+        case 'today': {
+          // Today = 1am today to 1am tomorrow (Eastern Time)
+          const today = startOfDay(easternNow);
+          
+          // Start boundary: 1am today
+          const startDate = new Date(today);
+          startDate.setHours(1, 0, 0, 0);
+          easternStartDate = startDate;
+          
+          // End boundary: 12:59:59.999am tomorrow
+          const tomorrow = new Date(today);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setHours(1, 0, 0, 0);
+          const endDate = new Date(tomorrow);
+          endDate.setMilliseconds(-1); // 00:59:59.999
+          easternEndDate = endDate;
           break;
-        case 'yesterday':
-          const yesterday = subDays(easternNow, 1);
-          baseStartDate = startOfDay(yesterday);
-          baseEndDate = endOfDay(yesterday);
+        }
+        
+        case 'yesterday': {
+          // Yesterday = 1am yesterday to 1am today (Eastern Time)
+          const yesterday = new Date(easternNow);
+          yesterday.setDate(yesterday.getDate() - 1);
+          const yesterdayStart = startOfDay(yesterday);
+          
+          // Start boundary: 1am yesterday
+          const startDate = new Date(yesterdayStart);
+          startDate.setHours(1, 0, 0, 0);
+          easternStartDate = startDate;
+          
+          // End boundary: 12:59:59.999am today
+          const today = startOfDay(easternNow);
+          const todayOneAM = new Date(today);
+          todayOneAM.setHours(1, 0, 0, 0);
+          const endDate = new Date(todayOneAM);
+          endDate.setMilliseconds(-1); // 00:59:59.999
+          easternEndDate = endDate;
           break;
-        case 'last7days':
-          baseStartDate = startOfDay(subDays(easternNow, 6));
-          baseEndDate = endOfDay(easternNow);
+        }
+        
+        case 'last7days': {
+          // Last 7 days = 1am 7 days ago to 1am tomorrow (Eastern Time)
+          const sevenDaysAgo = new Date(easternNow);
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+          const sevenDaysAgoStart = startOfDay(sevenDaysAgo);
+          
+          // Start boundary: 1am 7 days ago
+          const startDate = new Date(sevenDaysAgoStart);
+          startDate.setHours(1, 0, 0, 0);
+          easternStartDate = startDate;
+          
+          // End boundary: 12:59:59.999am tomorrow
+          const tomorrow = new Date(startOfDay(easternNow));
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setHours(1, 0, 0, 0);
+          const endDate = new Date(tomorrow);
+          endDate.setMilliseconds(-1); // 00:59:59.999
+          easternEndDate = endDate;
           break;
-        case 'last30days':
-          baseStartDate = startOfDay(subDays(easternNow, 29));
-          baseEndDate = endOfDay(easternNow);
+        }
+        
+        case 'last30days': {
+          // Last 30 days = 1am 30 days ago to 1am tomorrow (Eastern Time)
+          const thirtyDaysAgo = new Date(easternNow);
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+          const thirtyDaysAgoStart = startOfDay(thirtyDaysAgo);
+          
+          // Start boundary: 1am 30 days ago
+          const startDate = new Date(thirtyDaysAgoStart);
+          startDate.setHours(1, 0, 0, 0);
+          easternStartDate = startDate;
+          
+          // End boundary: 12:59:59.999am tomorrow
+          const tomorrow = new Date(startOfDay(easternNow));
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setHours(1, 0, 0, 0);
+          const endDate = new Date(tomorrow);
+          endDate.setMilliseconds(-1); // 00:59:59.999
+          easternEndDate = endDate;
           break;
-        case 'thisMonth':
-          baseStartDate = startOfMonth(easternNow);
-          baseEndDate = endOfMonth(easternNow);
+        }
+        
+        case 'thisMonth': {
+          // This month = 1am first day of month to 1am first day of next month (Eastern Time)
+          const firstDayOfMonth = startOfMonth(easternNow);
+          
+          // Start boundary: 1am first day of month
+          const startDate = new Date(firstDayOfMonth);
+          startDate.setHours(1, 0, 0, 0);
+          easternStartDate = startDate;
+          
+          // End boundary: 12:59:59.999am first day of next month
+          const firstDayOfNextMonth = new Date(firstDayOfMonth);
+          firstDayOfNextMonth.setMonth(firstDayOfNextMonth.getMonth() + 1);
+          firstDayOfNextMonth.setHours(1, 0, 0, 0);
+          const endDate = new Date(firstDayOfNextMonth);
+          endDate.setMilliseconds(-1); // 00:59:59.999
+          easternEndDate = endDate;
           break;
-        case 'lastMonth':
-          const lastMonth = subMonths(easternNow, 1);
-          baseStartDate = startOfMonth(lastMonth);
-          baseEndDate = endOfMonth(lastMonth);
+        }
+        
+        case 'lastMonth': {
+          // Last month = 1am first day of last month to 1am first day of this month (Eastern Time)
+          const firstDayOfThisMonth = startOfMonth(easternNow);
+          const lastMonth = new Date(firstDayOfThisMonth);
+          lastMonth.setMonth(lastMonth.getMonth() - 1);
+          const firstDayOfLastMonth = startOfMonth(lastMonth);
+          
+          // Start boundary: 1am first day of last month
+          const startDate = new Date(firstDayOfLastMonth);
+          startDate.setHours(1, 0, 0, 0);
+          easternStartDate = startDate;
+          
+          // End boundary: 12:59:59.999am first day of this month
+          const firstDayOfThisMonthOneAM = new Date(firstDayOfThisMonth);
+          firstDayOfThisMonthOneAM.setHours(1, 0, 0, 0);
+          const endDate = new Date(firstDayOfThisMonthOneAM);
+          endDate.setMilliseconds(-1); // 00:59:59.999
+          easternEndDate = endDate;
           break;
+        }
+        
         case 'custom':
           // Should only get here if custom range was selected without dates
           throw new Error('Start date and end date must be provided for custom date range');
-        default:
-          baseStartDate = startOfDay(easternNow);
-          baseEndDate = endOfDay(easternNow);
+          
+        default: {
+          // Default to today
+          const today = startOfDay(easternNow);
+          
+          // Start boundary: 1am today
+          const startDate = new Date(today);
+          startDate.setHours(1, 0, 0, 0);
+          easternStartDate = startDate;
+          
+          // End boundary: 12:59:59.999am tomorrow
+          const tomorrow = new Date(today);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setHours(1, 0, 0, 0);
+          const endDate = new Date(tomorrow);
+          endDate.setMilliseconds(-1); // 00:59:59.999
+          easternEndDate = endDate;
+          break;
+        }
       }
-      
-      // Now convert calendar days to 1am-1am business days
-      const startDateStr = formatInTimeZone(baseStartDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
-      const endDateStr = formatInTimeZone(baseEndDate, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
-      
-      // Create 1am start boundary in Eastern Time
-      const easternStartStr = `${startDateStr}T01:00:00.000`;
-      easternStartDate = new Date(easternStartStr);
-      
-      // For end date, add one day to get 1am of the day AFTER the end date
-      const endPlusOneDay = new Date(baseEndDate);
-      endPlusOneDay.setDate(endPlusOneDay.getDate() + 1);
-      const endPlusOneDayStr = formatInTimeZone(endPlusOneDay, this.EASTERN_TIMEZONE, 'yyyy-MM-dd');
-      const easternEndStr = `${endPlusOneDayStr}T00:59:59.999`;
-      easternEndDate = new Date(easternEndStr);
       
       console.log('DIAGNOSTIC - Predefined date range with 1AM-1AM business day boundaries:', {
         dateRange,
