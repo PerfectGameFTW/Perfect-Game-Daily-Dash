@@ -50,15 +50,20 @@ export default function RecentTransactionsTable({
       return "Unknown time";
     }
     
-    // Use our timezone-aware formatter with date included for clarity
-    // This ensures we show both date and time in Eastern timezone
+    // Use our timezone-aware formatter with Eastern timezone
+    const EASTERN_TIMEZONE = 'America/New_York';
     const today = new Date();
-    const isToday = formatInTimezone(date, "yyyy-MM-dd") === formatInTimezone(today, "yyyy-MM-dd");
+    
+    // Format both dates in Eastern timezone for comparison
+    const dateInEastern = formatInTimezone(date, "yyyy-MM-dd", EASTERN_TIMEZONE);
+    const todayInEastern = formatInTimezone(today, "yyyy-MM-dd", EASTERN_TIMEZONE);
+    
+    const isToday = dateInEastern === todayInEastern;
     
     if (isToday) {
-      return formatInTimezone(date, "h:mm a");
+      return formatInTimezone(date, "h:mm a", EASTERN_TIMEZONE);
     } else {
-      return formatInTimezone(date, "M/d h:mm a");
+      return formatInTimezone(date, "M/d h:mm a", EASTERN_TIMEZONE);
     }
   };
 
