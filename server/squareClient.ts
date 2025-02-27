@@ -369,16 +369,24 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     }
   }
   
-  // Safely parse the timestamp
+  // Safely parse the timestamp - keep as UTC
   let timestamp: Date;
   try {
+    // Parse the Square API timestamp string as UTC (Square provides timestamps in UTC)
     timestamp = new Date(payment.createdAt);
+    
     // Validate the date
     if (isNaN(timestamp.getTime())) {
       // If invalid, use current date
       console.warn(`Invalid timestamp for payment ${payment.id}, using current date instead`);
       timestamp = new Date();
     }
+    
+    // Log the timestamp for debugging
+    console.log(`Payment ${payment.id} timestamp:`, {
+      original: payment.createdAt,
+      parsed: timestamp.toISOString()
+    });
   } catch (error) {
     console.warn(`Error parsing timestamp for payment ${payment.id}, using current date instead:`, error);
     timestamp = new Date();
@@ -426,16 +434,24 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
 
 // Convert Square gift card to our GiftCard model
 export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): InsertGiftCard {
-  // Safely parse the purchase date
+  // Safely parse the purchase date - keep as UTC
   let purchaseDate: Date;
   try {
+    // Parse the Square API timestamp string as UTC (Square provides timestamps in UTC)
     purchaseDate = new Date(giftCard.created_at);
+    
     // Validate the date
     if (isNaN(purchaseDate.getTime())) {
       // If invalid, use current date
       console.warn(`Invalid purchase date for gift card ${giftCard.id}, using current date instead`);
       purchaseDate = new Date();
     }
+    
+    // Log the timestamp for debugging
+    console.log(`Gift card ${giftCard.id} purchase date:`, {
+      original: giftCard.created_at,
+      parsed: purchaseDate.toISOString()
+    });
   } catch (error) {
     console.warn(`Error parsing purchase date for gift card ${giftCard.id}, using current date instead:`, error);
     purchaseDate = new Date();

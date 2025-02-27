@@ -343,87 +343,107 @@ export class PgStorage implements IStorage {
   
   // Helper method for date range calculations with Eastern timezone awareness
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
-    let start: Date;
-    let end: Date;
-    
-    // Create 'now' in Eastern timezone
+    // Create 'now' in Eastern timezone for calculations
     const now = toZonedTime(new Date(), this.EASTERN_TIMEZONE);
+    
+    // These will hold our Eastern timezone dates
+    let easternStart: Date;
+    let easternEnd: Date;
     
     // If explicit dates are provided, they take precedence over the dateRange
     if (startDate && (dateRange === 'custom' || endDate)) {
       // For custom range or when both dates are specified
-      // Convert the dates to Eastern timezone
+      // Convert the dates to Eastern timezone for proper day boundaries
       const easternStartDate = toZonedTime(startDate, this.EASTERN_TIMEZONE);
       const easternEndDate = endDate ? toZonedTime(endDate, this.EASTERN_TIMEZONE) : easternStartDate;
       
       // Apply start and end of day in Eastern timezone
-      start = startOfDay(easternStartDate);
-      end = endOfDay(easternEndDate);
+      easternStart = startOfDay(easternStartDate);
+      easternEnd = endOfDay(easternEndDate);
       
-      // Start and end dates are already in UTC internally, 
-      // but with the hours set according to Eastern time boundaries
-      
-      console.log('Using explicit date range:', {
+      console.log('Using explicit date range (Eastern Time):', {
         dateRange,
-        start: start.toISOString(),
-        end: end.toISOString(),
-        isCustom: true
+        easternStart: formatInTimeZone(easternStart, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        easternEnd: formatInTimeZone(easternEnd, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
       });
+    } else {
+      // Otherwise, use the predefined dateRange in Eastern timezone
+      switch (dateRange) {
+        case 'today':
+          easternStart = startOfDay(now);
+          easternEnd = endOfDay(now);
+          break;
+        case 'yesterday':
+          easternStart = startOfDay(subDays(now, 1));
+          easternEnd = endOfDay(subDays(now, 1));
+          break;
+        case 'last7days':
+          easternStart = startOfDay(subDays(now, 6));
+          easternEnd = endOfDay(now);
+          break;
+        case 'last30days':
+          easternStart = startOfDay(subDays(now, 29));
+          easternEnd = endOfDay(now);
+          break;
+        case 'thisMonth':
+          easternStart = startOfMonth(now);
+          easternEnd = endOfMonth(now);
+          break;
+        case 'lastMonth':
+          const lastMonth = subDays(startOfMonth(now), 1);
+          easternStart = startOfMonth(lastMonth);
+          easternEnd = endOfMonth(lastMonth);
+          break;
+        case 'custom':
+          // Should only get here if custom range was selected without dates
+          throw new Error('Start date and end date must be provided for custom date range');
+        default:
+          easternStart = startOfDay(now);
+          easternEnd = endOfDay(now);
+      }
       
-      return { start, end };
+      console.log('Using predefined date range (Eastern Time):', {
+        dateRange,
+        easternStart: formatInTimeZone(easternStart, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+        easternEnd: formatInTimeZone(easternEnd, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      });
     }
     
-    // Otherwise, use the predefined dateRange in Eastern timezone
-    // then convert back to UTC for the database query
-    let easternStart: Date;
-    let easternEnd: Date;
+    // CRITICAL FIX: Convert Eastern Time dates to their UTC equivalents
+    // This ensures that when we query the database with UTC timestamps,
+    // we're getting exactly the same calendar date in Eastern Time
     
-    switch (dateRange) {
-      case 'today':
-        easternStart = startOfDay(now);
-        easternEnd = endOfDay(now);
-        break;
-      case 'yesterday':
-        easternStart = startOfDay(subDays(now, 1));
-        easternEnd = endOfDay(subDays(now, 1));
-        break;
-      case 'last7days':
-        easternStart = startOfDay(subDays(now, 6));
-        easternEnd = endOfDay(now);
-        break;
-      case 'last30days':
-        easternStart = startOfDay(subDays(now, 29));
-        easternEnd = endOfDay(now);
-        break;
-      case 'thisMonth':
-        easternStart = startOfMonth(now);
-        easternEnd = endOfMonth(now);
-        break;
-      case 'lastMonth':
-        const lastMonth = subDays(startOfMonth(now), 1);
-        easternStart = startOfMonth(lastMonth);
-        easternEnd = endOfMonth(lastMonth);
-        break;
-      case 'custom':
-        // Should only get here if custom range was selected without dates
-        throw new Error('Start date and end date must be provided for custom date range');
-      default:
-        easternStart = startOfDay(now);
-        easternEnd = endOfDay(now);
-    }
+    // Convert Eastern Time midnight to UTC (e.g., ET 00:00:00 becomes UTC 05:00:00)
+    const utcStart = new Date(
+      Date.UTC(
+        easternStart.getFullYear(),
+        easternStart.getMonth(),
+        easternStart.getDate(),
+        easternStart.getHours(),
+        easternStart.getMinutes(),
+        easternStart.getSeconds()
+      )
+    );
     
-    // The date objects are already in UTC internally
-    start = easternStart;
-    end = easternEnd;
+    // Convert Eastern Time 23:59:59 to UTC (e.g., ET 23:59:59 becomes UTC 04:59:59 next day)
+    const utcEnd = new Date(
+      Date.UTC(
+        easternEnd.getFullYear(),
+        easternEnd.getMonth(),
+        easternEnd.getDate(),
+        easternEnd.getHours(),
+        easternEnd.getMinutes(),
+        easternEnd.getSeconds(),
+        easternEnd.getMilliseconds()
+      )
+    );
     
-    console.log('Using predefined date range:', {
-      dateRange,
-      start: start.toISOString(),
-      end: end.toISOString(),
-      isCustom: false
+    console.log('Converted to UTC for database query:', {
+      utcStart: utcStart.toISOString(),
+      utcEnd: utcEnd.toISOString()
     });
     
-    return { start, end };
+    return { start: utcStart, end: utcEnd };
   }
   
   // Sync state management methods
