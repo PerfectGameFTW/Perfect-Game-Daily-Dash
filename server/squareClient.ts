@@ -4,7 +4,11 @@ import {
   GiftCard, InsertGiftCard,
   Category, TransactionStatus
 } from '@shared/schema';
+import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import dotenv from 'dotenv';
+
+// Define Eastern timezone constant
+const EASTERN_TIMEZONE = 'America/New_York';
 
 dotenv.config();
 
@@ -369,26 +373,32 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     }
   }
   
-  // Safely parse the timestamp - keep as UTC
+  // Parse and convert the timestamp from UTC to Eastern Time for proper business day alignment
   let timestamp: Date;
   try {
     // Parse the Square API timestamp string as UTC (Square provides timestamps in UTC)
-    timestamp = new Date(payment.createdAt);
+    const utcTimestamp = new Date(payment.createdAt);
     
     // Validate the date
-    if (isNaN(timestamp.getTime())) {
+    if (isNaN(utcTimestamp.getTime())) {
       // If invalid, use current date
       console.warn(`Invalid timestamp for payment ${payment.id}, using current date instead`);
       timestamp = new Date();
+    } else {
+      // Convert the UTC timestamp to a date in Eastern timezone
+      // This preserves the exact same moment in time but represents it in Eastern timezone
+      // This ensures that midnight-to-midnight in Eastern time is properly preserved
+      timestamp = toZonedTime(utcTimestamp, EASTERN_TIMEZONE);
+      
+      // Log the timestamp conversion for debugging
+      console.log(`Payment ${payment.id} timestamp conversion:`, {
+        original: payment.createdAt,
+        utc: utcTimestamp.toISOString(),
+        eastern: formatInTimeZone(timestamp, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      });
     }
-    
-    // Log the timestamp for debugging
-    console.log(`Payment ${payment.id} timestamp:`, {
-      original: payment.createdAt,
-      parsed: timestamp.toISOString()
-    });
   } catch (error) {
-    console.warn(`Error parsing timestamp for payment ${payment.id}, using current date instead:`, error);
+    console.warn(`Error processing timestamp for payment ${payment.id}, using current date instead:`, error);
     timestamp = new Date();
   }
   
@@ -434,26 +444,32 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
 
 // Convert Square gift card to our GiftCard model
 export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): InsertGiftCard {
-  // Safely parse the purchase date - keep as UTC
+  // Parse and convert the purchase date from UTC to Eastern Time for proper business day alignment
   let purchaseDate: Date;
   try {
     // Parse the Square API timestamp string as UTC (Square provides timestamps in UTC)
-    purchaseDate = new Date(giftCard.created_at);
+    const utcPurchaseDate = new Date(giftCard.created_at);
     
     // Validate the date
-    if (isNaN(purchaseDate.getTime())) {
+    if (isNaN(utcPurchaseDate.getTime())) {
       // If invalid, use current date
       console.warn(`Invalid purchase date for gift card ${giftCard.id}, using current date instead`);
       purchaseDate = new Date();
+    } else {
+      // Convert the UTC timestamp to a date in Eastern timezone
+      // This preserves the exact same moment in time but represents it in Eastern timezone
+      // This ensures that midnight-to-midnight in Eastern time is properly preserved
+      purchaseDate = toZonedTime(utcPurchaseDate, EASTERN_TIMEZONE);
+      
+      // Log the timestamp conversion for debugging
+      console.log(`Gift card ${giftCard.id} purchase date conversion:`, {
+        original: giftCard.created_at,
+        utc: utcPurchaseDate.toISOString(),
+        eastern: formatInTimeZone(purchaseDate, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      });
     }
-    
-    // Log the timestamp for debugging
-    console.log(`Gift card ${giftCard.id} purchase date:`, {
-      original: giftCard.created_at,
-      parsed: purchaseDate.toISOString()
-    });
   } catch (error) {
-    console.warn(`Error parsing purchase date for gift card ${giftCard.id}, using current date instead:`, error);
+    console.warn(`Error processing purchase date for gift card ${giftCard.id}, using current date instead:`, error);
     purchaseDate = new Date();
   }
   
