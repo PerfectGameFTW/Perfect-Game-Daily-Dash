@@ -9,7 +9,7 @@ import {
   transactions, giftCards, giftCardRedemptions, users, syncState
 } from "@shared/schema";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, addDays } from "date-fns";
-import { formatInTimeZone, toZonedTime } from "date-fns-tz";
+import { formatInTimeZone, toZonedTime, utcToZonedTime } from "date-fns-tz";
 import { IStorage } from "./storage";
 import pg from "pg";
 const { Pool } = pg;
@@ -527,33 +527,31 @@ export class PgStorage implements IStorage {
     // For EDT (summer), the offset is 4 hours behind UTC (-4)
     // We'll implement a more dynamic approach that works for both
     
-    // Get a reference date object for this date to check DST
-    const dateForOffset = new Date(`${startDateStr}T12:00:00.000Z`); // Noon UTC to avoid date boundary issues
-    const easternDate = toZonedTime(dateForOffset, this.EASTERN_TIMEZONE);
-    // Get the timezone string to check if we're in EDT or EST
-    const tzString = formatInTimeZone(easternDate, this.EASTERN_TIMEZONE, 'zzz');
+    // CRITICAL FIX: Calculate proper UTC times for Eastern Time business day
+    // First, create UTC dates that would be midnight and 11:59:59 PM in Eastern Time
     
-    let utcOffset: number;
-    if (tzString === 'EDT') {
-      // Eastern Daylight Time (UTC-4)
-      utcOffset = 4;
-    } else {
-      // Eastern Standard Time (UTC-5)
-      utcOffset = 5;
-    }
+    // Convert the date string to a Date object in Eastern time
+    const startInEastern = new Date(`${startDateStr}T00:00:00`);
+    const endInEastern = new Date(`${endDateStr}T23:59:59.999`);
     
-    console.log(`Using timezone offset of UTC-${utcOffset} for ${startDateStr} (${tzString})`);
+    // Get the timezone offset in minutes for these specific dates
+    // This correctly handles both EST and EDT periods
+    const startOffset = formatInTimeZone(startInEastern, this.EASTERN_TIMEZONE, 'xxx');
+    const endOffset = formatInTimeZone(endInEastern, this.EASTERN_TIMEZONE, 'xxx');
     
-    // Create start time: midnight (00:00:00) Eastern Time = utcOffset:00:00 UTC
-    const utcStart = new Date(`${startDateStr}T${utcOffset.toString().padStart(2, '0')}:00:00.000Z`);
+    // Create the UTC dates by applying the exact offset
+    const utcStart = new Date(`${startDateStr}T00:00:00${startOffset}`);
+    const utcEnd = new Date(`${endDateStr}T23:59:59.999${endOffset}`);
     
-    // Create end time: 11:59:59 PM Eastern Time = (utcOffset-1):59:59 UTC of the next day
-    // Get the next day after the end date
-    const nextDayDate = new Date(endDateStr);
-    nextDayDate.setDate(nextDayDate.getDate() + 1);
-    const nextDayStr = format(nextDayDate, 'yyyy-MM-dd');
-    // Set to (utcOffset-1):59:59.999 UTC of next day (11:59:59.999 PM Eastern)
-    const utcEnd = new Date(`${nextDayStr}T${(utcOffset-1).toString().padStart(2, '0')}:59:59.999Z`);
+    // Log the timezone information for verification
+    const tzString = formatInTimeZone(startInEastern, this.EASTERN_TIMEZONE, 'zzz');
+    console.log(`Using timezone ${tzString} for dates ${startDateStr} to ${endDateStr}`);
+    console.log(`Eastern midnight to 11:59:59.999 PM converted to UTC:`, {
+      easternStartStr: `${startDateStr}T00:00:00.000 ${tzString}`,
+      easternEndStr: `${endDateStr}T23:59:59.999 ${tzString}`,
+      utcStartStr: utcStart.toISOString(),
+      utcEndStr: utcEnd.toISOString()
+    });
     
     // Add transaction diagnostics for any date range being analyzed
     // This helps us verify that our timezone calculations are working correctly
