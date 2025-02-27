@@ -344,7 +344,9 @@ export class PgStorage implements IStorage {
   // Helper method for date range calculations with Eastern timezone awareness
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
     // Create 'now' in Eastern timezone for calculations
-    const now = toZonedTime(new Date(), this.EASTERN_TIMEZONE);
+    const now = new Date();
+    // Set timezone to Eastern Time
+    const easternNow = toZonedTime(now, this.EASTERN_TIMEZONE);
     
     // These will hold our Eastern timezone dates
     let easternStart: Date;
@@ -370,27 +372,27 @@ export class PgStorage implements IStorage {
       // Otherwise, use the predefined dateRange in Eastern timezone
       switch (dateRange) {
         case 'today':
-          easternStart = startOfDay(now);
-          easternEnd = endOfDay(now);
+          easternStart = startOfDay(easternNow);
+          easternEnd = endOfDay(easternNow);
           break;
         case 'yesterday':
-          easternStart = startOfDay(subDays(now, 1));
-          easternEnd = endOfDay(subDays(now, 1));
+          easternStart = startOfDay(subDays(easternNow, 1));
+          easternEnd = endOfDay(subDays(easternNow, 1));
           break;
         case 'last7days':
-          easternStart = startOfDay(subDays(now, 6));
-          easternEnd = endOfDay(now);
+          easternStart = startOfDay(subDays(easternNow, 6));
+          easternEnd = endOfDay(easternNow);
           break;
         case 'last30days':
-          easternStart = startOfDay(subDays(now, 29));
-          easternEnd = endOfDay(now);
+          easternStart = startOfDay(subDays(easternNow, 29));
+          easternEnd = endOfDay(easternNow);
           break;
         case 'thisMonth':
-          easternStart = startOfMonth(now);
-          easternEnd = endOfMonth(now);
+          easternStart = startOfMonth(easternNow);
+          easternEnd = endOfMonth(easternNow);
           break;
         case 'lastMonth':
-          const lastMonth = subDays(startOfMonth(now), 1);
+          const lastMonth = subDays(startOfMonth(easternNow), 1);
           easternStart = startOfMonth(lastMonth);
           easternEnd = endOfMonth(lastMonth);
           break;
@@ -398,8 +400,8 @@ export class PgStorage implements IStorage {
           // Should only get here if custom range was selected without dates
           throw new Error('Start date and end date must be provided for custom date range');
         default:
-          easternStart = startOfDay(now);
-          easternEnd = endOfDay(now);
+          easternStart = startOfDay(easternNow);
+          easternEnd = endOfDay(easternNow);
       }
       
       console.log('Using predefined date range (Eastern Time):', {
@@ -409,34 +411,35 @@ export class PgStorage implements IStorage {
       });
     }
     
-    // CRITICAL FIX: Convert Eastern Time dates to their UTC equivalents
-    // This ensures that when we query the database with UTC timestamps,
-    // we're getting exactly the same calendar date in Eastern Time
+    // FIXED: Convert Eastern Time dates to correct UTC equivalents
+    // The database stores UTC timestamps, but we want to query based on
+    // Eastern Time business days (midnight to midnight in Eastern Time)
     
-    // Convert Eastern Time midnight to UTC (e.g., ET 00:00:00 becomes UTC 05:00:00)
-    const utcStart = new Date(
-      Date.UTC(
-        easternStart.getFullYear(),
-        easternStart.getMonth(),
-        easternStart.getDate(),
-        easternStart.getHours(),
-        easternStart.getMinutes(),
-        easternStart.getSeconds()
-      )
-    );
+    // We need to:
+    // 1. Get the Eastern Time date range (already have it in easternStart/easternEnd)
+    // 2. Convert it to UTC for database queries, accounting for timezone offset
     
-    // Convert Eastern Time 23:59:59 to UTC (e.g., ET 23:59:59 becomes UTC 04:59:59 next day)
-    const utcEnd = new Date(
-      Date.UTC(
-        easternEnd.getFullYear(),
-        easternEnd.getMonth(),
-        easternEnd.getDate(),
-        easternEnd.getHours(),
-        easternEnd.getMinutes(),
-        easternEnd.getSeconds(),
-        easternEnd.getMilliseconds()
-      )
+    // Get timezone offset for start date (it might be different due to DST)
+    const easternStartDate = new Date(
+      easternStart.getFullYear(),
+      easternStart.getMonth(),
+      easternStart.getDate(),
+      0, 0, 0, 0
     );
+    // Adjust for timezone - get UTC equivalent of Eastern midnight
+    const utcStart = new Date(easternStartDate);
+    utcStart.setMinutes(utcStart.getMinutes() - easternStartDate.getTimezoneOffset());
+    
+    // Get timezone offset for end date (it might be different due to DST)
+    const easternEndDate = new Date(
+      easternEnd.getFullYear(),
+      easternEnd.getMonth(),
+      easternEnd.getDate(),
+      23, 59, 59, 999
+    );
+    // Adjust for timezone - get UTC equivalent of Eastern 23:59:59.999
+    const utcEnd = new Date(easternEndDate);
+    utcEnd.setMinutes(utcEnd.getMinutes() - easternEndDate.getTimezoneOffset());
     
     console.log('Converted to UTC for database query:', {
       utcStart: utcStart.toISOString(),
