@@ -46,7 +46,43 @@ export class PgStorage implements IStorage {
 
   // Transaction methods
   async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status: TransactionStatus = 'completed'): Promise<Transaction[]> {
+    console.log('DIAGNOSTIC - getTransactions start', { dateRange, startDate, endDate, status });
+    
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
+    
+    // Add diagnostic query to count total transactions in the database
+    const countResult = await db.select({ count: sql`count(*)` }).from(transactions);
+    console.log('DIAGNOSTIC - Total transactions in database:', countResult[0]);
+    
+    // Count transactions in the selected period without status filter
+    const periodCountResult = await db.select({ count: sql`count(*)` })
+      .from(transactions)
+      .where(
+        and(
+          gte(transactions.timestamp, start),
+          lte(transactions.timestamp, end)
+        )
+      );
+      
+    // Count transactions in the selected period with status filter
+    const statusCountResult = await db.select({ count: sql`count(*)` })
+      .from(transactions)
+      .where(
+        and(
+          gte(transactions.timestamp, start),
+          lte(transactions.timestamp, end),
+          eq(transactions.status, status)
+        )
+      );
+    
+    console.log('DIAGNOSTIC - Transactions count for query:', {
+      period: periodCountResult[0],
+      withStatus: statusCountResult[0],
+      start: start.toISOString(),
+      end: end.toISOString(),
+      status
+    });
+    
     const result = await db.select()
       .from(transactions)
       .where(
@@ -57,6 +93,16 @@ export class PgStorage implements IStorage {
         )
       )
       .orderBy(sql`${transactions.timestamp} DESC`);
+    
+    console.log(`DIAGNOSTIC - getTransactions result length: ${result.length}`);
+    
+    // Log first and last timestamp in the results to verify boundaries
+    if (result.length > 0) {
+      console.log('DIAGNOSTIC - Transaction timestamp boundaries:', {
+        first: result[result.length-1].timestamp,
+        last: result[0].timestamp
+      });
+    }
     
     return result;
   }
@@ -418,14 +464,39 @@ export class PgStorage implements IStorage {
     const easternStartOfDay = startOfDay(easternStart);  // 00:00:00.000 in Eastern
     const easternEndOfDay = endOfDay(easternEnd);        // 23:59:59.999 in Eastern
     
-    // Format these dates as strings to capture the correct local time in Eastern
+    // DIAGNOSTIC: Log the input Eastern Time dates before any processing
+    console.log('DIAGNOSTIC - Eastern Time input dates:', {
+      easternStartRaw: easternStart.toISOString(),
+      easternEndRaw: easternEnd.toISOString(),
+      easternStartLocal: easternStart.toString(),
+      easternEndLocal: easternEnd.toString()
+    });
+    
+    // Format these dates as ISO strings with the Eastern timezone offset
+    // We need to determine the actual offset dynamically rather than hardcoding -05:00
+    const easternOffset = formatInTimeZone(easternStartOfDay, this.EASTERN_TIMEZONE, 'xxx');
+    console.log('DIAGNOSTIC - Eastern Time offset:', easternOffset);
+    
+    // Generate proper ISO strings with the correct Eastern Time information
     const easternStartStr = formatInTimeZone(easternStartOfDay, this.EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSS");
     const easternEndStr = formatInTimeZone(easternEndOfDay, this.EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSS");
     
-    // Parse back into Date objects which will convert to UTC automatically
-    // For EST (UTC-5), 00:00:00 EST = 05:00:00 UTC
-    const utcStart = new Date(easternStartStr + '-05:00');
-    const utcEnd = new Date(easternEndStr + '-05:00');
+    console.log('DIAGNOSTIC - Formatted Eastern Time strings:', {
+      easternStartStr,
+      easternEndStr
+    });
+    
+    // Create proper UTC dates by explicitly adding the timezone offset
+    const utcStart = new Date(easternStartStr + easternOffset);
+    const utcEnd = new Date(easternEndStr + easternOffset);
+    
+    // Also log database query parameters to see if our query is correct
+    console.log('DIAGNOSTIC - Database query params:', {
+      utcStartISO: utcStart.toISOString(),
+      utcEndISO: utcEnd.toISOString(),
+      utcStartUnix: utcStart.getTime(),
+      utcEndUnix: utcEnd.getTime()
+    });
     
     console.log('Converted to UTC for database query:', {
       utcStart: utcStart.toISOString(),
