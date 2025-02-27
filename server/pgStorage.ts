@@ -52,6 +52,9 @@ export class PgStorage implements IStorage {
     // Get the properly aligned Eastern Time business day boundaries converted to UTC
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     
+    // Import the EASTERN_TIMEZONE directly to avoid using this.EASTERN_TIMEZONE
+    const { EASTERN_TIMEZONE } = require('./dateUtils');
+    
     // No special case handling - consistent timezone handling for all dates
     // Diagnostic logging to verify Eastern Time business day boundaries
     console.log('USING EASTERN BUSINESS DAY RANGE:', {
@@ -297,6 +300,9 @@ export class PgStorage implements IStorage {
   async getHourlyRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<HourlyRevenue[]> {
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
     
+    // Import the EASTERN_TIMEZONE directly to avoid using this.EASTERN_TIMEZONE
+    const { EASTERN_TIMEZONE } = require('./dateUtils');
+    
     // Initialize hourly buckets (midnight to 11 PM)
     const hourlyMap = new Map<string, number>();
     
@@ -321,7 +327,7 @@ export class PgStorage implements IStorage {
     completedTransactions.forEach(transaction => {
       // Convert transaction timestamp to Eastern time for proper hour grouping
       const utcDate = new Date(transaction.timestamp);
-      const easternDate = toZonedTime(utcDate, this.EASTERN_TIMEZONE);
+      const easternDate = toZonedTime(utcDate, EASTERN_TIMEZONE);
       const hour = easternDate.getHours();
       
       const formattedHour = hour === 0 
