@@ -8,7 +8,7 @@ import {
   DateRange, TransactionStatus,
   transactions, giftCards, giftCardRedemptions, users, syncState
 } from "@shared/schema";
-import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
+import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths } from "date-fns";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { IStorage } from "./storage";
 import pg from "pg";
@@ -411,65 +411,27 @@ export class PgStorage implements IStorage {
       });
     }
     
-    // FIXED: Convert Eastern Time dates to correct UTC equivalents for database query
-    // The database stores UTC timestamps, but we want to query based on
-    // Eastern Time business days (midnight to midnight in Eastern Time)
+    // Convert Eastern Time dates to UTC for database queries
     
-    // We need the UTC date/time that corresponds to:
-    // 1. 00:00:00.000 Eastern Time on the start date
-    // 2. 23:59:59.999 Eastern Time on the end date
+    // First, ensure we're working with clean date objects for the start/end of day in Eastern Time
+    // startOfDay and endOfDay from date-fns will set correct time boundaries
+    const easternStartOfDay = startOfDay(easternStart);  // 00:00:00.000 in Eastern
+    const easternEndOfDay = endOfDay(easternEnd);        // 23:59:59.999 in Eastern
     
-    // For Eastern Time -> UTC in Feb 2025 (EST, UTC-5):
-    // - 00:00:00 EST = 05:00:00 UTC same day
-    // - 23:59:59 EST = 04:59:59 UTC next day
-
-    // FIXED: The proper way to convert Eastern Time boundaries to UTC
-    // For Feb 2025, Eastern Time is EST (UTC-5)
+    // Format these dates as strings to capture the correct local time in Eastern
+    const easternStartStr = formatInTimeZone(easternStartOfDay, this.EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSS");
+    const easternEndStr = formatInTimeZone(easternEndOfDay, this.EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSS");
     
-    // Create Eastern Time date objects for midnight (00:00:00)
-    const easternMidnight = formatInTimeZone(
-      new Date(
-        easternStart.getFullYear(),
-        easternStart.getMonth(),
-        easternStart.getDate()
-      ), 
-      this.EASTERN_TIMEZONE, 
-      'yyyy-MM-dd'
-    ) + 'T00:00:00.000';
-    
-    // Create Eastern Time date objects for end of day (23:59:59.999)
-    const easternEndOfDay = formatInTimeZone(
-      new Date(
-        easternEnd.getFullYear(),
-        easternEnd.getMonth(),
-        easternEnd.getDate()
-      ), 
-      this.EASTERN_TIMEZONE, 
-      'yyyy-MM-dd'
-    ) + 'T23:59:59.999';
-    
-    // Parse these timestamps directly as UTC by specifying the timezone offset
-    const easternMidnightInUTC = formatInTimeZone(
-      new Date(easternMidnight), 
-      this.EASTERN_TIMEZONE,
-      "yyyy-MM-dd'T'HH:mm:ss.SSSX"
-    );
-    
-    const easternEndOfDayInUTC = formatInTimeZone(
-      new Date(easternEndOfDay), 
-      this.EASTERN_TIMEZONE,
-      "yyyy-MM-dd'T'HH:mm:ss.SSSX"
-    );
-    
-    // Create Date objects from these ISO strings
-    const utcStart = new Date(easternMidnightInUTC);
-    const utcEnd = new Date(easternEndOfDayInUTC);
+    // Parse back into Date objects which will convert to UTC automatically
+    // For EST (UTC-5), 00:00:00 EST = 05:00:00 UTC
+    const utcStart = new Date(easternStartStr + '-05:00');
+    const utcEnd = new Date(easternEndStr + '-05:00');
     
     console.log('Converted to UTC for database query:', {
       utcStart: utcStart.toISOString(),
       utcEnd: utcEnd.toISOString(),
-      easternStart: formatInTimeZone(new Date(easternMidnight), this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-      easternEnd: formatInTimeZone(new Date(easternEndOfDay), this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+      easternStart: formatInTimeZone(easternStartOfDay, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
+      easternEnd: formatInTimeZone(easternEndOfDay, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
     });
     
     return { start: utcStart, end: utcEnd };
