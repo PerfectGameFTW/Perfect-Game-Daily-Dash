@@ -8,7 +8,7 @@ import {
   DateRange, TransactionStatus,
   transactions, giftCards, giftCardRedemptions, users, syncState
 } from "@shared/schema";
-import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths, addDays } from "date-fns";
+import { format } from "date-fns";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { IStorage } from "./storage";
 import pg from "pg";
@@ -395,186 +395,16 @@ export class PgStorage implements IStorage {
     };
   }
   
-  // Define Eastern Time Zone
+  // Eastern timezone constant
   private readonly EASTERN_TIMEZONE = 'America/New_York';
   
-  // Helper method for date range calculations with Eastern timezone awareness
+  // Use the Eastern date utility for consistent timezone handling
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
-    // UNIVERSAL SOLUTION: Handle all dates with proper timezone alignment
-    // This ensures that all dates are aligned with Eastern Time business days (midnight-to-midnight)
+    // Import the getEasternDateRange function from our dedicated utility
+    const { getEasternDateRange } = require('./dateUtils');
     
-    console.log('DIAGNOSTIC - Processing date range request:', { dateRange, startDate, endDate });
-    
-    // Get the current date in Eastern Time for date range calculations
-    const now = new Date();
-    const easternNow = toZonedTime(now, this.EASTERN_TIMEZONE);
-    const todayEasternStr = format(easternNow, 'yyyy-MM-dd');
-    
-    // Variables to store our date range
-    let startDateStr: string;
-    let endDateStr: string;
-    
-    // Determine date strings based on range type
-    if (startDate && (dateRange === 'custom' || endDate)) {
-      // *** CRITICAL FIX FOR ALL DATES ***
-      // When custom dates are provided, we need to convert them to Eastern Time midnight
-      // BUT need to retain the specific day that was selected, not use the UTC day
-      
-      // Convert to Eastern Time to get the correct date (ignore time)
-      let startInEastern = toZonedTime(startDate, this.EASTERN_TIMEZONE);
-      let endInEastern = endDate ? toZonedTime(endDate, this.EASTERN_TIMEZONE) : startInEastern;
-      
-      // Extract just the date components (no time)
-      startDateStr = format(startInEastern, 'yyyy-MM-dd');
-      endDateStr = format(endInEastern, 'yyyy-MM-dd');
-      
-      console.log('Custom date range in Eastern Time:', { startDateStr, endDateStr });
-    } else {
-      // For predefined ranges, calculate the dates in Eastern Time
-      switch (dateRange) {
-        case 'today':
-          startDateStr = todayEasternStr;
-          endDateStr = todayEasternStr;
-          break;
-          
-        case 'yesterday':
-          const yesterdayEastern = subDays(easternNow, 1);
-          startDateStr = format(yesterdayEastern, 'yyyy-MM-dd');
-          endDateStr = startDateStr; // Same day range
-          break;
-          
-        case 'last7days':
-          startDateStr = format(subDays(easternNow, 6), 'yyyy-MM-dd');
-          endDateStr = todayEasternStr;
-          break;
-          
-        case 'last30days':
-          startDateStr = format(subDays(easternNow, 29), 'yyyy-MM-dd');
-          endDateStr = todayEasternStr;
-          break;
-          
-        case 'thisMonth':
-          const firstOfMonth = startOfMonth(easternNow);
-          const lastOfMonth = endOfMonth(easternNow);
-          startDateStr = format(firstOfMonth, 'yyyy-MM-dd');
-          endDateStr = format(lastOfMonth, 'yyyy-MM-dd');
-          break;
-          
-        case 'lastMonth':
-          const lastMonthDate = subMonths(easternNow, 1);
-          const firstOfLastMonth = startOfMonth(lastMonthDate);
-          const lastOfLastMonth = endOfMonth(lastMonthDate);
-          startDateStr = format(firstOfLastMonth, 'yyyy-MM-dd');
-          endDateStr = format(lastOfLastMonth, 'yyyy-MM-dd');
-          break;
-          
-        case 'custom':
-          throw new Error('Start date and end date must be provided for custom date range');
-          
-        default:
-          // Default to today
-          startDateStr = todayEasternStr;
-          endDateStr = todayEasternStr;
-      }
-      
-      console.log(`Date range ${dateRange} in Eastern Time:`, { startDateStr, endDateStr });
-    }
-    
-    // *** UNIVERSAL SOLUTION FOR ALL DATES ***
-    // Create proper Eastern Time business day boundaries
-    const startEasternMidnight = `${startDateStr}T00:00:00.000`;
-    const endEasternMidnight = `${endDateStr}T23:59:59.999`;
-    
-    // Get the current timezone (EST or EDT) for the specific dates
-    // Create the Eastern Time date objects by:
-    // 1. Creating a date object for the time in Eastern timezone
-    // 2. Getting the offset between Eastern and UTC
-    // 3. Converting back to UTC with proper business hour alignment
-    
-    // Create date objects with the Eastern midnight times
-    const startLocalDate = new Date(`${startDateStr}T00:00:00`);
-    const endLocalDate = new Date(`${endDateStr}T23:59:59.999`);
-    
-    // Calculate the UTC equivalents that represent Eastern midnight
-    const startEasternDate = toZonedTime(startLocalDate, this.EASTERN_TIMEZONE);
-    const endEasternDate = toZonedTime(endLocalDate, this.EASTERN_TIMEZONE);
-    
-    // Convert to UTC time to use in database queries
-    const startUTC = new Date(startEasternDate.toISOString());
-    const endUTC = new Date(endEasternDate.toISOString());
-    
-    // Log the timezone information and conversions
-    const tzString = formatInTimeZone(startUTC, this.EASTERN_TIMEZONE, 'zzz');
-    console.log(`Using timezone ${tzString} for dates ${startDateStr} to ${endDateStr}`);
-    
-    // For diagnostics, show the exact conversions
-    console.log(`Eastern midnight to 11:59:59.999 PM converted to UTC:`, {
-      easternStartStr: formatInTimeZone(startUTC, this.EASTERN_TIMEZONE, 'yyyy-MM-dd\'T\'HH:mm:ss.SSS zzz'),
-      easternEndStr: formatInTimeZone(endUTC, this.EASTERN_TIMEZONE, 'yyyy-MM-dd\'T\'HH:mm:ss.SSS zzz'),
-      utcStartStr: startUTC.toISOString(),
-      utcEndStr: endUTC.toISOString()
-    });
-    
-    console.log('FINAL DATABASE QUERY RANGE:', {
-      utcStart: startUTC.toISOString(),
-      utcEnd: endUTC.toISOString(),
-      easternStart: formatInTimeZone(startUTC, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-      easternEnd: formatInTimeZone(endUTC, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
-    });
-    
-    // Add diagnostic for transaction counts
-    console.log(`USING EASTERN BUSINESS DAY RANGE:`, {
-      start: startUTC.toISOString(),
-      end: endUTC.toISOString(),
-      easternStart: formatInTimeZone(startUTC, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-      easternEnd: formatInTimeZone(endUTC, this.EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
-    });
-    
-    // Transaction diagnostics
-    setTimeout(async () => {
-      try {
-        // Get total transaction count
-        const totalCount = await db.select({ count: sql`count(*)` })
-          .from(transactions);
-        console.log('DIAGNOSTIC - Total transactions in database:', totalCount[0]);
-        
-        // Count transactions for the current period
-        const countQuery = await db.select({ count: sql`count(*)` })
-          .from(transactions)
-          .where(
-            and(
-              gte(transactions.timestamp, startUTC),
-              lte(transactions.timestamp, endUTC)
-            )
-          );
-          
-        // Count completed transactions
-        const completedQuery = await db.select({ count: sql`count(*)` })
-          .from(transactions)
-          .where(
-            and(
-              gte(transactions.timestamp, startUTC),
-              lte(transactions.timestamp, endUTC),
-              eq(transactions.status, 'completed')
-            )
-          );
-          
-        console.log(`DIAGNOSTIC - Transactions count for query:`, {
-          period: countQuery[0],
-          withStatus: completedQuery[0],
-          start: startUTC.toISOString(),
-          end: endUTC.toISOString(),
-          status: 'completed'
-        });
-      } catch (err) {
-        console.error('Error in transaction diagnostics:', err);
-      }
-    }, 100);
-    
-    return { 
-      start: startUTC, 
-      end: endUTC 
-    };
+    // Use the simplified utility to get proper Eastern Time business days
+    return getEasternDateRange(dateRange, startDate, endDate);
   }
   
   // Sync state management methods
