@@ -365,7 +365,6 @@ export class PgStorage implements IStorage {
     return getEasternDateRange(dateRange, startDate, endDate);
   }
 
-
   // Sync state management methods
   async getSyncState(syncType: string): Promise<SyncState | undefined> {
     const result = await db.select()
@@ -389,7 +388,6 @@ export class PgStorage implements IStorage {
     return result[0];
   }
 
-
   async getSyncProgress(): Promise<{ payments: number; giftCards: number }> {
     // Get the payments sync state
     const paymentsSyncState = await this.getSyncState('payments');
@@ -412,62 +410,196 @@ export class PgStorage implements IStorage {
 
   // Order methods
   async getOrder(id: number): Promise<Order | undefined> {
-    const result = await db.select().from(orders).where(eq(orders.id, id));
-    return result[0];
+    try {
+      console.log(`Fetching order with ID: ${id}`);
+      const result = await db.select().from(orders).where(eq(orders.id, id));
+      if (!result.length) {
+        throw new OrderNotFoundError(id);
+      }
+      return result[0];
+    } catch (error) {
+      if (error instanceof OrderNotFoundError) {
+        throw error;
+      }
+      console.error(`Error fetching order ${id}:`, error);
+      throw new OrderError('Failed to fetch order', 'DB_ERROR', error);
+    }
   }
 
   async getOrderBySquareId(squareId: string): Promise<Order | undefined> {
-    const result = await db.select().from(orders).where(eq(orders.squareId, squareId));
-    return result[0];
+    try {
+      console.log(`Fetching order with Square ID: ${squareId}`);
+      const result = await db.select().from(orders).where(eq(orders.squareId, squareId));
+      if (!result.length) {
+        throw new OrderNotFoundError(squareId);
+      }
+      return result[0];
+    } catch (error) {
+      if (error instanceof OrderNotFoundError) {
+        throw error;
+      }
+      console.error(`Error fetching order with Square ID ${squareId}:`, error);
+      throw new OrderError('Failed to fetch order by Square ID', 'DB_ERROR', error);
+    }
   }
 
   async createOrder(insertOrder: InsertOrder): Promise<Order> {
-    const result = await db.insert(orders).values(insertOrder).returning();
-    return result[0];
+    try {
+      if (!insertOrder.squareId || !insertOrder.status) {
+        throw new InvalidOrderDataError('Missing required order fields');
+      }
+
+      // Ensure timestamps are in UTC
+      const utcOrder = {
+        ...insertOrder,
+        createdAt: new Date(insertOrder.createdAt.toUTCString()),
+        closedAt: insertOrder.closedAt ? new Date(insertOrder.closedAt.toUTCString()) : null
+      };
+
+      console.log(`Creating new order with Square ID: ${utcOrder.squareId}`);
+      const result = await db.insert(orders).values(utcOrder).returning();
+
+      if (!result.length) {
+        throw new OrderProcessingError('Order creation failed');
+      }
+
+      console.log(`Successfully created order: ${result[0].id}`);
+      return result[0];
+    } catch (error) {
+      if (error instanceof OrderError) {
+        throw error;
+      }
+      console.error('Error creating order:', error);
+      throw new OrderProcessingError('Failed to create order', error);
+    }
   }
 
   async getOrderItems(orderId: number): Promise<OrderLineItem[]> {
-    return await db.select()
-      .from(orderLineItems)
-      .where(eq(orderLineItems.orderId, orderId));
+    try {
+      console.log(`Fetching line items for order: ${orderId}`);
+      const items = await db.select()
+        .from(orderLineItems)
+        .where(eq(orderLineItems.orderId, orderId));
+
+      console.log(`Found ${items.length} line items for order ${orderId}`);
+      return items;
+    } catch (error) {
+      console.error(`Error fetching line items for order ${orderId}:`, error);
+      throw new OrderError('Failed to fetch order items', 'DB_ERROR', error);
+    }
   }
 
   async createOrderItem(insertItem: InsertOrderLineItem): Promise<OrderLineItem> {
-    const result = await db.insert(orderLineItems).values(insertItem).returning();
-    return result[0];
+    try {
+      if (!insertItem.orderId || !insertItem.name) {
+        throw new InvalidOrderDataError('Missing required line item fields');
+      }
+
+      console.log(`Creating line item for order: ${insertItem.orderId}`);
+      const result = await db.insert(orderLineItems).values(insertItem).returning();
+
+      if (!result.length) {
+        throw new OrderProcessingError('Line item creation failed');
+      }
+
+      console.log(`Successfully created line item: ${result[0].id}`);
+      return result[0];
+    } catch (error) {
+      if (error instanceof OrderError) {
+        throw error;
+      }
+      console.error('Error creating line item:', error);
+      throw new OrderProcessingError('Failed to create line item', error);
+    }
   }
 
   async getOrderModifiers(lineItemId: number): Promise<OrderModifier[]> {
-    return await db.select()
-      .from(orderModifiers)
-      .where(eq(orderModifiers.lineItemId, lineItemId));
+    try {
+      console.log(`Fetching modifiers for line item: ${lineItemId}`);
+      const modifiers = await db.select()
+        .from(orderModifiers)
+        .where(eq(orderModifiers.lineItemId, lineItemId));
+
+      console.log(`Found ${modifiers.length} modifiers for line item ${lineItemId}`);
+      return modifiers;
+    } catch (error) {
+      console.error(`Error fetching modifiers for line item ${lineItemId}:`, error);
+      throw new OrderError('Failed to fetch modifiers', 'DB_ERROR', error);
+    }
   }
 
   async createOrderModifier(insertModifier: InsertOrderModifier): Promise<OrderModifier> {
-    const result = await db.insert(orderModifiers).values(insertModifier).returning();
-    return result[0];
+    try {
+      if (!insertModifier.lineItemId || !insertModifier.name) {
+        throw new InvalidOrderDataError('Missing required modifier fields');
+      }
+
+      console.log(`Creating modifier for line item: ${insertModifier.lineItemId}`);
+      const result = await db.insert(orderModifiers).values(insertModifier).returning();
+
+      if (!result.length) {
+        throw new OrderProcessingError('Modifier creation failed');
+      }
+
+      console.log(`Successfully created modifier: ${result[0].id}`);
+      return result[0];
+    } catch (error) {
+      if (error instanceof OrderError) {
+        throw error;
+      }
+      console.error('Error creating modifier:', error);
+      throw new OrderProcessingError('Failed to create modifier', error);
+    }
   }
 
   async getOrderDiscounts(orderId: number): Promise<OrderDiscount[]> {
-    return await db.select()
-      .from(orderDiscounts)
-      .where(eq(orderDiscounts.orderId, orderId));
+    try {
+      console.log(`Fetching discounts for order: ${orderId}`);
+      const discounts = await db.select()
+        .from(orderDiscounts)
+        .where(eq(orderDiscounts.orderId, orderId));
+
+      console.log(`Found ${discounts.length} discounts for order ${orderId}`);
+      return discounts;
+    } catch (error) {
+      console.error(`Error fetching discounts for order ${orderId}:`, error);
+      throw new OrderError('Failed to fetch discounts', 'DB_ERROR', error);
+    }
   }
 
   async createOrderDiscount(insertDiscount: InsertOrderDiscount): Promise<OrderDiscount> {
-    const result = await db.insert(orderDiscounts).values(insertDiscount).returning();
-    return result[0];
+    try {
+      if (!insertDiscount.orderId || !insertDiscount.name || !insertDiscount.type) {
+        throw new InvalidOrderDataError('Missing required discount fields');
+      }
+
+      console.log(`Creating discount for order: ${insertDiscount.orderId}`);
+      const result = await db.insert(orderDiscounts).values(insertDiscount).returning();
+
+      if (!result.length) {
+        throw new OrderProcessingError('Discount creation failed');
+      }
+
+      console.log(`Successfully created discount: ${result[0].id}`);
+      return result[0];
+    } catch (error) {
+      if (error instanceof OrderError) {
+        throw error;
+      }
+      console.error('Error creating discount:', error);
+      throw new OrderProcessingError('Failed to create discount', error);
+    }
   }
 
   async getOrderSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<OrderSummary> {
     const start = startDate ? new Date(startDate) : new Date();
     const end = endDate ? new Date(endDate) : start;
 
-    // Format dates for the query
+    // Format dates for the query - these will be interpreted in Eastern Time
     const startStr = format(start, 'yyyy-MM-dd');
     const endStr = format(end, 'yyyy-MM-dd');
 
-    // Get orders within date range
+    // Use orders_et view for Eastern Time-based reporting
     const ordersResult = await db.execute(sql`
       WITH order_metrics AS (
         SELECT 
@@ -476,10 +608,10 @@ export class PgStorage implements IStorage {
           li.name as item_name,
           li.quantity,
           li.total_money as item_revenue
-        FROM orders o
+        FROM orders_et o
         LEFT JOIN order_line_items li ON li.order_id = o.id
-        WHERE DATE(o.created_at) >= ${startStr}::date
-          AND DATE(o.created_at) <= ${endStr}::date
+        WHERE DATE(o.created_at_et) >= ${startStr}::date
+          AND DATE(o.created_at_et) <= ${endStr}::date
           AND o.status = 'COMPLETED'
       ),
       top_items AS (
@@ -503,14 +635,14 @@ export class PgStorage implements IStorage {
       CROSS JOIN top_items;
     `);
 
-    // Calculate total discounts and taxes
+    // Calculate total discounts and taxes using Eastern Time view
     const totalsResult = await db.execute(sql`
       SELECT 
         SUM(total_tax) as tax_total,
         SUM(total_discount) as discount_total
-      FROM orders
-      WHERE DATE(created_at) >= ${startStr}::date
-        AND DATE(created_at) <= ${endStr}::date
+      FROM orders_et
+      WHERE DATE(created_at_et) >= ${startStr}::date
+        AND DATE(created_at_et) <= ${endStr}::date
         AND status = 'COMPLETED';
     `);
 
@@ -542,6 +674,36 @@ export class PgStorage implements IStorage {
 
 export const pgStorage = new PgStorage();
 
-// Assuming getEasternDateRange is defined elsewhere and imported.  This is necessary for compilation.
+// Placeholder functions - replace with actual implementations
 const getEasternDateRange = (dateRange: DateRange, startDate?: Date, endDate?: Date) => ({start: new Date(), end: new Date()});
 const toZonedTime = (date: Date, timezone: string) => new Date();
+
+// Assume these error classes are defined elsewhere and imported.  Necessary for compilation.
+class OrderError extends Error {
+    constructor(message: string, code: string, cause?: Error) {
+        super(message);
+        this.name = 'OrderError';
+        this.code = code;
+        this.cause = cause;
+    }
+    code: string;
+    cause?: Error;
+}
+
+class OrderNotFoundError extends OrderError {
+    constructor(orderId: number | string) {
+        super(`Order not found: ${orderId}`, 'ORDER_NOT_FOUND');
+    }
+}
+
+class InvalidOrderDataError extends OrderError {
+    constructor(message: string) {
+        super(message, 'INVALID_ORDER_DATA');
+    }
+}
+
+class OrderProcessingError extends OrderError {
+    constructor(message: string, cause?: Error) {
+        super(message, 'ORDER_PROCESSING_ERROR', cause);
+    }
+}

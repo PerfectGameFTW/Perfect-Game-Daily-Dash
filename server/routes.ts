@@ -59,6 +59,31 @@ function ensureSerializable(data: any): any {
   }
 }
 
+//Helper function to create consistent error responses.  Add this function definition
+function toErrorResponse(error: any): { error: string; details?: string } {
+  return {
+    error: error instanceof Error ? error.message : 'Unknown error',
+    details: error.stack,
+  };
+}
+
+//Helper function to handle Order related errors. Add this function definition
+class OrderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OrderError';
+  }
+}
+
+class OrderNotFoundError extends OrderError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OrderNotFoundError';
+  }
+}
+
+
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const apiRouter = express.Router();
 
@@ -1620,6 +1645,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         } catch (err) {
           console.error('Error parsing order summary dates:', err);
+          return res.status(400).json({ error: "Invalid date format" });
         }
       }
 
@@ -1627,7 +1653,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(orderSummary);
     } catch (error) {
       console.error("Error getting order summary:", error);
-      res.status(500).json({ error: "Server error while getting order summary data" });
+      const errorResponse = toErrorResponse(error);
+      res.status(500).json(errorResponse);
     }
   });
 
@@ -1639,71 +1666,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid order ID" });
       }
 
-      // Get order details
-      const order = await pgStorage.getOrder(orderId);
-      if (!order) {
-        return res.status(404).json({ error: "Order not found" });
+      try {
+        // Get order details
+        const order = await pgStorage.getOrder(orderId);
+
+        // Get line items with modifiers
+        const lineItems = await pgStorage.getOrderItems(orderId);
+        const lineItemsWithModifiers = await Promise.all(
+          lineItems.map(async (item) => {
+            const modifiers = await pgStorage.getOrderModifiers(item.id);
+            return { ...item, modifiers };
+          })
+        );
+
+        // Get discounts
+        const discounts = await pgStorage.getOrderDiscounts(orderId);
+
+        res.json({
+          order,
+          lineItems: lineItemsWithModifiers,
+          discounts
+        });
+      } catch (error) {
+        if (error instanceof OrderNotFoundError) {
+          return res.status(404).json(toErrorResponse(error));
+        }
+        throw error;
       }
-
-      // Get line items
-      const lineItems = await pgStorage.getOrderItems(orderId);
-
-      // Get modifiers for each line item
-      const lineItemsWithModifiers = await Promise.all(
-        lineItems.map(async (item) => {
-          const modifiers = await pgStorage.getOrderModifiers(item.id);
-          return { ...item, modifiers };
-        })
-      );
-
-      // Get discounts
-      const discounts = await pgStorage.getOrderDiscounts(orderId);
-
-      res.json({
-        order,
-        lineItems: lineItemsWithModifiers,
-        discounts
-      });
     } catch (error) {
       console.error("Error getting order details:", error);
-      res.status(500).json({ error: "Server error while getting order details" });
+      const errorResponse = toErrorResponse(error);
+      res.status(500).json(errorResponse);
     }
   });
 
   // Sync orders with Square
   apiRouter.post("/sync/orders", async (req, res) => {
     try {
-      // Parse date range if provided
       let startDate: Date | undefined;
       let endDate: Date | undefined;
 
-      if (req.body.startDate) {
-        startDate = new Date(req.body.startDate);
-      }
-      if (req.body.endDate) {
-        endDate = new Date(req.body.endDate);
+      if (req.body.startDate || req.body.endDate) {
+        try {
+          if (req.body.startDate) {
+            startDate = new Date(req.body.startDate);
+            if (isNaN(startDate.getTime())) {
+              throw new Error('Invalid start date');
+            }
+          }
+          if (req.body.endDate) {
+            endDate = new Date(req.body.endDate);
+            if (isNaN(endDate.getTime())) {
+              throw new Error('Invalid end date');
+            }
+          }
+        } catch (err) {
+          return res.status(400).json({ error: "Invalid date format in request" });
+        }
       }
 
-      // Start syncing orders
       await squareClient.syncOrders(pgStorage, startDate, endDate);
-
       res.json({ success: true, message: "Order sync initiated successfully" });
     } catch (error) {
       console.error("Error syncing orders:", error);
-      res.status(500).json({
-        error: "Failed to sync orders",
-        message: error instanceof Error ? error.message : "Unknown error"
-      });
+      const errorResponse = toErrorResponse(error);
+      res.status(500).json(errorResponse);
     }
   });
 
   // Get orders by date range
   apiRouter.get("/orders", async (req, res) => {
     try {
-      // Parse date range from query (default to today if not provided)
       const dateRange = req.query.dateRange as string || "today";
-
-      // Validate date range
       const parsedDateRange = dateRangeSchema.safeParse(dateRange);
       if (!parsedDateRange.success) {
         return res.status(400).json({ error: "Invalid date range" });
@@ -1717,41 +1751,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const startDateStr = req.query.startDate as string;
           const endDateStr = req.query.endDate as string;
 
-          if (startDateStr.includes('T')) {
-            startDate = new Date(startDateStr);
-          } else {
-            startDate = parse(startDateStr, "yyyy-MM-dd", new Date());
-          }
+          startDate = startDateStr.includes('T') ? new Date(startDateStr) :
+            parse(startDateStr, "yyyy-MM-dd", new Date());
+          endDate = endDateStr.includes('T') ? new Date(endDateStr) :
+            parse(endDateStr, "yyyy-MM-dd", new Date());
 
-          if (endDateStr.includes('T')) {
-            endDate = new Date(endDateStr);
-          } else {
-            endDate = parse(endDateStr, "yyyy-MM-dd", new Date());
+          if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+            throw new Error('Invalid date');
           }
         } catch (err) {
           console.error('Error parsing order dates:', err);
+          return res.status(400).json({ error: "Invalid date format" });
         }
       }
 
-      // Fetch orders from Square API
-      const orders = await squareClient.fetchOrders(startDate, endDate);
-
-      // Convert orders to our format and save them
-      const processedOrders = [];
-      for (const order of orders) {
-        try {
-          const insertOrder = squareClient.convertSquareOrderToOrder(order);
-          const savedOrder = await pgStorage.createOrder(insertOrder);
-          processedOrders.push(savedOrder);
-        } catch (error) {
-          console.error(`Error processing order ${order.id}:`, error);
+      try {
+        const orders = await squareClient.fetchOrders(startDate, endDate);
+        res.json(orders);
+      } catch (error) {
+        if (error instanceof OrderError) {
+          return res.status(400).json(toErrorResponse(error));
         }
+        throw error;
       }
-
-      res.json(processedOrders);
     } catch (error) {
       console.error("Error getting orders:", error);
-      res.status(500).json({ error: "Server error while getting orders" });
+      const errorResponse = toErrorResponse(error);
+      res.status(500).json(errorResponse);
     }
   });
 
