@@ -5,11 +5,10 @@ import {
   integer,
   boolean,
   timestamp,
-  timestamptz,
   real,
   jsonb,
   foreignKey,
-  primaryKey
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -67,8 +66,8 @@ export const orders = pgTable("orders", {
   totalMoney: real("total_money").notNull(),
   totalTax: real("total_tax").notNull(),
   totalDiscount: real("total_discount").notNull(),
-  createdAt: timestamptz("created_at").notNull(),
-  closedAt: timestamptz("closed_at"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
   transactionId: integer("transaction_id").references(() => transactions.id),
   source: text("source").notNull(),
   squareData: jsonb("square_data"),
@@ -149,7 +148,7 @@ export const transactions = pgTable("transactions", {
   amount: real("amount").notNull(),
   categoryId: text("category_id").notNull(),
   status: text("status").notNull(),
-  timestamp: timestamptz("timestamp").notNull(),
+  timestamp: timestamp("timestamp", { withTimezone: true }).notNull(),
   squareData: jsonb("square_data"),
 });
 
@@ -167,7 +166,7 @@ export const giftCards = pgTable("gift_cards", {
   amount: real("amount").notNull(),
   redeemedAmount: real("redeemed_amount").default(0).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
-  purchaseDate: timestamptz("purchase_date").notNull(),
+  purchaseDate: timestamp("purchase_date", { withTimezone: true }).notNull(),
   squareData: jsonb("square_data"),
 });
 
@@ -184,7 +183,7 @@ export const giftCardRedemptions = pgTable("gift_card_redemptions", {
   giftCardId: integer("gift_card_id").notNull().references(() => giftCards.id),
   amount: real("amount").notNull(),
   transactionId: integer("transaction_id").notNull().references(() => transactions.id),
-  timestamp: timestamptz("timestamp").notNull(),
+  timestamp: timestamp("timestamp", { withTimezone: true }).notNull(),
 });
 
 export const insertGiftCardRedemptionSchema = createInsertSchema(
@@ -215,7 +214,7 @@ export type User = typeof users.$inferSelect;
 export const syncState = pgTable("sync_state", {
   id: serial("id").primaryKey(),
   syncType: text("sync_type").notNull(),
-  lastSyncedAt: timestamp("last_synced_at").notNull(),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }).notNull(),
   currentPage: integer("current_page").default(1),
   totalPages: integer("total_pages").default(0),
   processedCount: integer("processed_count").default(0),
