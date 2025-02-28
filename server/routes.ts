@@ -621,24 +621,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           continue;
         }
 
-        console.log(`Square data for card ${card.squareId}:`, JSON.stringify(squareCard, null, 2));
+        // Extract balance amount directly from the Square card data
+        let amount = 0;
+        if (squareCard.balanceMoney && typeof squareCard.balanceMoney.amount === 'string') {
+          amount = parseInt(squareCard.balanceMoney.amount, 10) / 100;
+          console.log(`Found amount in balanceMoney: $${amount}`);
+        }
 
-        // Convert to our model
-        const updatedCard = squareClient.convertSquareGiftCardToGiftCard(squareCard);
+        // If we couldn't get the amount from balanceMoney, try balance_money (snake_case version)
+        if (amount === 0 && squareCard.balance_money && typeof squareCard.balance_money.amount === 'string') {
+          amount = parseInt(squareCard.balance_money.amount, 10) / 100;
+          console.log(`Found amount in balance_money: $${amount}`);
+        }
 
-        if (updatedCard.amount > 0) {
+        if (amount > 0) {
           // Update the card with the new amount
           await db.update(giftCards)
             .set({ 
-              amount: updatedCard.amount, 
-              squareData: updatedCard.squareData 
+              amount: amount,
+              squareData: JSON.parse(JSON.stringify(squareCard, (key, value) =>
+                typeof value === 'bigint' ? value.toString() : value
+              ))
             })
             .where(eq(giftCards.squareId, card.squareId));
 
-          console.log(`UPDATED gift card ${card.squareId} amount from $0 to $${updatedCard.amount.toFixed(2)}`);
+          console.log(`✅ UPDATED gift card ${card.squareId} amount from $0 to $${amount.toFixed(2)}`);
           updatedCount++;
         } else {
-          console.log(`Card ${card.squareId} still has zero amount after conversion`);
+          console.log(`⚠️ Card ${card.squareId} still has zero amount after conversion`);
           stillZeroCount++;
         }
       }
@@ -647,7 +657,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true,
         totalProcessed: zeroAmountCards.length,
         updatedCount,
-        stillZeroCount
+        stillZeroCount,
+        message: `Successfully processed ${zeroAmountCards.length} cards, updated ${updatedCount}, ${stillZeroCount} remained at zero`
       });
 
     } catch (error) {
@@ -826,7 +837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           processedCount = i + 1;
 
           // Create checkpoint every 50 records
-          if (processedCount % 50 === 0) {
+          if (processedCount %50 === 0) {
             console.log(`Processing payment ${processedCount} of ${payments.length}...`);
 
             // Update checkpoint in database
