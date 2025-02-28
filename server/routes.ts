@@ -997,6 +997,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let ordersProcessed = ordersCheckpoint?.lastPosition || 0;
       let ordersErrorCount = 0;
 
+      console.log(`Starting to process ${orders.length} orders, resuming from position ${ordersProcessed}`);
+      
+      // First update the total count in orders sync state
+      await pgStorage.updateSyncState(ordersSyncState.id, {
+        totalCount: orders.length,
+        processedCount: ordersProcessed,
+        lastSyncedAt: new Date()
+      });
+
       // Process each order to identify gift card sales
       for (let i = ordersProcessed; i < orders.length; i++) {
         try {
@@ -1004,7 +1013,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ordersProcessed = i + 1;
 
           // Create checkpoint every 20 orders
-          if (ordersProcessed % 20 === 0) {
+          if (ordersProcessed % 20 === 0 || ordersProcessed === orders.length) {
             console.log(`Processing order ${ordersProcessed} of ${orders.length}...`);
 
             // Update checkpoint in database
@@ -1068,12 +1077,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`Orders sync complete: ${ordersProcessed} processed, encountered ${ordersErrorCount} errors`);
       console.log(`Gift card analysis: Found ${giftCardSalesCount} gift card items totaling $${giftCardSalesAmount.toFixed(2)}`);
 
-      // Mark orders sync as complete
-      await pgStorage.updateSyncState(ordersSyncState.id, {
-        processedCount: orders.length,
+      // Mark orders sync as complete with additional logging
+      console.log(`Updating orders sync state to completed: processedCount=${ordersProcessed}, totalCount=${orders.length}`);
+      
+      // Final update to order sync state
+      const updatedOrderSyncState = await pgStorage.updateSyncState(ordersSyncState.id, {
+        processedCount: ordersProcessed,
+        totalCount: orders.length,
         isComplete: true,
         status: 'completed',
         lastSyncedAt: new Date()
+      });
+      
+      console.log("Orders sync state after update:", {
+        id: updatedOrderSyncState.id,
+        syncType: updatedOrderSyncState.syncType,
+        processedCount: updatedOrderSyncState.processedCount,
+        totalCount: updatedOrderSyncState.totalCount,
+        isComplete: updatedOrderSyncState.isComplete,
+        status: updatedOrderSyncState.status
       });
 
       // STEP 3: Sync Gift Cards
