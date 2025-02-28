@@ -1,11 +1,22 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { db, sql } from "./db";
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Add startup timestamp and environment check
+const startTime = new Date().toISOString();
+log(`Starting application at ${startTime}`);
+log('Environment check:', {
+  NODE_ENV: process.env.NODE_ENV,
+  DATABASE_URL: process.env.DATABASE_URL ? '[PRESENT]' : '[MISSING]',
+  PORT: process.env.PORT || 5000
+});
+
+// Add request logging middleware
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -36,34 +47,62 @@ app.use((req, res, next) => {
   next();
 });
 
+async function exitWithError(error: unknown) {
+  log(`Fatal error during startup: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+  log(`Error stack: ${error instanceof Error ? error.stack : 'No stack trace available'}`, 'error');
+
+  // Brief delay to ensure logs are flushed
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  process.exit(1);
+}
+
 (async () => {
-  const server = await registerRoutes(app);
+  try {
+    // Verify database connection with detailed logging
+    log('Verifying database connection...');
+    try {
+      await db.execute(sql`SELECT version()`);
+      log('✓ Database connection verified');
+    } catch (dbError) {
+      log('✗ Database connection failed', 'error');
+      throw dbError;
+    }
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    log('Registering routes...');
+    const server = await registerRoutes(app);
+    log('✓ Routes registered successfully');
 
-    res.status(status).json({ message });
-    throw err;
-  });
+    // Error handling middleware
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+      const status = err.status || err.statusCode || 500;
+      const message = err.message || "Internal Server Error";
+      log(`Error handler caught: ${err.message}`, 'error');
+      res.status(status).json({ message });
+      throw err;
+    });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
+    // Vite setup with enhanced logging
+    if (app.get("env") === "development") {
+      log('Setting up Vite development server...');
+      await setupVite(app, server);
+      log('✓ Vite development server ready');
+    } else {
+      log('Setting up static file serving...');
+      serveStatic(app);
+      log('✓ Static file serving ready');
+    }
+
+    // Server startup
+    const port = 5000;
+    server.listen({
+      port,
+      host: "0.0.0.0",
+      reusePort: true,
+    }, () => {
+      log(`✓ Server ready and listening on port ${port}`);
+    });
+
+  } catch (error) {
+    await exitWithError(error);
   }
-
-  // ALWAYS serve the app on port 5000
-  // this serves both the API and the client
-  const port = 5000;
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
-  });
 })();

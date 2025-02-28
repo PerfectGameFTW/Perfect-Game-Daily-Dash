@@ -83,7 +83,6 @@ class OrderNotFoundError extends OrderError {
 }
 
 
-
 export async function registerRoutes(app: Express): Promise<Server> {
   const apiRouter = express.Router();
 
@@ -895,7 +894,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   apiRouter.post("/sync", async (req, res) => {
     try {
       let syncStartTime: Date | null = null;
-      let isSyncRunning = false;      // Check if sync is already running
+      let isSyncRunning = false;      
+      let paymentsSyncState: any = null;
+      let giftCardsSyncState: any = null;
+
+      // Check if sync is already running
+      paymentsSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'payments')
+      });
+
+      giftCardsSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'giftCards')
+      });
+
       const existingSync = await db.query.syncState.findFirst({
         where: and(
           eq(syncState.status, 'in_progress'),
@@ -925,11 +936,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       // Insert new sync state
-      const paymentsSyncState = await db.insert(syncState)
+      const paymentsSyncStateResult = await db.insert(syncState)
         .values(newSyncState)
         .returning();
 
-      console.log("Created new sync state:", paymentsSyncState[0]);
+      console.log("Created new sync state:", paymentsSyncStateResult[0]);
 
       // Simple mutex to prevent concurrent syncs
       //let isSyncRunning = false;
@@ -998,7 +1009,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           startDate = new Date(lastPaymentSync.lastSyncedAt);
           startDate.setDate(startDate.getDate() - 1); // 1 day overlap for safety
           endDate = new Date(); // Current time
-
           console.log(`Incremental sync from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
         } else {
           // First sync - use default 90-day window
@@ -1016,7 +1026,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("--- STEP 1: SYNCING PAYMENTS ---");
 
       // Check for existing payments sync state
-      let paymentsSyncState = await db.query.syncState.findFirst({
+      paymentsSyncState = await db.query.syncState.findFirst({
         where: eq(syncState.syncType, 'payments')
       });
       let lastCheckpoint: any = null;
