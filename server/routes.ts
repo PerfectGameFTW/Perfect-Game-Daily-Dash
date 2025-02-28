@@ -1,10 +1,10 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { pgStorage, db } from "./pgStorage";
-import { 
-  dateRangeSchema, 
-  InsertTransaction, 
-  InsertGiftCard, 
+import {
+  dateRangeSchema,
+  InsertTransaction,
+  InsertGiftCard,
   InsertSyncState,
   transactions,
   giftCards
@@ -12,6 +12,27 @@ import {
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
 import { and, gte, lte, sql, eq } from "drizzle-orm";
+
+// Add global BigInt serialization override
+if (typeof BigInt.prototype.toJSON !== 'function') {
+  BigInt.prototype.toJSON = function() {
+    return this.toString();
+  };
+}
+
+// Add helper function at the top of the file
+function safeBigIntConversion(obj: any): any {
+  if (typeof obj === "bigint") return obj.toString();
+  if (Array.isArray(obj)) return obj.map(safeBigIntConversion);
+  if (obj && typeof obj === "object") {
+    const result: Record<string, any> = {};
+    for (const key in obj) {
+      result[key] = safeBigIntConversion(obj[key]);
+    }
+    return result;
+  }
+  return obj;
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Test route for gift card detection has been removed as part of sync simplification
@@ -379,30 +400,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calculate transaction breakdowns
       const detailedBreakdown = {
-        partywirks: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
-          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+        partywirks: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
+          'note' in t.squareData && typeof t.squareData.note === 'string' &&
           t.squareData.note.toLowerCase().includes('partywirks'))
           .reduce((sum, t) => sum + t.amount, 0),
-        tripleseat: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
-          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+        tripleseat: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
+          'note' in t.squareData && typeof t.squareData.note === 'string' &&
           t.squareData.note.toLowerCase().includes('tripleseat'))
           .reduce((sum, t) => sum + t.amount, 0),
-        tips: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
-          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+        tips: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
+          'note' in t.squareData && typeof t.squareData.note === 'string' &&
           t.squareData.note.toLowerCase().includes('tip'))
           .reduce((sum, t) => sum + t.amount, 0),
-        serviceCharges: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
-          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+        serviceCharges: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
+          'note' in t.squareData && typeof t.squareData.note === 'string' &&
           t.squareData.note.toLowerCase().includes('service charge'))
           .reduce((sum, t) => sum + t.amount, 0),
-        taxes: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
-          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+        taxes: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
+          'note' in t.squareData && typeof t.squareData.note === 'string' &&
           t.squareData.note.toLowerCase().includes('tax'))
           .reduce((sum, t) => sum + t.amount, 0),
         refunds: allTransactions.filter(t => t.status === 'refunded')
           .reduce((sum, t) => sum + t.amount, 0),
-        discountsAndComps: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
-          'note' in t.squareData && typeof t.squareData.note === 'string' && 
+        discountsAndComps: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
+          'note' in t.squareData && typeof t.squareData.note === 'string' &&
           (t.squareData.note.toLowerCase().includes('discount') || t.squareData.note.toLowerCase().includes('comp')))
           .reduce((sum, t) => sum + t.amount, 0),
         // Enhanced gift card detection logic
@@ -413,15 +434,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (t.categoryId === 'giftCard') return true;
 
           // Check transaction notes for gift card mentions
-          if ('note' in t.squareData && typeof t.squareData.note === 'string' && 
-              t.squareData.note.toLowerCase().includes('gift card')) return true;
+          if ('note' in t.squareData && typeof t.squareData.note === 'string' &&
+            t.squareData.note.toLowerCase().includes('gift card')) return true;
 
           // Check order data for gift card items
           if ('orderData' in t.squareData && t.squareData.orderData) {
             const order = t.squareData.orderData;
             if (order.lineItems) {
-              return order.lineItems.some((item: any) => 
-                item.itemType === 'GIFT_CARD' || 
+              return order.lineItems.some((item: any) =>
+                item.itemType === 'GIFT_CARD' ||
                 (item.name && item.name.toLowerCase().includes('gift card'))
               );
             }
@@ -480,14 +501,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // 1. Matching catalog ID against our list
           // 2. Name containing "gift card"
           // 3. Item type being explicitly "GIFT_CARD"
-          const isGiftCard = 
+          const isGiftCard =
             (item.catalogObjectId && giftCardItemIds.includes(item.catalogObjectId)) ||
             (item.name && item.name.toLowerCase().includes('gift card')) ||
             (item.itemType === 'GIFT_CARD');
 
           if (isGiftCard) {
             // Calculate the amount
-            const amount = item.basePriceMoney && item.basePriceMoney.amount 
+            const amount = item.basePriceMoney && item.basePriceMoney.amount
               ? Number(item.basePriceMoney.amount) / 100
               : 0;
 
@@ -579,14 +600,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error checking gift card items:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         error: "Failed to check gift card items",
         message: error instanceof Error ? error.message : "Unknown error"
       });
     }
   });
 
-  // Add a route to update gift cards with zero amounts from Square API
+  // Fix gift cards endpoint
   apiRouter.get("/fix-gift-cards", async (req, res) => {
     try {
       console.log("Starting fix for gift cards with zero amounts...");
@@ -604,51 +625,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create a map for quick lookup
       const squareGiftCardMap = new Map();
-      squareGiftCards.forEach(card => {
+      for (const card of squareGiftCards) {
+        // SafeBigIntConversion is already applied in fetchGiftCards
         squareGiftCardMap.set(card.id, card);
-      });
+      }
 
-      // Update each card with zero amount
       let updatedCount = 0;
       let stillZeroCount = 0;
 
       for (const card of zeroAmountCards) {
-        console.log(`Processing card ${card.squareId}...`);
+        try {
+          console.log(`Processing card ${card.squareId}...`);
 
-        const squareCard = squareGiftCardMap.get(card.squareId);
-        if (!squareCard) {
-          console.log(`Card ${card.squareId} not found in Square data`);
-          continue;
-        }
+          const squareCard = squareGiftCardMap.get(card.squareId);
+          if (!squareCard) {
+            console.log(`Card ${card.squareId} not found in Square data`);
+            continue;
+          }
 
-        // Extract balance amount directly from the Square card data
-        let amount = 0;
-        if (squareCard.balanceMoney && typeof squareCard.balanceMoney.amount === 'string') {
-          amount = parseInt(squareCard.balanceMoney.amount, 10) / 100;
-          console.log(`Found amount in balanceMoney: $${amount}`);
-        }
+          // Log the square card data for debugging
+          console.log('Square card data:', JSON.stringify(squareCard, null, 2));
 
-        // If we couldn't get the amount from balanceMoney, try balance_money (snake_case version)
-        if (amount === 0 && squareCard.balance_money && typeof squareCard.balance_money.amount === 'string') {
-          amount = parseInt(squareCard.balance_money.amount, 10) / 100;
-          console.log(`Found amount in balance_money: $${amount}`);
-        }
+          let amount = 0;
+          if (squareCard.balanceMoney && typeof squareCard.balanceMoney.amount === 'string') {
+            amount = parseInt(squareCard.balanceMoney.amount, 10) / 100;
+            console.log(`Found amount in balanceMoney: $${amount}`);
+          } else if (squareCard.balance_money && typeof squareCard.balance_money.amount === 'string') {
+            amount = parseInt(squareCard.balance_money.amount, 10) / 100;
+            console.log(`Found amount in balance_money: $${amount}`);
+          }
 
-        if (amount > 0) {
-          // Update the card with the new amount
-          await db.update(giftCards)
-            .set({ 
-              amount: amount,
-              squareData: JSON.parse(JSON.stringify(squareCard, (key, value) =>
-                typeof value === 'bigint' ? value.toString() : value
-              ))
-            })
-            .where(eq(giftCards.squareId, card.squareId));
+          if (amount > 0) {
+            await db.update(giftCards)
+              .set({
+                amount: amount,
+                squareData: squareCard  // Already safe from fetchGiftCards
+              })
+              .where(eq(giftCards.squareId, card.squareId));
 
-          console.log(`✅ UPDATED gift card ${card.squareId} amount from $0 to $${amount.toFixed(2)}`);
-          updatedCount++;
-        } else {
-          console.log(`⚠️ Card ${card.squareId} still has zero amount after conversion`);
+            console.log(`✅ Updated gift card ${card.squareId} amount from $0 to $${amount.toFixed(2)}`);
+            updatedCount++;
+          } else {
+            console.log(`⚠️ Card ${card.squareId} still has zero amount after conversion`);
+            stillZeroCount++;
+          }
+        } catch (error) {
+          console.error(`Error processing card ${card.squareId}:`, error);
           stillZeroCount++;
         }
       }
@@ -669,11 +691,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
-
-  // Feb 25, 2025 special case analysis endpoint has been completely removed
-  // All transaction data is now processed through the unified sync endpoint and
-  // stored directly in the database. The system now pulls all data directly from
-  // the database with no special case handling for specific dates.
 
   // Simple mutex to prevent concurrent syncs
   let isSyncRunning = false;
@@ -707,8 +724,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const paymentsSyncState = await pgStorage.getSyncState('payments');
           const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
 
-          return res.status(409).json({ 
-            success: false, 
+          return res.status(409).json({
+            success: false,
             error: "A sync is already in progress. Please try again later.",
             lastSyncTime: lastSyncTime.toISOString()
           });
@@ -733,9 +750,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!accessToken || !locationId) {
         console.error("Square API credentials are missing. Check environment variables.");
         isSyncRunning = false;
-        return res.status(500).json({ 
+        return res.status(500).json({
           success: false,
-          error: "Square API credentials are missing." 
+          error: "Square API credentials are missing."
         });
       }
 
@@ -837,7 +854,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           processedCount = i + 1;
 
           // Create checkpoint every 50 records
-          if (processedCount %50 === 0) {
+          if (processedCount % 50 === 0) {
             console.log(`Processing payment ${processedCount} of ${payments.length}...`);
 
             // Update checkpoint in database
@@ -934,7 +951,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update sync state with total order count
       ordersSyncState = await pgStorage.updateSyncState(ordersSyncState.id, {
         totalCount: orders.length,
-        status: 'processing',      });
+        status: 'processing',
+      });
 
       // Process orders and identify gift cards with checkpoints
       let giftCardSalesCount = 0;
@@ -967,8 +985,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
               // Check if this is a gift card line item
               if (
-                itemName.includes('gift') || 
-                itemName.includes('gift card') || 
+                itemName.includes('gift') ||
+                itemName.includes('gift card') ||
                 (lineItem.note && lineItem.note.toLowerCase().includes('gift')) ||
                 lineItem.itemType === 'GIFT_CARD'
               ) {
@@ -988,7 +1006,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
 
-          results.orders++; 
+          results.orders++;
 
         } catch (orderError) {
           // Log the error but continue processing
@@ -1214,7 +1232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Release the lock even if there's an error
       isSyncRunning = false;
 
-      res.status(500).json({ 
+      res.status(500).json({
         success: false,
         error: "Failed to sync with Square",
         details: error instanceof Error ? error.message : "Unknown error"
