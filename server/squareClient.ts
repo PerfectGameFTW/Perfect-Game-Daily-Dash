@@ -15,7 +15,7 @@ import { toZonedTime } from 'date-fns-tz';
 import dotenv from 'dotenv';
 import { db } from './db'; // Import db directly instead of pgStorage
 import { eq } from 'drizzle-orm';
-import { orders } from './schema'; // Assuming this is where the orders table schema is defined
+import { orders } from '@shared/schema'; // Update this import too
 
 
 // Define Eastern timezone constant
@@ -264,6 +264,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           'DESC',
           cursor,
           process.env.SQUARE_LOCATION_ID,
+          undefined,
           undefined,
           undefined,
           undefined,

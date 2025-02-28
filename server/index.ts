@@ -1,7 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { db, sql } from "./db";
+import { db, sql } from "./db"; // Import db and sql
 
 const app = express();
 app.use(express.json());
