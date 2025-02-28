@@ -7,6 +7,8 @@ import {
   timestamp,
   real,
   jsonb,
+  foreignKey,
+  primaryKey
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -44,6 +46,100 @@ export const categorySchema = z.enum([
 ]);
 
 export type Category = z.infer<typeof categorySchema>;
+
+// Order status types
+export const orderStatusSchema = z.enum([
+  "OPEN",
+  "COMPLETED",
+  "CANCELED",
+  "DRAFT",
+  "PENDING"
+]);
+
+export type OrderStatus = z.infer<typeof orderStatusSchema>;
+
+// Orders table
+export const orders = pgTable("orders", {
+  id: serial("id").primaryKey(),
+  squareId: text("square_id").notNull().unique(),
+  status: text("status").notNull(),
+  totalMoney: real("total_money").notNull(),
+  totalTax: real("total_tax").notNull(),
+  totalDiscount: real("total_discount").notNull(),
+  createdAt: timestamp("created_at").notNull(),
+  closedAt: timestamp("closed_at"),
+  transactionId: integer("transaction_id").references(() => transactions.id),
+  source: text("source").notNull(),
+  squareData: jsonb("square_data"),
+});
+
+export const insertOrderSchema = createInsertSchema(orders).omit({
+  id: true,
+});
+
+export type InsertOrder = z.infer<typeof insertOrderSchema>;
+export type Order = typeof orders.$inferSelect;
+
+// Order line items
+export const orderLineItems = pgTable("order_line_items", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull().references(() => orders.id, { 
+    onDelete: "cascade" 
+  }),
+  name: text("name").notNull(),
+  quantity: integer("quantity").notNull(),
+  basePriceMoney: real("base_price_money").notNull(),
+  totalMoney: real("total_money").notNull(),
+  squareData: jsonb("square_data"),
+});
+
+export const insertOrderLineItemSchema = createInsertSchema(orderLineItems).omit({
+  id: true,
+});
+
+export type InsertOrderLineItem = z.infer<typeof insertOrderLineItemSchema>;
+export type OrderLineItem = typeof orderLineItems.$inferSelect;
+
+// Order modifiers
+export const orderModifiers = pgTable("order_modifiers", {
+  id: serial("id").primaryKey(),
+  lineItemId: integer("line_item_id").notNull().references(() => orderLineItems.id, {
+    onDelete: "cascade" 
+  }),
+  name: text("name").notNull(),
+  basePriceMoney: real("base_price_money"),
+  totalPriceMoney: real("total_price_money"),
+  squareData: jsonb("square_data"),
+});
+
+export const insertOrderModifierSchema = createInsertSchema(orderModifiers).omit({
+  id: true,
+});
+
+export type InsertOrderModifier = z.infer<typeof insertOrderModifierSchema>;
+export type OrderModifier = typeof orderModifiers.$inferSelect;
+
+// Order discounts
+export const orderDiscounts = pgTable("order_discounts", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull().references(() => orders.id, {
+    onDelete: "cascade" 
+  }),
+  name: text("name").notNull(),
+  type: text("type").notNull(),
+  percentage: real("percentage"),
+  amountMoney: real("amount_money"),
+  appliedMoney: real("applied_money").notNull(),
+  scope: text("scope").notNull(),
+  squareData: jsonb("square_data"),
+});
+
+export const insertOrderDiscountSchema = createInsertSchema(orderDiscounts).omit({
+  id: true,
+});
+
+export type InsertOrderDiscount = z.infer<typeof insertOrderDiscountSchema>;
+export type OrderDiscount = typeof orderDiscounts.$inferSelect;
 
 // Main transactions table
 export const transactions = pgTable("transactions", {
@@ -84,9 +180,9 @@ export type GiftCard = typeof giftCards.$inferSelect;
 // Gift card redemptions table
 export const giftCardRedemptions = pgTable("gift_card_redemptions", {
   id: serial("id").primaryKey(),
-  giftCardId: integer("gift_card_id").notNull(),
+  giftCardId: integer("gift_card_id").notNull().references(() => giftCards.id),
   amount: real("amount").notNull(),
-  transactionId: integer("transaction_id").notNull(),
+  transactionId: integer("transaction_id").notNull().references(() => transactions.id),
   timestamp: timestamp("timestamp").notNull(),
 });
 
@@ -96,12 +192,62 @@ export const insertGiftCardRedemptionSchema = createInsertSchema(
   id: true,
 });
 
-export type InsertGiftCardRedemption = z.infer<
-  typeof insertGiftCardRedemptionSchema
->;
+export type InsertGiftCardRedemption = z.infer<typeof insertGiftCardRedemptionSchema>;
 export type GiftCardRedemption = typeof giftCardRedemptions.$inferSelect;
 
-// Define additional types for the frontend
+// Keep the users table for authentication
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+});
+
+export const insertUserSchema = createInsertSchema(users).pick({
+  username: true,
+  password: true,
+});
+
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type User = typeof users.$inferSelect;
+
+// Sync state table to track Square data synchronization progress
+export const syncState = pgTable("sync_state", {
+  id: serial("id").primaryKey(),
+  syncType: text("sync_type").notNull(), 
+  lastSyncedAt: timestamp("last_synced_at").notNull(),
+  currentPage: integer("current_page").default(1),
+  totalPages: integer("total_pages").default(0),
+  processedCount: integer("processed_count").default(0),
+  totalCount: integer("total_count").default(0),
+  cursor: text("cursor").default(""),
+  isComplete: boolean("is_complete").default(false),
+  status: text("status").default("pending"),
+  errorMessage: text("error_message"),
+  lastCheckpoint: jsonb("last_checkpoint"),
+});
+
+export const insertSyncStateSchema = createInsertSchema(syncState).omit({
+  id: true,
+});
+
+export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
+export type SyncState = typeof syncState.$inferSelect;
+
+// Add Order Summary type for dashboard
+export interface OrderSummary {
+  totalOrders: number;
+  totalRevenue: number;
+  averageOrderValue: number;
+  itemsSold: number;
+  topSellingItems: Array<{
+    name: string;
+    quantity: number;
+    revenue: number;
+  }>;
+  discountTotal: number;
+  taxTotal: number;
+}
+
 export interface DailySummary {
   totalRevenue: number;
   revenueChange: number;
@@ -143,41 +289,3 @@ export interface DetailedTransactionBreakdown {
   discountsAndComps: number;
   giftCardSales: number;
 }
-
-// Keep the users table for authentication
-export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-});
-
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
-});
-
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
-
-// Sync state table to track Square data synchronization progress
-export const syncState = pgTable("sync_state", {
-  id: serial("id").primaryKey(),
-  syncType: text("sync_type").notNull(), // 'payments', 'giftCards', etc.
-  lastSyncedAt: timestamp("last_synced_at").notNull(),
-  currentPage: integer("current_page").default(1),
-  totalPages: integer("total_pages").default(0),
-  processedCount: integer("processed_count").default(0),
-  totalCount: integer("total_count").default(0),
-  cursor: text("cursor").default(""),
-  isComplete: boolean("is_complete").default(false),
-  status: text("status").default("pending"),
-  errorMessage: text("error_message"),
-  lastCheckpoint: jsonb("last_checkpoint"),
-});
-
-export const insertSyncStateSchema = createInsertSchema(syncState).omit({
-  id: true,
-});
-
-export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
-export type SyncState = typeof syncState.$inferSelect;
