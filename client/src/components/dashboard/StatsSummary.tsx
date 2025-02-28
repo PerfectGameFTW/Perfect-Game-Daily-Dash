@@ -83,21 +83,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
       {/* Metric Items */}
       <div className="space-y-5">
-        {/* Gift Card Sales - Prominently displayed at the top */}
-        {!isDetailedLoading && detailedTransactions && (
-          <div className="flex justify-between py-3 border-b border-zinc-800 bg-zinc-800/50 rounded-lg px-4">
-            <div className="flex flex-col">
-              <span className="text-white font-medium">Gift Card Sales</span>
-              <span className="text-sm text-zinc-400">Today's total</span>
-            </div>
-            <div className="text-right">
-              <span className="text-white text-lg font-semibold">
-                {formatCurrency(detailedTransactions.giftCardSales || 0)}
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* Gross Sales Item */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Gross sales</span>
@@ -142,48 +127,53 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           </div>
         </div>
 
+        {/* Gift Card Sales */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Gift Card Sales</span>
+          <span className="text-white">{formatCurrency(detailedTransactions?.giftCardSales || 0)}</span>
+        </div>
+
         {/* Partywirks */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Partywirks</span>
-          <span className="text-white">{formatCurrency(detailedTransactions.partywirks || 0)}</span>
+          <span className="text-white">{formatCurrency(detailedTransactions?.partywirks || 0)}</span>
         </div>
 
         {/* Tripleseat */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Tripleseat</span>
-          <span className="text-white">{formatCurrency(detailedTransactions.tripleseat || 0)}</span>
+          <span className="text-white">{formatCurrency(detailedTransactions?.tripleseat || 0)}</span>
         </div>
 
         {/* Tips */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Tips</span>
-          <span className="text-white">{formatCurrency(detailedTransactions.tips || 0)}</span>
+          <span className="text-white">{formatCurrency(detailedTransactions?.tips || 0)}</span>
         </div>
 
         {/* Service Charges */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Service Charges</span>
-          <span className="text-white">{formatCurrency(detailedTransactions.serviceCharges || 0)}</span>
+          <span className="text-white">{formatCurrency(detailedTransactions?.serviceCharges || 0)}</span>
         </div>
 
         {/* Taxes */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Taxes</span>
-          <span className="text-white">{formatCurrency(detailedTransactions.taxes || 0)}</span>
+          <span className="text-white">{formatCurrency(detailedTransactions?.taxes || 0)}</span>
         </div>
 
         {/* Refunds */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Refunds</span>
-          <span className="text-white">{formatCurrency(detailedTransactions.refunds || 0)}</span>
+          <span className="text-white">{formatCurrency(detailedTransactions?.refunds || 0)}</span>
         </div>
 
         {/* Discounts & Comps */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Discounts & Comps</span>
-          <span className="text-white">{formatCurrency(detailedTransactions.discountsAndComps || 0)}</span>
+          <span className="text-white">{formatCurrency(detailedTransactions?.discountsAndComps || 0)}</span>
         </div>
-
 
         {/* Net Sales Item */}
         <div className="flex justify-between py-3 border-b border-zinc-800">

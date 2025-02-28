@@ -377,7 +377,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate, 'completed');
       
       // Calculate transaction breakdowns
-      // In a real implementation, we would have more accurate detection
       const detailedBreakdown = {
         partywirks: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' && 
           'note' in t.squareData && typeof t.squareData.note === 'string' && 
@@ -405,8 +404,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
           'note' in t.squareData && typeof t.squareData.note === 'string' && 
           (t.squareData.note.toLowerCase().includes('discount') || t.squareData.note.toLowerCase().includes('comp')))
           .reduce((sum, t) => sum + t.amount, 0),
-        giftCardSales: allTransactions.filter(t => t.categoryId === 'giftCard')
-          .reduce((sum, t) => sum + t.amount, 0)
+        // Enhanced gift card detection logic
+        giftCardSales: allTransactions.filter(t => {
+          if (!t.squareData || typeof t.squareData !== 'object') return false;
+
+          // Check if it's explicitly marked as a gift card transaction
+          if (t.categoryId === 'giftCard') return true;
+
+          // Check transaction notes for gift card mentions
+          if ('note' in t.squareData && typeof t.squareData.note === 'string' && 
+              t.squareData.note.toLowerCase().includes('gift card')) return true;
+
+          // Check order data for gift card items
+          if ('orderData' in t.squareData && t.squareData.orderData) {
+            const order = t.squareData.orderData;
+            if (order.lineItems) {
+              return order.lineItems.some((item: any) => 
+                item.itemType === 'GIFT_CARD' || 
+                (item.name && item.name.toLowerCase().includes('gift card'))
+              );
+            }
+          }
+
+          return false;
+        }).reduce((sum, t) => sum + t.amount, 0)
       };
       
       res.json(detailedBreakdown);
@@ -1081,10 +1102,10 @@ const hasSyncTimedOut = (): boolean => {
   
   // The separate Feb 25 endpoint has been consolidated into the main sync endpoint
   // All data is now handled through a single, unified sync process
-
+  
   // Status endpoint for sync progress has been removed as the UI does not need it
   // Database-backed checkpoint system continues to track sync state internally
-
+  
   // Mount the API router
   app.use("/api", apiRouter);
 
