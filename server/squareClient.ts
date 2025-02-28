@@ -2,8 +2,10 @@ import { Client, Environment } from 'square';
 import { 
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
-  Category, TransactionStatus
+  Category, TransactionStatus,
+  SyncState, InsertSyncState
 } from '@shared/schema';
+import { pgStorage } from './pgStorage';
 import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import dotenv from 'dotenv';
 
@@ -134,113 +136,126 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
   }
 }
 
-// Fetch payments from Square API
+// Enhanced fetchPayments with sync state tracking
 export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]> {
   try {
     const now = new Date();
-    const start = startDate || new Date(now.setDate(now.getDate() - 30)); // Default to last 30 days
+    const start = startDate || new Date(now.setDate(now.getDate() - 30));
     const end = endDate || new Date();
-    
+
     // Format dates for Square API
     const beginTime = start.toISOString();
     const endTime = end.toISOString();
-    
-    console.log(`Fetching payments from ${beginTime} to ${endTime}`);
-    
-    // Implement pagination to get ALL payments
+
+    // Create or update sync state
+    let syncState = await pgStorage.getSyncState('payments');
+    if (!syncState) {
+      syncState = await pgStorage.createSyncState({
+        syncType: 'payments',
+        lastSyncedAt: new Date(),
+        currentPage: 1,
+        totalPages: 0,
+        processedCount: 0,
+        totalCount: 0,
+        cursor: '',
+        isComplete: false,
+        status: 'pending',
+        errorMessage: null,
+        lastCheckpoint: null
+      });
+    }
+
+    console.log(`Starting payments sync from ${beginTime} to ${endTime}`);
+
     let allPayments: any[] = [];
-    let cursor: string | undefined = undefined;
+    let cursor: string | undefined = syncState.cursor || undefined;
     let hasMorePages = true;
-    let pageCount = 0;
-    
-    // Loop until we've fetched all pages
+    let pageCount = syncState.currentPage;
+
     while (hasMorePages) {
       pageCount++;
       console.log(`Fetching payments page ${pageCount}${cursor ? ' with cursor' : ''}`);
-      
-      // Use date range with listPayments - Square API v29 requires specific parameters
-      // For Square API v29, the parameters are in this exact order:
-      // beginTime, endTime, sortOrder, cursor, locationId, total, last4, cardBrand, limit
+
       try {
         const response = await squareClient.paymentsApi.listPayments(
-          beginTime,          // beginTime - string
-          endTime,            // endTime - string
-          'DESC',             // sortOrder - string, must be 'ASC' or 'DESC'
-          cursor,             // cursor - string
-          process.env.SQUARE_LOCATION_ID, // locationId - optional string
-          undefined,          // total - bigint
-          undefined,          // last4 - string
-          undefined,          // cardBrand - string
-          100                 // limit - number
+          beginTime,
+          endTime,
+          'DESC',
+          cursor,
+          process.env.SQUARE_LOCATION_ID,
+          undefined,
+          undefined,
+          undefined,
+          100
         );
-        
-        // Extract payments from the response
+
         const payments = response.result.payments || [];
         allPayments = [...allPayments, ...payments];
-        
-        // Check if there are more pages
+
+        // Update sync state
+        await pgStorage.updateSyncState(syncState.id, {
+          currentPage: pageCount,
+          processedCount: allPayments.length,
+          cursor: response.result.cursor || '',
+          lastSyncedAt: new Date(),
+          lastCheckpoint: {
+            lastProcessedId: payments[payments.length - 1]?.id,
+            timestamp: new Date().toISOString()
+          }
+        });
+
         cursor = response.result.cursor;
         hasMorePages = !!cursor;
-        
-        console.log(`Fetched ${payments.length} payments on page ${pageCount}. Total so far: ${allPayments.length}`);
-        
-        // Add a small delay to avoid rate limiting
+
         if (hasMorePages) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       } catch (error) {
         console.error('Error fetching payments page:', error);
-        // If we get an error, break the loop but return what we have so far
+
+        // Update sync state with error
+        await pgStorage.updateSyncState(syncState.id, {
+          status: 'error',
+          errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
+          lastSyncedAt: new Date()
+        });
+
         hasMorePages = false;
       }
     }
-    
-    console.log(`Completed fetching ${allPayments.length} total payments from Square for date range ${beginTime} to ${endTime}`);
-    
-    // Important: Now fetch corresponding orders and merge order data with payments
-    // This is a crucial step to properly identify gift card purchases using item_type=GIFT_CARD 
+
+    // Mark sync as complete
+    await pgStorage.updateSyncState(syncState.id, {
+      isComplete: true,
+      status: 'completed',
+      lastSyncedAt: new Date(),
+      totalCount: allPayments.length
+    });
+
+    console.log(`Completed fetching ${allPayments.length} total payments`);
+
     const orders = await fetchOrders(startDate, endDate);
-    console.log(`Fetched ${orders.length} orders from Square for date range: ${start.toLocaleString()} to ${end.toLocaleString()}`);
-    
-    // Create a map of orders by ID for quick lookup
+    console.log(`Fetched ${orders.length} orders from Square`);
+
     const orderMap = new Map();
     orders.forEach(order => {
       orderMap.set(order.id, order);
     });
-    
-    // Link payments with their corresponding orders
+
     let paymentsWithOrders = 0;
     allPayments.forEach(payment => {
       if (payment.orderId && orderMap.has(payment.orderId)) {
-        // Attach order data to the payment
         payment.orderData = orderMap.get(payment.orderId);
         paymentsWithOrders++;
-        
-        // Special handling for orders with gift card line items
-        const order = payment.orderData;
-        if (order.lineItems) {
-          const giftCardItems = order.lineItems.filter((item: any) => 
-            item.itemType === 'GIFT_CARD' || 
-            (item.name && item.name.toLowerCase().includes('gift card'))
-          );
-          
-          if (giftCardItems.length > 0) {
-            console.log(`🎯 Found gift card items in order ${order.id} linked to payment ${payment.id}`);
-          }
-        }
       }
     });
-    
+
     console.log(`Successfully linked ${paymentsWithOrders} payments with their orders`);
-    
+
     return allPayments;
   } catch (error) {
     console.error('Error fetching payments from Square:', error);
-    // Log the detailed error if it's an object
-    if (error && typeof error === 'object') {
-      console.error('Detailed error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    }
-    return [];
+    throw error;
   }
 }
 
