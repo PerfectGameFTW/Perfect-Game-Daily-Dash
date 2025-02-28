@@ -1,10 +1,11 @@
 // Add BigInt serialization override at the top
 if (typeof BigInt.prototype.toJSON !== 'function') {
-  BigInt.prototype.toJSON = function() {
-    return this.toString();
-  };
+ BigInt.prototype.toJSON = function() {
+   return this.toString();
+ };
 }
 
+import { pgStorage } from './pgStorage';
 import { Client, Environment } from 'square';
 import {
   Transaction, InsertTransaction,
@@ -13,7 +14,7 @@ import {
 } from '@shared/schema';
 import { toZonedTime } from 'date-fns-tz';
 import dotenv from 'dotenv';
-import { db } from './db'; // Import db directly instead of pgStorage
+//import { db } from './db'; // Import db directly instead of pgStorage
 import { eq } from 'drizzle-orm';
 import { orders } from '@shared/schema'; // Update this import too
 
@@ -23,25 +24,25 @@ const EASTERN_TIMEZONE = 'America/New_York';
 
 // Helper function for safe data processing
 function processSafeSquareData(data: any): any {
-  try {
-    // First convert BigInts to strings
-    const stringified = JSON.stringify(data, (key, value) => {
-      if (typeof value === 'bigint') {
-        return value.toString();
-      }
-      return value;
-    });
+ try {
+   // First convert BigInts to strings
+   const stringified = JSON.stringify(data, (key, value) => {
+     if (typeof value === 'bigint') {
+       return value.toString();
+     }
+     return value;
+   });
 
-    // Then parse back to ensure we have a clean object
-    return JSON.parse(stringified);
-  } catch (error) {
-    console.error('Error processing Square data:', error);
-    // Return a safe version of the data
-    return {
-      id: data.id || 'unknown',
-      error: 'Failed to process data'
-    };
-  }
+   // Then parse back to ensure we have a clean object
+   return JSON.parse(stringified);
+ } catch (error) {
+   console.error('Error processing Square data:', error);
+   // Return a safe version of the data
+   return {
+     id: data.id || 'unknown',
+     error: 'Failed to process data'
+   };
+ }
 }
 
 dotenv.config();
@@ -225,11 +226,10 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     const beginTime = start.toISOString();
     const endTime = end.toISOString();
 
-    // Create or update sync state
-    let syncStateDb = await db.getSyncState('payments');
-    let syncState: syncState;
-    if (!syncStateDb) {
-      syncState = await db.createSyncState({
+    // Create or get sync state
+    let syncState = await pgStorage.getSyncState('payments');
+    if (!syncState) {
+      syncState = await pgStorage.createSyncState({
         syncType: 'payments',
         lastSyncedAt: new Date(),
         currentPage: 1,
@@ -242,8 +242,6 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
         errorMessage: null,
         lastCheckpoint: null
       });
-    } else {
-      syncState = syncStateDb;
     }
 
     console.log(`Starting payments sync from ${beginTime} to ${endTime}`);
@@ -298,7 +296,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
         allPayments = [...allPayments, ...payments];
 
         // Update sync state
-        await db.updateSyncState(syncState.id, {
+        await pgStorage.updateSyncState(syncState.id, {
           currentPage: pageCount,
           processedCount: allPayments.length,
           cursor: response.result.cursor || '',
@@ -319,7 +317,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
         console.error('Error fetching payments page:', error);
 
         // Update sync state with error
-        await db.updateSyncState(syncState.id, {
+        await pgStorage.updateSyncState(syncState.id, {
           status: 'error',
           errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
           lastSyncedAt: new Date()
@@ -330,7 +328,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     }
 
     // Mark sync as complete
-    await db.updateSyncState(syncState.id, {
+    await pgStorage.updateSyncState(syncState.id, {
       isComplete: true,
       status: 'completed',
       lastSyncedAt: new Date(),
