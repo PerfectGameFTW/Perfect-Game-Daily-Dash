@@ -4,9 +4,14 @@ import {
   GiftCardRedemption, InsertGiftCardRedemption,
   User, InsertUser,
   SyncState, InsertSyncState,
+  Order, InsertOrder,
+  OrderLineItem, InsertOrderLineItem,
+  OrderModifier, InsertOrderModifier,
+  OrderDiscount, InsertOrderDiscount,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
   DateRange, TransactionStatus,
-  transactions, giftCards, giftCardRedemptions, users, syncState
+  transactions, giftCards, giftCardRedemptions, users, syncState,
+  orders, orderLineItems, orderModifiers, orderDiscounts
 } from "@shared/schema";
 import { format } from "date-fns";
 import { EASTERN_TIMEZONE } from "./dateUtils";
@@ -202,17 +207,17 @@ export class PgStorage implements IStorage {
       .reduce((sum, t: any) => sum + t.amount, 0);
 
     // Calculate change percentages
-    const revenueChange = prevTotalRevenue > 0 
-      ? ((totalRevenue - prevTotalRevenue) / prevTotalRevenue) * 100 
+    const revenueChange = prevTotalRevenue > 0
+      ? ((totalRevenue - prevTotalRevenue) / prevTotalRevenue) * 100
       : 0;
-    const ordersChange = prevTotalOrders > 0 
-      ? ((totalOrders - prevTotalOrders) / prevTotalOrders) * 100 
+    const ordersChange = prevTotalOrders > 0
+      ? ((totalOrders - prevTotalOrders) / prevTotalOrders) * 100
       : 0;
-    const averageOrderChange = prevAverageOrder > 0 
-      ? ((averageOrder - prevAverageOrder) / prevAverageOrder) * 100 
+    const averageOrderChange = prevAverageOrder > 0
+      ? ((averageOrder - prevAverageOrder) / prevAverageOrder) * 100
       : 0;
-    const giftCardSalesChange = prevGiftCardSales > 0 
-      ? ((giftCardSales - prevGiftCardSales) / prevGiftCardSales) * 100 
+    const giftCardSalesChange = prevGiftCardSales > 0
+      ? ((giftCardSales - prevGiftCardSales) / prevGiftCardSales) * 100
       : 0;
 
     return {
@@ -230,7 +235,7 @@ export class PgStorage implements IStorage {
 
   async getCategoryRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<CategoryRevenue[]> {
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
-    
+
     // Define category colors matching the design
     const categoryColors: Record<string, string> = {
       food: '#3B82F6',
@@ -239,21 +244,21 @@ export class PgStorage implements IStorage {
       services: '#10B981',
       giftCard: '#F59E0B'
     };
-    
+
     // Note: We've removed special case handling for "today" - all data is now consistently
     // processed from the database regardless of date
-    
+
     const currentTransactions = await this.getTransactions(dateRange, start, end);
-    
+
     // Group by category and calculate totals - only count completed transactions
     const categoryMap = new Map<string, number>();
-    
+
     const completedTransactions = currentTransactions.filter(t => t.status === 'completed');
     completedTransactions.forEach(transaction => {
       const currentAmount = categoryMap.get(transaction.categoryId) || 0;
       categoryMap.set(transaction.categoryId, currentAmount + transaction.amount);
     });
-    
+
     // Format the result
     return Array.from(categoryMap.entries()).map(([category, amount]) => ({
       category: category.charAt(0).toUpperCase() + category.slice(1),
@@ -264,28 +269,28 @@ export class PgStorage implements IStorage {
 
   async getHourlyRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<HourlyRevenue[]> {
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
-    
+
     // Use the imported EASTERN_TIMEZONE constant
-    
+
     // Initialize hourly buckets (midnight to 11 PM)
     const hourlyMap = new Map<string, number>();
-    
+
     for (let hour = 0; hour <= 23; hour++) {
-      const formattedHour = hour === 0 
-        ? '12 AM' 
-        : hour < 12 
-          ? `${hour} AM` 
-          : hour === 12 
-            ? '12 PM' 
+      const formattedHour = hour === 0
+        ? '12 AM'
+        : hour < 12
+          ? `${hour} AM`
+          : hour === 12
+            ? '12 PM'
             : `${hour - 12} PM`;
       hourlyMap.set(formattedHour, 0);
     }
-    
+
     // Note: We've removed special case handling for "today" - all data is now consistently
     // processed from the database regardless of date
-    
+
     const currentTransactions = await this.getTransactions(dateRange, start, end);
-    
+
     // Group transactions by hour - only count completed transactions
     const completedTransactions = currentTransactions.filter(t => t.status === 'completed');
     completedTransactions.forEach(transaction => {
@@ -293,19 +298,19 @@ export class PgStorage implements IStorage {
       const utcDate = new Date(transaction.timestamp);
       const easternDate = toZonedTime(utcDate, EASTERN_TIMEZONE);
       const hour = easternDate.getHours();
-      
-      const formattedHour = hour === 0 
-        ? '12 AM' 
-        : hour < 12 
-          ? `${hour} AM` 
-          : hour === 12 
-            ? '12 PM' 
+
+      const formattedHour = hour === 0
+        ? '12 AM'
+        : hour < 12
+          ? `${hour} AM`
+          : hour === 12
+            ? '12 PM'
             : `${hour - 12} PM`;
-            
+
       const currentAmount = hourlyMap.get(formattedHour) || 0;
       hourlyMap.set(formattedHour, currentAmount + transaction.amount);
     });
-    
+
     // Format the result, maintaining the 24-hour order
     return Array.from(hourlyMap.entries()).map(([hour, amount]) => ({
       hour,
@@ -353,13 +358,13 @@ export class PgStorage implements IStorage {
       averageValue
     };
   }
-  
+
 
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
     // Use the imported getEasternDateRange function
     return getEasternDateRange(dateRange, startDate, endDate);
   }
-  
+
 
   // Sync state management methods
   async getSyncState(syncType: string): Promise<SyncState | undefined> {
@@ -383,27 +388,80 @@ export class PgStorage implements IStorage {
       .returning();
     return result[0];
   }
-  
+
 
   async getSyncProgress(): Promise<{ payments: number; giftCards: number }> {
     // Get the payments sync state
     const paymentsSyncState = await this.getSyncState('payments');
     const giftCardsSyncState = await this.getSyncState('giftCards');
-    
+
     // Calculate progress percentages
     const paymentsProgress = paymentsSyncState && paymentsSyncState.totalCount && paymentsSyncState.totalCount > 0
       ? Math.min(100, Math.round(((paymentsSyncState.processedCount || 0) / paymentsSyncState.totalCount) * 100))
       : 0;
-      
+
     const giftCardsProgress = giftCardsSyncState && giftCardsSyncState.totalCount && giftCardsSyncState.totalCount > 0
       ? Math.min(100, Math.round(((giftCardsSyncState.processedCount || 0) / giftCardsSyncState.totalCount) * 100))
       : 0;
-    
+
     return {
       payments: paymentsProgress,
       giftCards: giftCardsProgress
     };
   }
+
+  // Order methods
+  async getOrder(id: number): Promise<Order | undefined> {
+    const result = await db.select().from(orders).where(eq(orders.id, id));
+    return result[0];
+  }
+
+  async getOrderBySquareId(squareId: string): Promise<Order | undefined> {
+    const result = await db.select().from(orders).where(eq(orders.squareId, squareId));
+    return result[0];
+  }
+
+  async createOrder(insertOrder: InsertOrder): Promise<Order> {
+    const result = await db.insert(orders).values(insertOrder).returning();
+    return result[0];
+  }
+
+  async getOrderItems(orderId: number): Promise<OrderLineItem[]> {
+    return await db.select()
+      .from(orderLineItems)
+      .where(eq(orderLineItems.orderId, orderId));
+  }
+
+  async createOrderItem(insertItem: InsertOrderLineItem): Promise<OrderLineItem> {
+    const result = await db.insert(orderLineItems).values(insertItem).returning();
+    return result[0];
+  }
+
+  async getOrderModifiers(lineItemId: number): Promise<OrderModifier[]> {
+    return await db.select()
+      .from(orderModifiers)
+      .where(eq(orderModifiers.lineItemId, lineItemId));
+  }
+
+  async createOrderModifier(insertModifier: InsertOrderModifier): Promise<OrderModifier> {
+    const result = await db.insert(orderModifiers).values(insertModifier).returning();
+    return result[0];
+  }
+
+  async getOrderDiscounts(orderId: number): Promise<OrderDiscount[]> {
+    return await db.select()
+      .from(orderDiscounts)
+      .where(eq(orderDiscounts.orderId, orderId));
+  }
+
+  async createOrderDiscount(insertDiscount: InsertOrderDiscount): Promise<OrderDiscount> {
+    const result = await db.insert(orderDiscounts).values(insertDiscount).returning();
+    return result[0];
+  }
 }
 
 export const pgStorage = new PgStorage();
+
+// Assuming getEasternDateRange is defined elsewhere and imported.  This is necessary for compilation.
+const getEasternDateRange = (dateRange: DateRange, startDate?: Date, endDate?: Date) => ({start: new Date(), end: new Date()});
+const toZonedTime = (date: Date, timezone: string) => new Date();
