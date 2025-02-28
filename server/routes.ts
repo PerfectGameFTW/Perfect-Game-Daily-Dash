@@ -980,6 +980,11 @@ const hasSyncTimedOut = (): boolean => {
       const giftCards = await squareClient.fetchGiftCards();
       console.log(`Fetched ${giftCards.length} total gift cards`);
       
+      // Debugging: Log the first gift card structure
+      if (giftCards.length > 0) {
+        console.log("SAMPLE GIFT CARD DATA STRUCTURE:", JSON.stringify(giftCards[0], null, 2));
+      }
+      
       // Update sync state with total gift card count
       giftCardsSyncState = await pgStorage.updateSyncState(giftCardsSyncState.id, {
         totalCount: giftCards.length,
@@ -989,6 +994,8 @@ const hasSyncTimedOut = (): boolean => {
       // Process each gift card with error handling
       let giftCardPosition = giftCardsCheckpoint?.lastPosition || 0;
       let giftCardErrorCount = 0;
+      let nonZeroAmountCards = 0;
+      let zeroAmountCards = 0;
       
       for (let i = giftCardPosition; i < giftCards.length; i++) {
         try {
@@ -1012,8 +1019,36 @@ const hasSyncTimedOut = (): boolean => {
           if (!existing) {
             // Convert to our model and save
             const card = squareClient.convertSquareGiftCardToGiftCard(giftCard);
+            
+            // Track count of zero vs non-zero amount cards
+            if (card.amount > 0) {
+              nonZeroAmountCards++;
+            } else {
+              zeroAmountCards++;
+              console.log(`WARNING: Gift card ${giftCard.id} has zero amount`);
+            }
+            
             await pgStorage.createGiftCard(card);
             results.giftCards++;
+            
+            // Log every successful gift card insert
+            console.log(`Successfully added gift card ${giftCard.id} with amount $${card.amount.toFixed(2)}`);
+          } else if (existing.amount === 0) {
+            // Try to update gift cards with zero amounts
+            console.log(`Found existing gift card ${giftCard.id} with zero amount, attempting to update...`);
+            const updatedCard = squareClient.convertSquareGiftCardToGiftCard(giftCard);
+            
+            if (updatedCard.amount > 0) {
+              // Update the card with the new amount
+              await db.update(giftCards)
+                .set({ amount: updatedCard.amount, squareData: updatedCard.squareData })
+                .where(eq(giftCards.squareId, giftCard.id));
+              
+              console.log(`UPDATED gift card ${giftCard.id} amount from $0 to $${updatedCard.amount.toFixed(2)}`);
+              nonZeroAmountCards++;
+            } else {
+              zeroAmountCards++;
+            }
           }
         } catch (giftCardError) {
           // Log the error but continue processing
@@ -1036,6 +1071,7 @@ const hasSyncTimedOut = (): boolean => {
       }
       
       console.log(`Gift card sync complete: processed ${giftCardPosition} cards, encountered ${giftCardErrorCount} errors, added ${results.giftCards} new gift cards`);
+      console.log(`Gift card amount summary: ${nonZeroAmountCards} cards with amounts > 0, ${zeroAmountCards} cards with zero amounts`);
       
       // Mark gift cards sync as complete
       await pgStorage.updateSyncState(giftCardsSyncState.id, {

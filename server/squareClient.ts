@@ -515,16 +515,68 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     });
   }
   
-  // Handle amount safely for potential BigInt values
+  // ENHANCED: Handle amount extraction from multiple possible sources in the Square API response
   let amount = 0;
+  
+  // Log the gift card structure to help debug
+  console.log(`Processing gift card ${giftCard.id} - Available amount fields:`, {
+    hasBalanceMoney: !!giftCard.balance_money,
+    hasGanBalanceMoney: !!(giftCard.gan_data && giftCard.gan_data.balance_money),
+    hasValue: !!(giftCard.gan_source && giftCard.gan_source.money),
+    hasAmount: !!(giftCard.amount_money)
+  });
+  
+  // Try multiple possible locations for the gift card amount
   if (giftCard.balance_money && giftCard.balance_money.amount !== undefined) {
-    // Check if it's a BigInt and convert appropriately
+    // Primary location - balance_money.amount
     if (typeof giftCard.balance_money.amount === 'bigint') {
       amount = Number(giftCard.balance_money.amount) / 100;
     } else {
-      // Regular number conversion
       amount = (Number(giftCard.balance_money.amount) || 0) / 100;
     }
+    console.log(`Gift card ${giftCard.id} - Found amount in balance_money: $${amount}`);
+  } else if (giftCard.gan_data && giftCard.gan_data.balance_money && giftCard.gan_data.balance_money.amount !== undefined) {
+    // Alternative location - gan_data.balance_money.amount
+    if (typeof giftCard.gan_data.balance_money.amount === 'bigint') {
+      amount = Number(giftCard.gan_data.balance_money.amount) / 100;
+    } else {
+      amount = (Number(giftCard.gan_data.balance_money.amount) || 0) / 100;
+    }
+    console.log(`Gift card ${giftCard.id} - Found amount in gan_data.balance_money: $${amount}`);
+  } else if (giftCard.gan_source && giftCard.gan_source.money && giftCard.gan_source.money.amount !== undefined) {
+    // Alternative location - gan_source.money.amount
+    if (typeof giftCard.gan_source.money.amount === 'bigint') {
+      amount = Number(giftCard.gan_source.money.amount) / 100;
+    } else {
+      amount = (Number(giftCard.gan_source.money.amount) || 0) / 100;
+    }
+    console.log(`Gift card ${giftCard.id} - Found amount in gan_source.money: $${amount}`);
+  } else if (giftCard.amount_money && giftCard.amount_money.amount !== undefined) {
+    // Alternative location - amount_money.amount
+    if (typeof giftCard.amount_money.amount === 'bigint') {
+      amount = Number(giftCard.amount_money.amount) / 100;
+    } else {
+      amount = (Number(giftCard.amount_money.amount) || 0) / 100;
+    }
+    console.log(`Gift card ${giftCard.id} - Found amount in amount_money: $${amount}`);
+  } else {
+    // As a fallback, let's check if there's a gift card amount in the raw squareData
+    try {
+      // Look for any key that might contain balance or amount
+      const rawData = JSON.stringify(giftCard);
+      const amountMatch = rawData.match(/"amount":(\d+)/);
+      if (amountMatch && amountMatch[1]) {
+        amount = Number(amountMatch[1]) / 100;
+        console.log(`Gift card ${giftCard.id} - Found amount using regex fallback: $${amount}`);
+      }
+    } catch (error) {
+      console.error(`Error trying to extract gift card amount via regex:`, error);
+    }
+  }
+  
+  // If we still couldn't find an amount, log this for debugging
+  if (amount === 0) {
+    console.warn(`WARNING: Could not find amount for gift card ${giftCard.id} - saving as zero value`);
   }
   
   const card: InsertGiftCard = {
