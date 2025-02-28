@@ -38,7 +38,7 @@ function mapSquareStatus(status: string): TransactionStatus {
 // Map Square category to our Category
 function mapSquareCategory(itemName: string): Category {
   const lowerItemName = itemName.toLowerCase();
-  
+
   if (lowerItemName.includes('food') || lowerItemName.includes('meal') || lowerItemName.includes('burger')) {
     return 'food';
   } else if (lowerItemName.includes('drink') || lowerItemName.includes('soda') || lowerItemName.includes('beverage')) {
@@ -58,13 +58,13 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     const now = new Date();
     const start = startDate || new Date(now.setDate(now.getDate() - 30)); // Default to last 30 days
     const end = endDate || new Date();
-    
+
     // Format dates for Square API
     const startTime = start.toISOString();
     const endTime = end.toISOString();
-    
+
     console.log(`Fetching orders from ${startTime} to ${endTime}`);
-    
+
     // Create search request body for v29.0.0
     const searchRequest = {
       locationIds: [process.env.SQUARE_LOCATION_ID!],
@@ -89,18 +89,18 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
       returnEntries: true,
       limit: 500 // Increased to get more results on a single request
     };
-    
+
     // Make API request to Square Orders API
     const response = await squareClient.ordersApi.searchOrders(searchRequest);
-    
+
     // Extract orders from the SearchOrdersResponse
     const orders = response.result.orders || [];
     console.log(`Fetched ${orders.length} orders from Square API between ${startTime} and ${endTime}`);
-    
+
     // Look for gift card items
     let giftCardOrders = 0;
     let giftCardAmount = 0;
-    
+
     for (const order of orders) {
       if (order.lineItems) {
         for (const item of order.lineItems) {
@@ -115,17 +115,17 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
               ? Number(item.basePriceMoney.amount) / 100 
               : 0;
             giftCardAmount += itemAmount;
-            
+
             console.log(`Found gift card item! Order ID: ${order.id}, Item: ${item.name}, Amount: $${itemAmount}`);
           }
         }
       }
     }
-    
+
     if (giftCardAmount > 0) {
       console.log(`GIFT CARD SUMMARY: Found ${giftCardOrders} gift card orders totaling $${giftCardAmount.toFixed(2)}`);
     }
-    
+
     return orders;
   } catch (error) {
     console.error('Error fetching orders from Square:', error);
@@ -264,7 +264,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   // Extract the amount
   const amountMoney = payment.amountMoney;
   let amount = 0;
-  
+
   // Handle BigInt conversion safely
   if (amountMoney && amountMoney.amount !== undefined) {
     // Check if it's a BigInt and convert appropriately
@@ -275,31 +275,31 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
       amount = (Number(amountMoney.amount) || 0) / 100;
     }
   }
-  
+
   // Determine category based on payment information
   let category: Category = 'retail'; // Default
-  
+
   // Log detailed payment data for troubleshooting
   if (payment.id && payment.orderId) {
     console.log(`Payment ${payment.id} linked to order ${payment.orderId}`);
   }
-  
+
   // IMPORTANT: We need to handle gift card purchases differently than gift card payments
   // Gift card PURCHASES - When a customer BUYS a gift card (this should be categorized as a gift card sale)
   // Gift card PAYMENTS - When a customer PAYS USING a gift card (this should NOT be categorized as gift card)
-  
+
   // ENHANCED GIFT CARD DETECTION LOGIC
-  
+
   // First check if this is a payment USING a gift card (not a gift card purchase)
   const paidWithGiftCard = 
     (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
     (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD');
-  
+
   if (paidWithGiftCard) {
     // This is someone paying WITH a gift card, NOT a gift card sale
     // We should categorize based on what they bought, not as a gift card
     console.log(`Payment USING gift card detected: ${payment.id}, amount: $${amount}`);
-    
+
     // Try to determine category from order name or note
     if (payment.orderId && payment.orderName) {
       category = mapSquareCategory(payment.orderName);
@@ -310,7 +310,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   // If it's not paid with a gift card, check if it's a gift card PURCHASE
   else {
     let isGiftCardPurchase = false;
-    
+
     // DIRECT ORDERS API APPROACH - Check for item_type = GIFT_CARD in order line items
     if (payment.orderId && payment.orderData) {
       try {
@@ -318,24 +318,24 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
         const orderData = typeof payment.orderData === 'string' 
           ? JSON.parse(payment.orderData) 
           : payment.orderData;
-        
+
         // Check for line items with GIFT_CARD type - this is the most reliable method
         if (orderData.lineItems && Array.isArray(orderData.lineItems)) {
           const giftCardItems = orderData.lineItems.filter((item: any) => 
             item.itemType === 'GIFT_CARD' || 
             (item.name && item.name.toLowerCase().includes('gift card'))
           );
-          
+
           if (giftCardItems.length > 0) {
             isGiftCardPurchase = true;
             console.log(`✅ Found gift card purchase in order ${payment.orderId} via line items`);
-            
+
             // Log detailed info about the gift card items
             giftCardItems.forEach((item: any, index: number) => {
               const itemAmount = item.basePriceMoney 
                 ? Number(item.basePriceMoney.amount) / 100 
                 : 0;
-              
+
               console.log(`  Gift Card Item #${index + 1}:`);
               console.log(`  - Name: ${item.name || 'N/A'}`);
               console.log(`  - Item Type: ${item.itemType || 'N/A'}`);
@@ -348,12 +348,12 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
         console.warn(`Error checking order data for gift cards in payment ${payment.id}:`, error);
       }
     }
-    
+
     // BACKUP PAYMENT-ONLY DETECTION - Used if order data isn't available
     if (!isGiftCardPurchase) {
       const orderName = (payment.orderName || '').toLowerCase();
       const note = (payment.note || '').toLowerCase();
-      
+
       // Check for gift card indicators in various fields
       isGiftCardPurchase = 
         orderName.includes('gift card') ||
@@ -364,17 +364,17 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
             (item.itemType && item.itemType === 'GIFT_CARD')
           )
         );
-      
+
       if (isGiftCardPurchase) {
         console.log(`✅ Found gift card purchase in payment ${payment.id} via text search`);
       }
     }
-    
+
     // Generalized logging for all gift card purchases regardless of date
     if (isGiftCardPurchase && process.env.DEBUG_GIFT_CARDS) {
       console.log(`📊 Gift card purchase detected in payment ${payment.id} - Amount: $${amount}`);
     }
-    
+
     // SET CATEGORY based on our detection logic
     if (isGiftCardPurchase) {
       category = 'giftCard';
@@ -387,13 +387,13 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
       category = mapSquareCategory(payment.note);
     }
   }
-  
+
   // Parse and convert the timestamp from UTC to Eastern Time for proper business day alignment
   let timestamp: Date;
   try {
     // Parse the Square API timestamp string as UTC (Square provides timestamps in UTC)
     const utcTimestamp = new Date(payment.createdAt);
-    
+
     // Validate the date
     if (isNaN(utcTimestamp.getTime())) {
       // If invalid, use current date
@@ -404,7 +404,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
       // This preserves the exact same moment in time but represents it in Eastern timezone
       // This ensures that midnight-to-midnight in Eastern time is properly preserved
       timestamp = toZonedTime(utcTimestamp, EASTERN_TIMEZONE);
-      
+
       // Log the timestamp conversion for debugging
       console.log(`Payment ${payment.id} timestamp conversion:`, {
         original: payment.createdAt,
@@ -416,7 +416,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     console.warn(`Error processing timestamp for payment ${payment.id}, using current date instead:`, error);
     timestamp = new Date();
   }
-  
+
   // Convert payment data to handle BigInt values
   let cleanedPaymentData: Record<string, any> = {};
   try {
@@ -443,7 +443,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
       }
     });
   }
-  
+
   // Map to our transaction model
   const transaction: InsertTransaction = {
     squareId: payment.id,
@@ -453,7 +453,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     timestamp,
     squareData: cleanedPaymentData
   };
-  
+
   return transaction;
 }
 
@@ -464,7 +464,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
   try {
     // Parse the Square API timestamp string as UTC (Square provides timestamps in UTC)
     const utcPurchaseDate = new Date(giftCard.created_at);
-    
+
     // Validate the date
     if (isNaN(utcPurchaseDate.getTime())) {
       // If invalid, use current date
@@ -475,7 +475,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
       // This preserves the exact same moment in time but represents it in Eastern timezone
       // This ensures that midnight-to-midnight in Eastern time is properly preserved
       purchaseDate = toZonedTime(utcPurchaseDate, EASTERN_TIMEZONE);
-      
+
       // Log the timestamp conversion for debugging
       console.log(`Gift card ${giftCard.id} purchase date conversion:`, {
         original: giftCard.created_at,
@@ -487,7 +487,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     console.warn(`Error processing purchase date for gift card ${giftCard.id}, using current date instead:`, error);
     purchaseDate = new Date();
   }
-  
+
   // Convert gift card data to handle BigInt values
   let cleanedGiftCardData: Record<string, any> = {};
   try {
@@ -514,71 +514,137 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
       }
     });
   }
-  
+
   // ENHANCED: Handle amount extraction from multiple possible sources in the Square API response
   let amount = 0;
-  
+
   // Log the gift card structure to help debug
-  console.log(`Processing gift card ${giftCard.id} - Available amount fields:`, {
-    hasBalanceMoney: !!giftCard.balance_money,
-    hasGanBalanceMoney: !!(giftCard.gan_data && giftCard.gan_data.balance_money),
-    hasValue: !!(giftCard.gan_source && giftCard.gan_source.money),
-    hasAmount: !!(giftCard.amount_money)
-  });
-  
-  // Try multiple possible locations for the gift card amount
-  if (giftCard.balance_money && giftCard.balance_money.amount !== undefined) {
-    // Primary location - balance_money.amount
-    if (typeof giftCard.balance_money.amount === 'bigint') {
-      amount = Number(giftCard.balance_money.amount) / 100;
-    } else {
-      amount = (Number(giftCard.balance_money.amount) || 0) / 100;
+  console.log(`Processing gift card ${giftCard.id} - Full Structure:`, JSON.stringify(giftCard, null, 2));
+
+  // Deeply search for money objects in the gift card data structure
+  function findMoneyAmounts(obj: any, path = ''): {path: string, amount: number}[] {
+    if (!obj || typeof obj !== 'object') return [];
+
+    let results: {path: string, amount: number}[] = [];
+
+    // Look for money objects with amount property
+    if (obj.amount !== undefined && (typeof obj.amount === 'number' || typeof obj.amount === 'string' || typeof obj.amount === 'bigint')) {
+      const convertedAmount = typeof obj.amount === 'bigint' 
+        ? Number(obj.amount) / 100 
+        : Number(obj.amount) / 100;
+      results.push({path, amount: convertedAmount});
     }
-    console.log(`Gift card ${giftCard.id} - Found amount in balance_money: $${amount}`);
-  } else if (giftCard.gan_data && giftCard.gan_data.balance_money && giftCard.gan_data.balance_money.amount !== undefined) {
-    // Alternative location - gan_data.balance_money.amount
-    if (typeof giftCard.gan_data.balance_money.amount === 'bigint') {
-      amount = Number(giftCard.gan_data.balance_money.amount) / 100;
-    } else {
-      amount = (Number(giftCard.gan_data.balance_money.amount) || 0) / 100;
+
+    // Standard money object format in Square API
+    if (obj.amount !== undefined && obj.currency) {
+      const convertedAmount = typeof obj.amount === 'bigint' 
+        ? Number(obj.amount) / 100 
+        : Number(obj.amount) / 100;
+      results.push({path: `${path}.amount`, amount: convertedAmount});
     }
-    console.log(`Gift card ${giftCard.id} - Found amount in gan_data.balance_money: $${amount}`);
-  } else if (giftCard.gan_source && giftCard.gan_source.money && giftCard.gan_source.money.amount !== undefined) {
-    // Alternative location - gan_source.money.amount
-    if (typeof giftCard.gan_source.money.amount === 'bigint') {
-      amount = Number(giftCard.gan_source.money.amount) / 100;
-    } else {
-      amount = (Number(giftCard.gan_source.money.amount) || 0) / 100;
-    }
-    console.log(`Gift card ${giftCard.id} - Found amount in gan_source.money: $${amount}`);
-  } else if (giftCard.amount_money && giftCard.amount_money.amount !== undefined) {
-    // Alternative location - amount_money.amount
-    if (typeof giftCard.amount_money.amount === 'bigint') {
-      amount = Number(giftCard.amount_money.amount) / 100;
-    } else {
-      amount = (Number(giftCard.amount_money.amount) || 0) / 100;
-    }
-    console.log(`Gift card ${giftCard.id} - Found amount in amount_money: $${amount}`);
-  } else {
-    // As a fallback, let's check if there's a gift card amount in the raw squareData
-    try {
-      // Look for any key that might contain balance or amount
-      const rawData = JSON.stringify(giftCard);
-      const amountMatch = rawData.match(/"amount":(\d+)/);
-      if (amountMatch && amountMatch[1]) {
-        amount = Number(amountMatch[1]) / 100;
-        console.log(`Gift card ${giftCard.id} - Found amount using regex fallback: $${amount}`);
+
+    // Check for balance_money or other money objects
+    for (const key of Object.keys(obj)) {
+      if (typeof obj[key] === 'object' && obj[key] !== null) {
+        // Special handling for common Square money fields
+        if (['balance_money', 'amount_money', 'money', 'basePriceMoney'].includes(key) && 
+            obj[key].amount !== undefined) {
+          const moneyAmount = typeof obj[key].amount === 'bigint' 
+            ? Number(obj[key].amount) / 100 
+            : Number(obj[key].amount) / 100;
+          results.push({path: `${path}.${key}.amount`, amount: moneyAmount});
+        }
+
+        // Recursive search for nested objects
+        const nestedResults = findMoneyAmounts(obj[key], `${path}.${key}`);
+        results = [...results, ...nestedResults];
       }
-    } catch (error) {
-      console.error(`Error trying to extract gift card amount via regex:`, error);
+    }
+
+    return results;
+  }
+
+  // Find all potential money amounts in the gift card data
+  const moneyAmounts = findMoneyAmounts(giftCard);
+  console.log(`Gift card ${giftCard.id} - Found ${moneyAmounts.length} potential money values:`, moneyAmounts);
+
+  // Prioritize the money values - non-zero values first, then by most likely field names
+  if (moneyAmounts.length > 0) {
+    // First try to find non-zero amounts
+    const nonZeroAmounts = moneyAmounts.filter(item => item.amount > 0);
+
+    if (nonZeroAmounts.length > 0) {
+      // Prioritize balance_money amounts first, then any other non-zero amount
+      const balanceMoneyAmount = nonZeroAmounts.find(item => item.path.includes('balance_money'));
+      if (balanceMoneyAmount) {
+        amount = balanceMoneyAmount.amount;
+        console.log(`Gift card ${giftCard.id} - Using balance_money amount: $${amount}`);
+      } else {
+        // Sort by highest amount as a heuristic (gift cards typically have significant values)
+        nonZeroAmounts.sort((a, b) => b.amount - a.amount);
+        amount = nonZeroAmounts[0].amount;
+        console.log(`Gift card ${giftCard.id} - Using highest non-zero amount: $${amount} from ${nonZeroAmounts[0].path}`);
+      }
+    } else {
+      // If all amounts are zero, just use the first available amount
+      amount = moneyAmounts[0].amount;
+      console.log(`Gift card ${giftCard.id} - All amounts are zero, using: $${amount} from ${moneyAmounts[0].path}`);
+    }
+  } else {
+    // Traditional approaches if we couldn't find any amounts with our deep search
+    // Try the specific paths we know about from Square API docs
+    if (giftCard.balance_money && giftCard.balance_money.amount !== undefined) {
+      amount = typeof giftCard.balance_money.amount === 'bigint' 
+        ? Number(giftCard.balance_money.amount) / 100 
+        : Number(giftCard.balance_money.amount) / 100;
+      console.log(`Gift card ${giftCard.id} - Using standard balance_money.amount: $${amount}`);
+    } else if (giftCard.gan_data && giftCard.gan_data.balance_money && giftCard.gan_data.balance_money.amount !== undefined) {
+      amount = typeof giftCard.gan_data.balance_money.amount === 'bigint' 
+        ? Number(giftCard.gan_data.balance_money.amount) / 100 
+        : Number(giftCard.gan_data.balance_money.amount) / 100;
+      console.log(`Gift card ${giftCard.id} - Using gan_data.balance_money.amount: $${amount}`);
+    } else {
+      // Last resort - try to find any numeric value in the raw data that might be an amount
+      try {
+        const rawData = JSON.stringify(giftCard);
+        // Look for likely amount patterns in the data
+        const patterns = [
+          /"amount":(\d+)/,             // Regular amount field
+          /"value":(\d+)/,              // Sometimes used for card value
+          /"balance":(\d+)/,            // Sometimes used for balance
+          /"initial_value":(\d+)/       // Sometimes used for initial value
+        ];
+
+        for (const pattern of patterns) {
+          const match = rawData.match(pattern);
+          if (match && match[1]) {
+            amount = Number(match[1]) / 100;
+            console.log(`Gift card ${giftCard.id} - Found amount using regex: $${amount} (${pattern})`);
+            break;
+          }
+        }
+      } catch (error) {
+        console.error(`Error trying to extract gift card amount via regex:`, error);
+      }
     }
   }
-  
+
+  // Add a special fallback for gift cards created through the Square Dashboard
+  // These often have a fixed purchase amount that might be stored differently
+  if (amount === 0 && giftCard.type === 'DIGITAL') {
+    // Digital gift cards often have a fixed purchase amount
+    // Check for a purchase amount in the metadata or creation data
+    if (giftCard.gan_source && giftCard.gan_source.money && giftCard.gan_source.money.amount) {
+      amount = Number(giftCard.gan_source.money.amount) / 100;
+      console.log(`Gift card ${giftCard.id} - Using digital card purchase amount: $${amount}`);
+    }
+  }
+
   // If we still couldn't find an amount, log this for debugging
   if (amount === 0) {
     console.warn(`WARNING: Could not find amount for gift card ${giftCard.id} - saving as zero value`);
   }
-  
+
   const card: InsertGiftCard = {
     squareId: giftCard.id,
     amount: amount,
@@ -587,7 +653,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     purchaseDate,
     squareData: cleanedGiftCardData
   };
-  
+
   return card;
 }
 
@@ -599,12 +665,12 @@ export async function fetchGiftCards(): Promise<any[]> {
     let cursor: string | undefined = undefined;
     let hasMorePages = true;
     let pageCount = 0;
-    
+
     // Loop until we've fetched all pages
     while (hasMorePages) {
       pageCount++;
       console.log(`Fetching gift cards page ${pageCount}${cursor ? ' with cursor' : ''}`);
-      
+
       // For v29.0.0, use the giftCardsApi with pagination
       try {
         // According to the Square API SDK:
@@ -616,17 +682,17 @@ export async function fetchGiftCards(): Promise<any[]> {
           cursor,     // cursor
           undefined   // customerId
         );
-        
+
         // Extract gift cards from the response
         const giftCards = response.result.giftCards || [];
         allGiftCards = [...allGiftCards, ...giftCards];
-        
+
         // Check if there are more pages
         cursor = response.result.cursor;
         hasMorePages = !!cursor;
-        
+
         console.log(`Fetched ${giftCards.length} gift cards on page ${pageCount}. Total so far: ${allGiftCards.length}`);
-        
+
         // Add a small delay to avoid rate limiting
         if (hasMorePages) {
           await new Promise(resolve => setTimeout(resolve, 100));
@@ -637,7 +703,7 @@ export async function fetchGiftCards(): Promise<any[]> {
         hasMorePages = false;
       }
     }
-    
+
     console.log(`Completed fetching ${allGiftCards.length} total gift cards from Square`);
     return allGiftCards;
   } catch (error) {
@@ -658,19 +724,19 @@ export async function searchCatalogForGiftCards(): Promise<any[]> {
       undefined, // cursor
       "ITEM" // object_types - specifically looking for catalog items
     );
-    
+
     // Filter to find gift card items
     const giftCardItems = (response.result.objects || []).filter((item: any) => {
       if (item.type !== 'ITEM') return false;
-      
+
       // Check item data
       const itemData = item.itemData;
       if (!itemData) return false;
-      
+
       // Look for gift card indicators in name or description
       const name = (itemData.name || '').toLowerCase();
       const description = (itemData.description || '').toLowerCase();
-      
+
       return (
         name.includes('gift card') || 
         name.includes('gift certificate') ||
@@ -678,7 +744,7 @@ export async function searchCatalogForGiftCards(): Promise<any[]> {
         description.includes('gift certificate')
       );
     });
-    
+
     console.log(`Found ${giftCardItems.length} gift card items in catalog`);
     return giftCardItems;
   } catch (error) {
