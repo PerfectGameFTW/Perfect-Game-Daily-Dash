@@ -10,7 +10,8 @@ import { pgStorage, db } from "./pgStorage";
 import {
   dateRangeSchema,
   transactions,
-  giftCards
+  giftCards,
+  giftCardRedemptions // Added import for gift card redemptions
 } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
@@ -841,7 +842,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (paymentsSyncState && !paymentsSyncState.isComplete) {
         // Resume from checkpoint
         console.log("Resuming payments sync from checkpoint:", {
-          lastSyncAt: paymentsSyncState.lastSyncedAt,
+                    lastSyncAt: paymentsSyncState.lastSyncedAt,
           processed: paymentsSyncState.processedCount,
           total: paymentsSyncState.totalCount
         });

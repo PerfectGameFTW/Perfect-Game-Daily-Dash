@@ -127,7 +127,15 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
   }
 }
 
-// Enhanced fetchPayments with sync state tracking
+// Add helper function to check if a payment is a gift card redemption
+function isGiftCardRedemption(payment: any): boolean {
+  return (
+    (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
+    (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD')
+  );
+}
+
+// Fetch payments from Square API
 export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]> {
   try {
     const now = new Date();
@@ -182,6 +190,19 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
         );
 
         const payments = response.result.payments || [];
+
+        // Process each payment to identify gift card redemptions
+        for (const payment of payments) {
+          if (isGiftCardRedemption(payment)) {
+            console.log(`Found gift card redemption payment: ${payment.id}`);
+            // Add flags to identify redemption in downstream processing
+            payment.isGiftCardRedemption = true;
+            payment.redemptionAmount = payment.amountMoney 
+              ? Number(payment.amountMoney.amount) / 100 
+              : 0;
+          }
+        }
+
         allPayments = [...allPayments, ...payments];
 
         // Update sync state
