@@ -50,7 +50,6 @@ export class PgStorage implements IStorage {
   async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status: TransactionStatus = 'completed'): Promise<Transaction[]> {
     console.log('DIAGNOSTIC - getTransactions start', { dateRange, startDate, endDate, status });
 
-    // Convert input dates to Eastern Time for consistent comparison
     const start = startDate ? new Date(startDate) : new Date();
     const end = endDate ? new Date(endDate) : start;
 
@@ -64,16 +63,9 @@ export class PgStorage implements IStorage {
       timezone: EASTERN_TIMEZONE
     });
 
-    // Query using the Eastern Time view
+    // Query using the Eastern Time view for consistent business day boundaries
     const result = await db.execute<Transaction>(sql`
-      SELECT 
-        t.id,
-        t.square_id,
-        t.amount,
-        t.category_id,
-        t.status,
-        t.timestamp,  -- Keep original UTC timestamp in the result
-        t.square_data
+      SELECT t.*
       FROM transactions_et te
       JOIN transactions t ON t.id = te.id
       WHERE DATE(te.timestamp_et) >= ${startStr}::date
@@ -360,6 +352,7 @@ export class PgStorage implements IStorage {
   }
 
 
+
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
     // Use the imported getEasternDateRange function
     return getEasternDateRange(dateRange, startDate, endDate);
@@ -449,15 +442,9 @@ export class PgStorage implements IStorage {
         throw new InvalidOrderDataError('Missing required order fields');
       }
 
-      // Ensure timestamps are in UTC
-      const utcOrder = {
-        ...insertOrder,
-        createdAt: new Date(insertOrder.createdAt.toUTCString()),
-        closedAt: insertOrder.closedAt ? new Date(insertOrder.closedAt.toUTCString()) : null
-      };
-
-      console.log(`Creating new order with Square ID: ${utcOrder.squareId}`);
-      const result = await db.insert(orders).values(utcOrder).returning();
+      // No need to manually convert timestamps - PostgreSQL handles it
+      console.log(`Creating new order with Square ID: ${insertOrder.squareId}`);
+      const result = await db.insert(orders).values(insertOrder).returning();
 
       if (!result.length) {
         throw new OrderProcessingError('Order creation failed');
@@ -595,7 +582,7 @@ export class PgStorage implements IStorage {
     const start = startDate ? new Date(startDate) : new Date();
     const end = endDate ? new Date(endDate) : start;
 
-    // Format dates for the query - these will be interpreted in Eastern Time
+    // Format dates for the query - will be interpreted in Eastern Time
     const startStr = format(start, 'yyyy-MM-dd');
     const endStr = format(end, 'yyyy-MM-dd');
 

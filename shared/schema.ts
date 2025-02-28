@@ -5,6 +5,7 @@ import {
   integer,
   boolean,
   timestamp,
+  timestamptz,
   real,
   jsonb,
   foreignKey,
@@ -66,8 +67,8 @@ export const orders = pgTable("orders", {
   totalMoney: real("total_money").notNull(),
   totalTax: real("total_tax").notNull(),
   totalDiscount: real("total_discount").notNull(),
-  createdAt: timestamp("created_at").notNull(),
-  closedAt: timestamp("closed_at"),
+  createdAt: timestamptz("created_at").notNull(),
+  closedAt: timestamptz("closed_at"),
   transactionId: integer("transaction_id").references(() => transactions.id),
   source: text("source").notNull(),
   squareData: jsonb("square_data"),
@@ -83,8 +84,8 @@ export type Order = typeof orders.$inferSelect;
 // Order line items
 export const orderLineItems = pgTable("order_line_items", {
   id: serial("id").primaryKey(),
-  orderId: integer("order_id").notNull().references(() => orders.id, { 
-    onDelete: "cascade" 
+  orderId: integer("order_id").notNull().references(() => orders.id, {
+    onDelete: "cascade"
   }),
   name: text("name").notNull(),
   quantity: integer("quantity").notNull(),
@@ -104,7 +105,7 @@ export type OrderLineItem = typeof orderLineItems.$inferSelect;
 export const orderModifiers = pgTable("order_modifiers", {
   id: serial("id").primaryKey(),
   lineItemId: integer("line_item_id").notNull().references(() => orderLineItems.id, {
-    onDelete: "cascade" 
+    onDelete: "cascade"
   }),
   name: text("name").notNull(),
   basePriceMoney: real("base_price_money"),
@@ -123,7 +124,7 @@ export type OrderModifier = typeof orderModifiers.$inferSelect;
 export const orderDiscounts = pgTable("order_discounts", {
   id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull().references(() => orders.id, {
-    onDelete: "cascade" 
+    onDelete: "cascade"
   }),
   name: text("name").notNull(),
   type: text("type").notNull(),
@@ -148,7 +149,7 @@ export const transactions = pgTable("transactions", {
   amount: real("amount").notNull(),
   categoryId: text("category_id").notNull(),
   status: text("status").notNull(),
-  timestamp: timestamp("timestamp").notNull(),
+  timestamp: timestamptz("timestamp").notNull(),
   squareData: jsonb("square_data"),
 });
 
@@ -166,7 +167,7 @@ export const giftCards = pgTable("gift_cards", {
   amount: real("amount").notNull(),
   redeemedAmount: real("redeemed_amount").default(0).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
-  purchaseDate: timestamp("purchase_date").notNull(),
+  purchaseDate: timestamptz("purchase_date").notNull(),
   squareData: jsonb("square_data"),
 });
 
@@ -183,7 +184,7 @@ export const giftCardRedemptions = pgTable("gift_card_redemptions", {
   giftCardId: integer("gift_card_id").notNull().references(() => giftCards.id),
   amount: real("amount").notNull(),
   transactionId: integer("transaction_id").notNull().references(() => transactions.id),
-  timestamp: timestamp("timestamp").notNull(),
+  timestamp: timestamptz("timestamp").notNull(),
 });
 
 export const insertGiftCardRedemptionSchema = createInsertSchema(
@@ -213,7 +214,7 @@ export type User = typeof users.$inferSelect;
 // Sync state table to track Square data synchronization progress
 export const syncState = pgTable("sync_state", {
   id: serial("id").primaryKey(),
-  syncType: text("sync_type").notNull(), 
+  syncType: text("sync_type").notNull(),
   lastSyncedAt: timestamp("last_synced_at").notNull(),
   currentPage: integer("current_page").default(1),
   totalPages: integer("total_pages").default(0),
