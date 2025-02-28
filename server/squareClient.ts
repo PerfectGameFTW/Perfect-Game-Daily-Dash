@@ -1,8 +1,8 @@
 // Add BigInt serialization override at the top
 if (typeof BigInt.prototype.toJSON !== 'function') {
- BigInt.prototype.toJSON = function() {
-   return this.toString();
- };
+  BigInt.prototype.toJSON = function() {
+    return this.toString();
+  };
 }
 
 import { pgStorage } from './pgStorage';
@@ -24,25 +24,25 @@ const EASTERN_TIMEZONE = 'America/New_York';
 
 // Helper function for safe data processing
 function processSafeSquareData(data: any): any {
- try {
-   // First convert BigInts to strings
-   const stringified = JSON.stringify(data, (key, value) => {
-     if (typeof value === 'bigint') {
-       return value.toString();
-     }
-     return value;
-   });
+  try {
+    // First convert BigInts to strings
+    const stringified = JSON.stringify(data, (key, value) => {
+      if (typeof value === 'bigint') {
+        return value.toString();
+      }
+      return value;
+    });
 
-   // Then parse back to ensure we have a clean object
-   return JSON.parse(stringified);
- } catch (error) {
-   console.error('Error processing Square data:', error);
-   // Return a safe version of the data
-   return {
-     id: data.id || 'unknown',
-     error: 'Failed to process data'
-   };
- }
+    // Then parse back to ensure we have a clean object
+    return JSON.parse(stringified);
+  } catch (error) {
+    console.error('Error processing Square data:', error);
+    // Return a safe version of the data
+    return {
+      id: data.id || 'unknown',
+      error: 'Failed to process data'
+    };
+  }
 }
 
 dotenv.config();
@@ -262,6 +262,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           'DESC',
           cursor,
           process.env.SQUARE_LOCATION_ID,
+          undefined,
           undefined,
           undefined,
           undefined,
@@ -752,13 +753,13 @@ export async function processSquareOrder(order: any, db: any): Promise<void> {
   }
 }
 
-// Add function to sync orders
-export async function syncOrders(db: any, startDate?: Date, endDate?: Date): Promise<void> {
+// Update syncOrders function to properly use pgStorage
+export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void> {
   try {
     // Create or get orders sync state
-    let syncState = await db.getSyncState('orders');
+    let syncState = await pgStorage.getSyncState('orders');
     if (!syncState) {
-      syncState = await db.createSyncState({
+      syncState = await pgStorage.createSyncState({
         syncType: 'orders',
         lastSyncedAt: new Date(),
         currentPage: 1,
@@ -785,11 +786,54 @@ export async function syncOrders(db: any, startDate?: Date, endDate?: Date): Pro
 
     for (const order of orders) {
       try {
-        await processSquareOrder(order, db);
+        // Convert order to our format
+        const insertOrder = convertSquareOrderToOrder(order);
+
+        // Create order in database
+        const savedOrder = await pgStorage.createOrder(insertOrder);
+        console.log(`Saved order ${order.id} to database with internal ID ${savedOrder.id}`);
+
+        // Process line items
+        if (order.lineItems && Array.isArray(order.lineItems)) {
+          for (const lineItem of order.lineItems) {
+            try {
+              const insertLineItem = convertSquareLineItemToOrderLineItem(lineItem, savedOrder.id);
+              const savedLineItem = await pgStorage.createOrderItem(insertLineItem);
+              console.log(`Saved line item for order ${order.id}: ${lineItem.name}`);
+
+              // Process modifiers for this line item
+              if (lineItem.modifiers && Array.isArray(lineItem.modifiers)) {
+                for (const modifier of lineItem.modifiers) {
+                  try {
+                    const insertModifier = convertSquareModifierToOrderModifier(modifier, savedLineItem.id);
+                    await pgStorage.createOrderModifier(insertModifier);
+                  } catch (modifierError) {
+                    console.error(`Error processing modifier for line item ${lineItem.name}:`, modifierError);
+                  }
+                }
+              }
+            } catch (lineItemError) {
+              console.error(`Error processing line item for order ${order.id}:`, lineItemError);
+            }
+          }
+        }
+
+        // Process discounts
+        if (order.discounts && Array.isArray(order.discounts)) {
+          for (const discount of order.discounts) {
+            try {
+              const insertDiscount = convertSquareDiscountToOrderDiscount(discount, savedOrder.id);
+              await pgStorage.createOrderDiscount(insertDiscount);
+            } catch (discountError) {
+              console.error(`Error processing discount for order ${order.id}:`, discountError);
+            }
+          }
+        }
+
         successCount++;
 
         // Update sync progress
-        await db.updateSyncState(syncState.id, {
+        await pgStorage.updateSyncState(syncState.id, {
           processedCount: successCount,
           totalCount: orders.length,
           lastSyncedAt: new Date(),
@@ -802,7 +846,7 @@ export async function syncOrders(db: any, startDate?: Date, endDate?: Date): Pro
     }
 
     // Update final sync state
-    await db.updateSyncState(syncState.id, {
+    await pgStorage.updateSyncState(syncState.id, {
       processedCount: successCount,
       totalCount: orders.length,
       isComplete: true,
