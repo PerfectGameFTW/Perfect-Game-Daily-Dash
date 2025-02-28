@@ -4,8 +4,8 @@ import { DateRange } from "@shared/schema";
 import { formatCurrency, formatPercentage, isPositiveChange } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import SimpleHourlyChart from "./SimpleHourlyChart";
-import { 
-  ChevronUp, 
+import {
+  ChevronUp,
   ChevronDown,
   ChevronRight
 } from "lucide-react";
@@ -21,7 +21,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     queryKey: ['/api/summary', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchDailySummary(dateRange, customStartDate, customEndDate),
   });
-  
+
   const { data: detailedTransactions, isLoading: isDetailedLoading } = useQuery({
     queryKey: ['/api/detailed-transactions', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchDetailedTransactions(dateRange, customStartDate, customEndDate),
@@ -49,7 +49,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         <h2 className="text-sm font-medium text-zinc-400">Gross sales</h2>
         <div className="flex items-center">
           <p className="text-xl font-bold text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
-          <div 
+          <div
             className={`ml-2 px-2 py-1 rounded text-xs font-semibold flex items-center ${
               isPositiveChange(data?.revenueChange || 0)
                 ? "bg-green-900/30 text-green-400"
@@ -65,9 +65,9 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           </div>
         </div>
       </div>
-      
+
       {/* Hourly Revenue Chart */}
-      <SimpleHourlyChart 
+      <SimpleHourlyChart
         dateRange={dateRange}
         customStartDate={customStartDate}
         customEndDate={customEndDate}
@@ -83,12 +83,27 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
       {/* Metric Items */}
       <div className="space-y-5">
+        {/* Gift Card Sales - Prominently displayed at the top */}
+        {!isDetailedLoading && detailedTransactions && (
+          <div className="flex justify-between py-3 border-b border-zinc-800 bg-zinc-800/50 rounded-lg px-4">
+            <div className="flex flex-col">
+              <span className="text-white font-medium">Gift Card Sales</span>
+              <span className="text-sm text-zinc-400">Today's total</span>
+            </div>
+            <div className="text-right">
+              <span className="text-white text-lg font-semibold">
+                {formatCurrency(detailedTransactions.giftCardSales || 0)}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Gross Sales Item */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Gross sales</span>
           <div className="flex items-center">
             <span className="text-white mr-3">{formatCurrency(data?.totalRevenue || 0)}</span>
-            <div 
+            <div
               className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
                 isPositiveChange(data?.revenueChange || 0)
                   ? "bg-green-900/30 text-green-400"
@@ -110,7 +125,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           <span className="text-white">Transactions</span>
           <div className="flex items-center">
             <span className="text-white mr-3">{data?.totalOrders || 0}</span>
-            <div 
+            <div
               className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
                 isPositiveChange(data?.ordersChange || 0)
                   ? "bg-green-900/30 text-green-400"
@@ -126,71 +141,56 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
           </div>
         </div>
-        
-        {/* Detailed Transaction Breakdown - now as separate items */}
-        {!isDetailedLoading && detailedTransactions && (
-          <>
-            {/* Gift Card Sales - Moved to top as requested */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">
-                Gift Card Sales
-              </span>
-              <span className="text-white">
-                {/* Display raw gift card sales data from API */}
-                {formatCurrency(detailedTransactions.giftCardSales || 0)}
-              </span>
-            </div>
-            
-            {/* Partywirks */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Partywirks</span>
-              <span className="text-white">{formatCurrency(detailedTransactions.partywirks || 0)}</span>
-            </div>
-            
-            {/* Tripleseat */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Tripleseat</span>
-              <span className="text-white">{formatCurrency(detailedTransactions.tripleseat || 0)}</span>
-            </div>
-            
-            {/* Tips */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Tips</span>
-              <span className="text-white">{formatCurrency(detailedTransactions.tips || 0)}</span>
-            </div>
-            
-            {/* Service Charges */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Service Charges</span>
-              <span className="text-white">{formatCurrency(detailedTransactions.serviceCharges || 0)}</span>
-            </div>
-            
-            {/* Taxes */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Taxes</span>
-              <span className="text-white">{formatCurrency(detailedTransactions.taxes || 0)}</span>
-            </div>
-            
-            {/* Refunds */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Refunds</span>
-              <span className="text-white">{formatCurrency(detailedTransactions.refunds || 0)}</span>
-            </div>
-            
-            {/* Discounts & Comps */}
-            <div className="flex justify-between py-3 border-b border-zinc-800">
-              <span className="text-white">Discounts & Comps</span>
-              <span className="text-white">{formatCurrency(detailedTransactions.discountsAndComps || 0)}</span>
-            </div>
-          </>
-        )}
+
+        {/* Partywirks */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Partywirks</span>
+          <span className="text-white">{formatCurrency(detailedTransactions.partywirks || 0)}</span>
+        </div>
+
+        {/* Tripleseat */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Tripleseat</span>
+          <span className="text-white">{formatCurrency(detailedTransactions.tripleseat || 0)}</span>
+        </div>
+
+        {/* Tips */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Tips</span>
+          <span className="text-white">{formatCurrency(detailedTransactions.tips || 0)}</span>
+        </div>
+
+        {/* Service Charges */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Service Charges</span>
+          <span className="text-white">{formatCurrency(detailedTransactions.serviceCharges || 0)}</span>
+        </div>
+
+        {/* Taxes */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Taxes</span>
+          <span className="text-white">{formatCurrency(detailedTransactions.taxes || 0)}</span>
+        </div>
+
+        {/* Refunds */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Refunds</span>
+          <span className="text-white">{formatCurrency(detailedTransactions.refunds || 0)}</span>
+        </div>
+
+        {/* Discounts & Comps */}
+        <div className="flex justify-between py-3 border-b border-zinc-800">
+          <span className="text-white">Discounts & Comps</span>
+          <span className="text-white">{formatCurrency(detailedTransactions.discountsAndComps || 0)}</span>
+        </div>
+
 
         {/* Net Sales Item */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Net sales</span>
           <div className="flex items-center">
             <span className="text-white mr-3">{formatCurrency(data?.totalRevenue || 0)}</span>
-            <div 
+            <div
               className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
                 isPositiveChange(data?.revenueChange || 0)
                   ? "bg-green-900/30 text-green-400"
