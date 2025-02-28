@@ -1,11 +1,14 @@
+if (typeof BigInt.prototype.toJSON !== 'function') {
+  BigInt.prototype.toJSON = function() {
+    return this.toString();
+  };
+}
+
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { pgStorage, db } from "./pgStorage";
 import {
   dateRangeSchema,
-  InsertTransaction,
-  InsertGiftCard,
-  InsertSyncState,
   transactions,
   giftCards
 } from "@shared/schema";
@@ -13,31 +16,46 @@ import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
 import { and, gte, lte, sql, eq } from "drizzle-orm";
 
-// Add global BigInt serialization override
-if (typeof BigInt.prototype.toJSON !== 'function') {
-  BigInt.prototype.toJSON = function() {
-    return this.toString();
-  };
+// Helper function to safely process Square API response data
+function processSafeSquareData(data: any): any {
+  try {
+    // First convert BigInts to strings
+    const stringified = JSON.stringify(data, (key, value) => {
+      if (typeof value === 'bigint') {
+        return value.toString();
+      }
+      return value;
+    });
+
+    // Then parse back to ensure we have a clean object
+    return JSON.parse(stringified);
+  } catch (error) {
+    console.error('Error processing Square data:', error);
+    // Return a safe version of the data
+    return {
+      id: data.id || 'unknown',
+      error: 'Failed to process data'
+    };
+  }
 }
 
-// Add helper function at the top of the file
-function safeBigIntConversion(obj: any): any {
-  if (typeof obj === "bigint") return obj.toString();
-  if (Array.isArray(obj)) return obj.map(safeBigIntConversion);
-  if (obj && typeof obj === "object") {
-    const result: Record<string, any> = {};
-    for (const key in obj) {
-      result[key] = safeBigIntConversion(obj[key]);
-    }
-    return result;
+// Helper function to ensure data is safe for JSON serialization
+function ensureSerializable(data: any): any {
+  try {
+    const converted = JSON.parse(JSON.stringify(data, (key, value) =>
+      typeof value === 'bigint' ? value.toString() : value
+    ));
+    return converted;
+  } catch (error) {
+    console.error('Error making data serializable:', error);
+    return {
+      id: data.id,
+      error: 'Data contained non-serializable values'
+    };
   }
-  return obj;
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Test route for gift card detection has been removed as part of sync simplification
-  // All gift card transactions are now processed through the unified sync process
-  // Create API router for all endpoints
   const apiRouter = express.Router();
 
   // Get dashboard summary data
@@ -607,7 +625,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Fix gift cards endpoint
+  // Fix gift cards endpoint with improved error handling
   apiRouter.get("/fix-gift-cards", async (req, res) => {
     try {
       console.log("Starting fix for gift cards with zero amounts...");
@@ -623,11 +641,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const squareGiftCards = await squareClient.fetchGiftCards();
       console.log(`Fetched ${squareGiftCards.length} gift cards from Square`);
 
-      // Create a map for quick lookup
+      // Create a map for quick lookup with safe data processing
       const squareGiftCardMap = new Map();
       for (const card of squareGiftCards) {
-        // SafeBigIntConversion is already applied in fetchGiftCards
-        squareGiftCardMap.set(card.id, card);
+        try {
+          const safeCard = processSafeSquareData(card);
+          squareGiftCardMap.set(safeCard.id, safeCard);
+        } catch (error) {
+          console.error(`Error processing Square card for map:`, error);
+        }
       }
 
       let updatedCount = 0;
@@ -635,38 +657,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const card of zeroAmountCards) {
         try {
-          console.log(`Processing card ${card.squareId}...`);
-
           const squareCard = squareGiftCardMap.get(card.squareId);
           if (!squareCard) {
             console.log(`Card ${card.squareId} not found in Square data`);
             continue;
           }
 
-          // Log the square card data for debugging
-          console.log('Square card data:', JSON.stringify(squareCard, null, 2));
+          // Log the raw card data for debugging
+          console.log(`Processing card ${card.squareId}...`);
 
           let amount = 0;
-          if (squareCard.balanceMoney && typeof squareCard.balanceMoney.amount === 'string') {
-            amount = parseInt(squareCard.balanceMoney.amount, 10) / 100;
-            console.log(`Found amount in balanceMoney: $${amount}`);
-          } else if (squareCard.balance_money && typeof squareCard.balance_money.amount === 'string') {
-            amount = parseInt(squareCard.balance_money.amount, 10) / 100;
-            console.log(`Found amount in balance_money: $${amount}`);
+          if (squareCard.balanceMoney && squareCard.balanceMoney.amount) {
+            const rawAmount = squareCard.balanceMoney.amount;
+            amount = parseInt(String(rawAmount), 10) / 100;
+            console.log(`Found amount in balanceMoney for card ${card.squareId}: $${amount} (raw: ${rawAmount})`);
+          } else if (squareCard.balance_money && squareCard.balance_money.amount) {
+            const rawAmount = squareCard.balance_money.amount;
+            amount = parseInt(String(rawAmount), 10) / 100;
+            console.log(`Found amount in balance_money for card ${card.squareId}: $${amount} (raw: ${rawAmount})`);
           }
 
           if (amount > 0) {
-            await db.update(giftCards)
-              .set({
-                amount: amount,
-                squareData: squareCard  // Already safe from fetchGiftCards
-              })
-              .where(eq(giftCards.squareId, card.squareId));
+            // Prepare safe square data for database storage
+            const safeSquareData = processSafeSquareData(squareCard);
 
-            console.log(`✅ Updated gift card ${card.squareId} amount from $0 to $${amount.toFixed(2)}`);
-            updatedCount++;
+            // Double-check serialization before database update
+            try {
+              // Verify the data is safe to store
+              JSON.stringify(safeSquareData);
+
+              // Update the database
+              await db.update(giftCards)
+                .set({
+                  amount: amount,
+                  squareData: safeSquareData
+                })
+                .where(eq(giftCards.squareId, card.squareId));
+
+              console.log(`✅ Updated gift card ${card.squareId} amount from $0 to $${amount.toFixed(2)}`);
+              updatedCount++;
+            } catch (error) {
+              console.error(`Failed to update gift card ${card.squareId}:`, error);
+              stillZeroCount++;
+            }
           } else {
-            console.log(`⚠️ Card ${card.squareId} still has zero amount after conversion`);
+            console.log(`⚠️ Card ${card.squareId} still has zero amount after extraction`);
             stillZeroCount++;
           }
         } catch (error) {
@@ -675,7 +710,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      res.json({
+      // Return safe response
+      const response = processSafeSquareData({
         success: true,
         totalProcessed: zeroAmountCards.length,
         updatedCount,
@@ -683,6 +719,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: `Successfully processed ${zeroAmountCards.length} cards, updated ${updatedCount}, ${stillZeroCount} remained at zero`
       });
 
+      res.json(response);
     } catch (error) {
       console.error("Error fixing gift cards:", error);
       res.status(500).json({
@@ -816,8 +853,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lastSyncedAt: new Date(),
           processedCount: 0,
           totalCount: 0,
-          isComplete: false,
-          status: 'in_progress',
+          isComplete: false,          status: 'in_progress',
           lastCheckpoint: { lastPosition: 0 }
         };
 
@@ -825,7 +861,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Update existing record
           paymentsSyncState = await pgStorage.updateSyncState(paymentsSyncState.id, syncData);
         } else {
-          // Create new record
+          //          // Create new record
           paymentsSyncState = await pgStorage.createSyncState(syncData);
         }
         console.log("Created new payments sync state record:", paymentsSyncState.id);
@@ -1240,15 +1276,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // The separate Feb 25 endpoint has been consolidated into the main sync endpoint
-  // All data is now handled through a single, unified sync process
-
-  // Status endpoint for sync progress has been removed as the UI does not need it
-  // Database-backed checkpoint system continues to track sync state internally
-
   // Mount the API router
   app.use("/api", apiRouter);
 
+  // Create and return HTTP server
   const httpServer = createServer(app);
 
   return httpServer;

@@ -6,32 +6,34 @@ if (typeof BigInt.prototype.toJSON !== 'function') {
 }
 
 import { Client, Environment } from 'square';
-import { 
-  Transaction, InsertTransaction,
-  GiftCard, InsertGiftCard,
-  Category, TransactionStatus,
-  SyncState, InsertSyncState
-} from '@shared/schema';
-import { pgStorage } from './pgStorage';
-import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
+import { toZonedTime } from 'date-fns-tz';
 import dotenv from 'dotenv';
-
-// Helper function for safe BigInt conversion
-function safeBigIntConversion(obj: any): any {
-  if (typeof obj === "bigint") return obj.toString();
-  if (Array.isArray(obj)) return obj.map(safeBigIntConversion);
-  if (obj && typeof obj === "object") {
-    const result: Record<string, any> = {};
-    for (const key in obj) {
-      result[key] = safeBigIntConversion(obj[key]);
-    }
-    return result;
-  }
-  return obj;
-}
 
 // Define Eastern timezone constant
 const EASTERN_TIMEZONE = 'America/New_York';
+
+// Helper function for safe data processing
+function processSafeSquareData(data: any): any {
+  try {
+    // First convert BigInts to strings
+    const stringified = JSON.stringify(data, (key, value) => {
+      if (typeof value === 'bigint') {
+        return value.toString();
+      }
+      return value;
+    });
+
+    // Then parse back to ensure we have a clean object
+    return JSON.parse(stringified);
+  } catch (error) {
+    console.error('Error processing Square data:', error);
+    // Return a safe version of the data
+    return {
+      id: data.id || 'unknown',
+      error: 'Failed to process data'
+    };
+  }
+}
 
 dotenv.config();
 
@@ -40,38 +42,6 @@ const squareClient = new Client({
   accessToken: process.env.SQUARE_ACCESS_TOKEN || '',
   environment: Environment.Production
 });
-
-// Map Square payment status to our TransactionStatus
-function mapSquareStatus(status: string): TransactionStatus {
-  switch (status) {
-    case 'COMPLETED':
-      return 'completed';
-    case 'FAILED':
-      return 'failed';
-    case 'CANCELED':
-    case 'VOIDED':
-      return 'refunded';
-    default:
-      return 'pending';
-  }
-}
-
-// Map Square category to our Category
-function mapSquareCategory(itemName: string): Category {
-  const lowerItemName = itemName.toLowerCase();
-
-  if (lowerItemName.includes('food') || lowerItemName.includes('meal') || lowerItemName.includes('burger')) {
-    return 'food';
-  } else if (lowerItemName.includes('drink') || lowerItemName.includes('soda') || lowerItemName.includes('beverage')) {
-    return 'drinks';
-  } else if (lowerItemName.includes('gift') && lowerItemName.includes('card')) {
-    return 'giftCard';
-  } else if (lowerItemName.includes('service') || lowerItemName.includes('repair')) {
-    return 'services';
-  } else {
-    return 'retail';
-  }
-}
 
 // Fetch orders from Square API
 export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any[]> {
@@ -204,6 +174,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           'DESC',
           cursor,
           process.env.SQUARE_LOCATION_ID,
+          undefined,
           undefined,
           undefined,
           undefined,
@@ -481,7 +452,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
 // Convert Square gift card to our GiftCard model
 export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): InsertGiftCard {
   // Convert the input to safe format first
-  const safeGiftCard = safeBigIntConversion(giftCard);
+  const safeGiftCard = processSafeSquareData(giftCard);
 
   // Parse and convert the purchase date from UTC to Eastern Time for proper business day alignment
   let purchaseDate: Date;
@@ -560,22 +531,30 @@ export async function fetchGiftCards(): Promise<any[]> {
           break;
         }
 
-        // Safely convert the response data
+        // Process each gift card to ensure it's safe for database storage
         const safeGiftCards = response.result.giftCards.map(card => {
-          const safeCard = safeBigIntConversion(card);
-          // Ensure amount is properly extracted and converted
-          if (safeCard.balanceMoney?.amount) {
-            console.log(`Card ${safeCard.id} has balance: ${safeCard.balanceMoney.amount}`);
+          try {
+            const safeCard = processSafeSquareData(card);
+
+            // Log amount information for debugging
+            if (safeCard.balanceMoney?.amount) {
+              console.log(`Card ${safeCard.id} balance: $${Number(safeCard.balanceMoney.amount) / 100}`);
+            } else if (safeCard.balance_money?.amount) {
+              console.log(`Card ${safeCard.id} balance: $${Number(safeCard.balance_money.amount) / 100}`);
+            }
+
+            return safeCard;
+          } catch (error) {
+            console.error(`Error processing gift card:`, error);
+            return null;
           }
-          return safeCard;
-        });
+        }).filter(card => card !== null); // Remove any cards that failed processing
 
         allGiftCards = [...allGiftCards, ...safeGiftCards];
+        console.log(`Processed ${safeGiftCards.length} gift cards on page ${pageCount}. Total so far: ${allGiftCards.length}`);
 
         cursor = response.result.cursor;
         hasMorePages = !!cursor;
-
-        console.log(`Fetched ${safeGiftCards.length} gift cards on page ${pageCount}. Total so far: ${allGiftCards.length}`);
 
         if (hasMorePages) {
           await new Promise(resolve => setTimeout(resolve, 100));
@@ -586,13 +565,46 @@ export async function fetchGiftCards(): Promise<any[]> {
       }
     }
 
-    console.log(`Completed fetching ${allGiftCards.length} total gift cards from Square`);
+    console.log(`Completed fetching ${allGiftCards.length} total gift cards`);
     return allGiftCards;
   } catch (error) {
-    console.error('Error fetching gift cards from Square:', error);
+    console.error('Error fetching gift cards:', error);
     throw error;
   }
 }
+
+// Map Square payment status to our TransactionStatus
+function mapSquareStatus(status: string): TransactionStatus {
+  switch (status) {
+    case 'COMPLETED':
+      return 'completed';
+    case 'FAILED':
+      return 'failed';
+    case 'CANCELED':
+    case 'VOIDED':
+      return 'refunded';
+    default:
+      return 'pending';
+  }
+}
+
+// Map Square category to our Category
+function mapSquareCategory(itemName: string): Category {
+  const lowerItemName = itemName.toLowerCase();
+
+  if (lowerItemName.includes('food') || lowerItemName.includes('meal') || lowerItemName.includes('burger')) {
+    return 'food';
+  } else if (lowerItemName.includes('drink') || lowerItemName.includes('soda') || lowerItemName.includes('beverage')) {
+    return 'drinks';
+  } else if (lowerItemName.includes('gift') && lowerItemName.includes('card')) {
+    return 'giftCard';
+  } else if (lowerItemName.includes('service') || lowerItemName.includes('repair')) {
+    return 'services';
+  } else {
+    return 'retail';
+  }
+}
+
 
 // Utility function to search for gift card items in the catalog
 export async function searchCatalogForGiftCards(): Promise<any[]> {
