@@ -10,7 +10,7 @@ import {
 } from "@shared/schema";
 import { format } from "date-fns";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
-import { EASTERN_TIMEZONE } from "./dateUtils";
+import { EASTERN_TIMEZONE, getEasternDateRange } from "./dateUtils";
 import { IStorage } from "./storage";
 import pg from "pg";
 const { Pool } = pg;
@@ -51,9 +51,6 @@ export class PgStorage implements IStorage {
     
     // Get the properly aligned Eastern Time business day boundaries converted to UTC
     const { start, end } = this.getDateRange(dateRange, startDate, endDate);
-    
-    // Import the EASTERN_TIMEZONE directly to avoid using this.EASTERN_TIMEZONE
-    const { EASTERN_TIMEZONE } = require('./dateUtils');
     
     // No special case handling - consistent timezone handling for all dates
     // Diagnostic logging to verify Eastern Time business day boundaries
@@ -401,13 +398,13 @@ export class PgStorage implements IStorage {
     };
   }
   
-  // Use the Eastern date utility for consistent timezone handling
+
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
-    // Use the imported getEasternDateRange function from our dedicated utility
-    // This correctly handles timezone conversions for database queries
+    // Use the imported getEasternDateRange function
     return getEasternDateRange(dateRange, startDate, endDate);
   }
   
+
   // Sync state management methods
   async getSyncState(syncType: string): Promise<SyncState | undefined> {
     const result = await db.select()
@@ -431,6 +428,7 @@ export class PgStorage implements IStorage {
     return result[0];
   }
   
+
   async getSyncProgress(): Promise<{ payments: number; giftCards: number }> {
     // Get the payments sync state
     const paymentsSyncState = await this.getSyncState('payments');
