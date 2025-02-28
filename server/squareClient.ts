@@ -6,8 +6,14 @@ if (typeof BigInt.prototype.toJSON !== 'function') {
 }
 
 import { Client, Environment } from 'square';
+import { 
+  Transaction, InsertTransaction,
+  GiftCard, InsertGiftCard,
+  Category, TransactionStatus, syncState
+} from '@shared/schema';
 import { toZonedTime } from 'date-fns-tz';
 import dotenv from 'dotenv';
+import { db } from './db'; // Import db directly instead of pgStorage
 
 // Define Eastern timezone constant
 const EASTERN_TIMEZONE = 'America/New_York';
@@ -127,12 +133,45 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
   }
 }
 
-// Add helper function to check if a payment is a gift card redemption
+// Add enhanced gift card redemption detection
 function isGiftCardRedemption(payment: any): boolean {
-  return (
-    (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
-    (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD')
-  );
+  try {
+    // Check for gift card payment source
+    const isGiftCard = (
+      (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
+      (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD')
+    );
+
+    if (isGiftCard) {
+      // Extract the gift card ID from the payment source
+      let sourceId = null;
+      if (payment.sourceId) {
+        sourceId = payment.sourceId;
+      } else if (payment.cardDetails?.card?.id) {
+        sourceId = payment.cardDetails.card.id;
+      }
+
+      console.log(`Found gift card redemption payment:`, {
+        paymentId: payment.id,
+        sourceType: payment.sourceType,
+        cardDetails: payment.cardDetails,
+        sourceId: sourceId,
+        amount: payment.amountMoney ? Number(payment.amountMoney.amount) / 100 : 0
+      });
+
+      // Add additional information to the payment object
+      payment.isGiftCardRedemption = true;
+      payment.sourceId = sourceId;
+      payment.redemptionAmount = payment.amountMoney 
+        ? Number(payment.amountMoney.amount) / 100 
+        : 0;
+    }
+
+    return isGiftCard;
+  } catch (error) {
+    console.error('Error checking gift card redemption:', error);
+    return false;
+  }
 }
 
 // Fetch payments from Square API
@@ -147,9 +186,10 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     const endTime = end.toISOString();
 
     // Create or update sync state
-    let syncState = await pgStorage.getSyncState('payments');
-    if (!syncState) {
-      syncState = await pgStorage.createSyncState({
+    let syncStateDb = await db.getSyncState('payments');
+    let syncState:syncState;
+    if (!syncStateDb) {
+      syncState = await db.createSyncState({
         syncType: 'payments',
         lastSyncedAt: new Date(),
         currentPage: 1,
@@ -162,6 +202,8 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
         errorMessage: null,
         lastCheckpoint: null
       });
+    } else {
+      syncState = syncStateDb;
     }
 
     console.log(`Starting payments sync from ${beginTime} to ${endTime}`);
@@ -186,6 +228,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           undefined,
           undefined,
           undefined,
+          undefined,
           100
         );
 
@@ -194,19 +237,26 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
         // Process each payment to identify gift card redemptions
         for (const payment of payments) {
           if (isGiftCardRedemption(payment)) {
-            console.log(`Found gift card redemption payment: ${payment.id}`);
-            // Add flags to identify redemption in downstream processing
+            console.log(`Processing gift card redemption payment: ${payment.id}`);
+            // Add redemption information to the payment
             payment.isGiftCardRedemption = true;
             payment.redemptionAmount = payment.amountMoney 
               ? Number(payment.amountMoney.amount) / 100 
               : 0;
+            payment.sourceId = payment.sourceId || payment.cardDetails?.card?.id;
+
+            console.log(`Gift card redemption details:`, {
+              paymentId: payment.id,
+              amount: payment.redemptionAmount,
+              sourceId: payment.sourceId
+            });
           }
         }
 
         allPayments = [...allPayments, ...payments];
 
         // Update sync state
-        await pgStorage.updateSyncState(syncState.id, {
+        await db.updateSyncState(syncState.id, {
           currentPage: pageCount,
           processedCount: allPayments.length,
           cursor: response.result.cursor || '',
@@ -227,7 +277,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
         console.error('Error fetching payments page:', error);
 
         // Update sync state with error
-        await pgStorage.updateSyncState(syncState.id, {
+        await db.updateSyncState(syncState.id, {
           status: 'error',
           errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
           lastSyncedAt: new Date()
@@ -238,7 +288,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     }
 
     // Mark sync as complete
-    await pgStorage.updateSyncState(syncState.id, {
+    await db.updateSyncState(syncState.id, {
       isComplete: true,
       status: 'completed',
       lastSyncedAt: new Date(),
@@ -272,7 +322,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
   }
 }
 
-// Convert Square payment to our Transaction model
+// Update convertSquarePaymentToTransaction function
 export function convertSquarePaymentToTransaction(payment: Record<string, any>): InsertTransaction {
   // Extract the amount
   const amountMoney = payment.amountMoney;
@@ -289,50 +339,42 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     }
   }
 
-  // Determine category based on payment information
-  let category: Category = 'retail'; // Default
-
-  // Log detailed payment data for troubleshooting
-  if (payment.id && payment.orderId) {
-    console.log(`Payment ${payment.id} linked to order ${payment.orderId}`);
-  }
-
   // IMPORTANT: We need to handle gift card purchases differently than gift card payments
   // Gift card PURCHASES - When a customer BUYS a gift card (this should be categorized as a gift card sale)
-  // Gift card PAYMENTS - When a customer PAYS USING a gift card (this should NOT be categorized as gift card)
-
-  // ENHANCED GIFT CARD DETECTION LOGIC
+  // Gift card PAYMENTS - When a customer PAYS USING a gift card (this should NOT be categorized as a gift card)
 
   // First check if this is a payment USING a gift card (not a gift card purchase)
   const paidWithGiftCard = 
     (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
     (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD');
 
-  if (paidWithGiftCard) {
-    // This is someone paying WITH a gift card, NOT a gift card sale
-    // We should categorize based on what they bought, not as a gift card
-    console.log(`Payment USING gift card detected: ${payment.id}, amount: $${amount}`);
+  let category: Category = 'retail'; // Default category
 
-    // Try to determine category from order name or note
+  if (paidWithGiftCard) {
+    // Log gift card payment details
+    console.log(`Payment USING gift card detected:`, {
+      paymentId: payment.id,
+      amount: amount,
+      sourceId: payment.sourceId || payment.cardDetails?.card?.id
+    });
+
+    // For payments using gift cards, we want to categorize based on what was purchased
     if (payment.orderId && payment.orderName) {
       category = mapSquareCategory(payment.orderName);
     } else if (payment.note) {
       category = mapSquareCategory(payment.note);
     }
-  } 
-  // If it's not paid with a gift card, check if it's a gift card PURCHASE
-  else {
+  } else {
+    // If not paid with gift card, check if it's a gift card purchase
     let isGiftCardPurchase = false;
 
-    // DIRECT ORDERS API APPROACH - Check for item_type = GIFT_CARD in order line items
+    // Check order data for gift card items
     if (payment.orderId && payment.orderData) {
       try {
-        // Parse order data if it's stored as a string
         const orderData = typeof payment.orderData === 'string' 
           ? JSON.parse(payment.orderData) 
           : payment.orderData;
 
-        // Check for line items with GIFT_CARD type - this is the most reliable method
         if (orderData.lineItems && Array.isArray(orderData.lineItems)) {
           const giftCardItems = orderData.lineItems.filter((item: any) => 
             item.itemType === 'GIFT_CARD' || 
@@ -341,131 +383,57 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
 
           if (giftCardItems.length > 0) {
             isGiftCardPurchase = true;
-            console.log(`✅ Found gift card purchase in order ${payment.orderId} via line items`);
-
-            // Log detailed info about the gift card items
-            giftCardItems.forEach((item: any, index: number) => {
-              const itemAmount = item.basePriceMoney 
-                ? Number(item.basePriceMoney.amount) / 100 
-                : 0;
-
-              console.log(`  Gift Card Item #${index + 1}:`);
-              console.log(`  - Name: ${item.name || 'N/A'}`);
-              console.log(`  - Item Type: ${item.itemType || 'N/A'}`);
-              console.log(`  - Amount: $${itemAmount}`);
-              console.log(`  - Quantity: ${item.quantity || 1}`);
-            });
+            console.log(`Found gift card purchase in order ${payment.orderId}`);
           }
         }
       } catch (error) {
-        console.warn(`Error checking order data for gift cards in payment ${payment.id}:`, error);
+        console.error(`Error checking order data for gift cards:`, error);
       }
     }
 
-    // BACKUP PAYMENT-ONLY DETECTION - Used if order data isn't available
-    if (!isGiftCardPurchase) {
-      const orderName = (payment.orderName || '').toLowerCase();
-      const note = (payment.note || '').toLowerCase();
-
-      // Check for gift card indicators in various fields
-      isGiftCardPurchase = 
-        orderName.includes('gift card') ||
-        note.includes('gift card') ||
-        (payment.itemizations && Array.isArray(payment.itemizations) && 
-          payment.itemizations.some((item: any) => 
-            (item.name && item.name.toLowerCase().includes('gift card')) ||
-            (item.itemType && item.itemType === 'GIFT_CARD')
-          )
-        );
-
-      if (isGiftCardPurchase) {
-        console.log(`✅ Found gift card purchase in payment ${payment.id} via text search`);
-      }
-    }
-
-    // Generalized logging for all gift card purchases regardless of date
-    if (isGiftCardPurchase && process.env.DEBUG_GIFT_CARDS) {
-      console.log(`📊 Gift card purchase detected in payment ${payment.id} - Amount: $${amount}`);
-    }
-
-    // SET CATEGORY based on our detection logic
+    // Set category based on our detection
     if (isGiftCardPurchase) {
       category = 'giftCard';
-      console.log(`Identified gift card PURCHASE: ${payment.id}, amount: $${amount}`);
-    } 
-    // Otherwise use standard category detection
-    else if (payment.orderId) {
+    } else {
       category = payment.orderName ? mapSquareCategory(payment.orderName) : 'retail';
-    } else if (payment.note) {
-      category = mapSquareCategory(payment.note);
     }
   }
 
-  // Parse and convert the timestamp from UTC to Eastern Time for proper business day alignment
-  let timestamp: Date;
-  try {
-    // Parse the Square API timestamp string as UTC (Square provides timestamps in UTC)
-    const utcTimestamp = new Date(payment.createdAt);
-
-    // Validate the date
-    if (isNaN(utcTimestamp.getTime())) {
-      // If invalid, use current date
-      console.warn(`Invalid timestamp for payment ${payment.id}, using current date instead`);
-      timestamp = new Date();
-    } else {
-      // Convert the UTC timestamp to a date in Eastern timezone
-      // This preserves the exact same moment in time but represents it in Eastern timezone
-      // This ensures that midnight-to-midnight in Eastern time is properly preserved
-      timestamp = toZonedTime(utcTimestamp, EASTERN_TIMEZONE);
-
-      // Log the timestamp conversion for debugging
-      console.log(`Payment ${payment.id} timestamp conversion:`, {
-        original: payment.createdAt,
-        utc: utcTimestamp.toISOString(),
-        eastern: formatInTimeZone(timestamp, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
-      });
-    }
-  } catch (error) {
-    console.warn(`Error processing timestamp for payment ${payment.id}, using current date instead:`, error);
+  // Parse and convert the timestamp
+  let timestamp: Date = new Date(payment.createdAt);
+  if (isNaN(timestamp.getTime())) {
+    console.warn(`Invalid timestamp for payment ${payment.id}, using current date`);
     timestamp = new Date();
   }
 
   // Convert payment data to handle BigInt values
-  let cleanedPaymentData: Record<string, any> = {};
-  try {
-    // Try the JSON parse/stringify approach with replacer
-    cleanedPaymentData = JSON.parse(JSON.stringify(payment, (key, value) => 
-      typeof value === 'bigint' ? value.toString() : value
-    ));
-  } catch (error) {
-    console.warn(`Error stringifying payment ${payment.id}, using manual conversion:`, error);
-    // Manual fallback - create a new object without BigInt values
-    Object.keys(payment).forEach(key => {
-      const value = (payment as Record<string, any>)[key];
-      if (typeof value === 'bigint') {
-        cleanedPaymentData[key] = value.toString();
-      } else if (typeof value === 'object' && value !== null) {
-        // For nested objects, we'll just store a simplified version
-        try {
-          cleanedPaymentData[key] = JSON.stringify(value);
-        } catch (e) {
-          cleanedPaymentData[key] = '[Complex Object]';
-        }
-      } else {
-        cleanedPaymentData[key] = value;
-      }
-    });
-  }
+  const cleanedPaymentData = processSafeSquareData(payment);
 
-  // Map to our transaction model
+  // Map to our transaction model, preserving gift card redemption flags
   const transaction: InsertTransaction = {
     squareId: payment.id,
     amount,
     categoryId: category,
     status: mapSquareStatus(payment.status),
     timestamp,
-    squareData: cleanedPaymentData
+    squareData: {
+      ...cleanedPaymentData,
+      isGiftCardRedemption: payment.isGiftCardRedemption || false,
+      redemptionAmount: payment.redemptionAmount || 0,
+      sourceId: payment.sourceId || payment.cardDetails?.card?.id
+    }
   };
+
+  // Log transaction creation for gift card payments
+  if (payment.isGiftCardRedemption) {
+    console.log(`Created transaction from gift card payment:`, {
+      squareId: transaction.squareId,
+      amount: transaction.amount,
+      isGiftCardRedemption: transaction.squareData.isGiftCardRedemption,
+      redemptionAmount: transaction.squareData.redemptionAmount,
+      sourceId: transaction.squareData.sourceId
+    });
+  }
 
   return transaction;
 }

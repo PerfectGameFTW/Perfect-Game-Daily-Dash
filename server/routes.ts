@@ -6,16 +6,19 @@ if (typeof BigInt.prototype.toJSON !== 'function') {
 
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
-import { pgStorage, db } from "./pgStorage";
+import { db } from "./db"; // Import db directly
+import { pgStorage } from "./pgStorage"; // Keep this for other storage operations
 import {
   dateRangeSchema,
   transactions,
   giftCards,
-  giftCardRedemptions // Added import for gift card redemptions
+  giftCardRedemptions,
+  syncState,
+  type InsertSyncState
 } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
-import { and, gte, lte, sql, eq } from "drizzle-orm";
+import { and, gte, lte, sql, eq, gt } from "drizzle-orm";
 
 // Helper function to safely process Square API response data
 function processSafeSquareData(data: any): any {
@@ -58,6 +61,28 @@ function ensureSerializable(data: any): any {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const apiRouter = express.Router();
+
+  // Get sync state
+  apiRouter.get("/sync-state", async (req, res) => {
+    try {
+      // Get sync state directly from db
+      const paymentsSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'payments')
+      });
+
+      const giftCardsSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'giftCards')
+      });
+
+      res.json({
+        payments: paymentsSyncState || { status: 'none' },
+        giftCards: giftCardsSyncState || { status: 'none' }
+      });
+    } catch (error) {
+      console.error("Error getting sync state:", error);
+      res.status(500).json({ error: "Failed to get sync state" });
+    }
+  });
 
   // Get dashboard summary data
   apiRouter.get("/summary", async (req, res) => {
@@ -730,45 +755,175 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Simple mutex to prevent concurrent syncs
-  let isSyncRunning = false;
-  let syncStartTime: Date | null = null;
+  // Add test endpoint after the fix-gift-cards endpoint
+  apiRouter.get("/test-redemption", async (req, res) => {
+    try {
+      console.log("Testing gift card redemption processing...");
 
-  // Function to check if sync has been running too long (30 minutes)
-  const hasSyncTimedOut = (): boolean => {
-    if (!syncStartTime) return false;
+      // Create a test payment that simulates a gift card redemption
+      const testPayment = {
+        id: 'test_payment_' + Date.now(),
+        sourceType: 'GIFT_CARD',
+        amountMoney: {
+          amount: 2500, // $25.00
+          currency: 'USD'
+        },
+        status: 'COMPLETED',
+        createdAt: new Date().toISOString(),
+        orderId: 'test_order_' + Date.now(),
+        sourceId: null // We'll set this to a real gift card ID
+      };
 
-    const timeoutMinutes = 30; // Consider sync stalled after 30 minutes
-    const now = new Date();
-    const diffMs = now.getTime() - syncStartTime.getTime();
-    const diffMinutes = diffMs / (1000 * 60);
+      // Get a real gift card from our database to use in the test
+      const sampleGiftCard = await db.query.giftCards.findFirst({
+        where: eq(giftCards.amount, gt(0))
+      });
 
-    return diffMinutes > timeoutMinutes;
-  };
+      if (!sampleGiftCard) {
+        return res.status(404).json({ error: "No gift cards found for testing" });
+      }
 
-  // Unified sync route to handle all transaction and gift card syncing
+      // Set the source ID to the real gift card's Square ID
+      testPayment.sourceId = sampleGiftCard.squareId;
+
+      console.log("Using gift card for test:", {
+        squareId: sampleGiftCard.squareId,
+        amount: sampleGiftCard.amount,
+        redeemedAmount: sampleGiftCard.redeemedAmount
+      });
+
+      // Process the test payment through our regular flow
+      const isRedemption = squareClient.isGiftCardRedemption(testPayment);
+      console.log("Redemption detection result:", {
+        isRedemption,
+        testPayment
+      });
+
+      if (isRedemption) {
+        // Convert the payment to our transaction model
+        const transaction = squareClient.convertSquarePaymentToTransaction(testPayment);
+        console.log("Converted transaction:", transaction);
+
+        // Insert the transaction
+        const createdTransaction = await db.insert(transactions)
+          .values(transaction)
+          .returning()
+          .then(res => res[0]);
+
+        console.log("Created transaction:", createdTransaction);
+
+        // Create the redemption record
+        const redemption = {
+          giftCardId: sampleGiftCard.id,
+          amount: Number(testPayment.amountMoney.amount) / 100,
+          transactionId: createdTransaction.id,
+          timestamp: new Date()
+        };
+
+        console.log("Creating redemption record:", redemption);
+
+        const createdRedemption = await db.insert(giftCardRedemptions)
+          .values(redemption)
+          .returning()
+          .then(res => res[0]);
+
+        console.log("Created redemption record:", createdRedemption);
+
+        // Update the gift card's redeemed amount
+        const updatedGiftCard = await db.update(giftCards)
+          .set({
+            redeemedAmount: sql`COALESCE(${giftCards.redeemedAmount}, 0) + ${redemption.amount}`
+          })
+          .where(eq(giftCards.id, sampleGiftCard.id))
+          .returning()
+          .then(res => res[0]);
+
+        console.log("Updated gift card:", updatedGiftCard);
+
+        res.json({
+          success: true,
+          message: "Test redemption processed successfully",
+          details: {
+            giftCard: sampleGiftCard,
+            transaction: createdTransaction,
+            redemption: createdRedemption,
+            updatedGiftCard
+          }
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          error: "Test payment was not detected as a gift card redemption"
+        });
+      }
+    } catch (error) {
+      console.error("Error processing test redemption:", error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to process test redemption",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
+  // Update sync endpoint to use db directly for sync operations
   apiRouter.post("/sync", async (req, res) => {
     try {
-      // Check if a sync is already running
-      if (isSyncRunning) {
-        // If sync has been running too long, consider it stalled and allow a new one
-        if (hasSyncTimedOut()) {
-          console.log("Previous sync timed out after 30 minutes. Allowing new sync to start.");
-          isSyncRunning = false;
-        } else {
-          console.log("Sync already in progress. Skipping new sync request.");
+      let syncStartTime: Date | null = null;
+      letisSyncRunning = false;
 
-          // Get current sync state from database for response
-          const paymentsSyncState = await pgStorage.getSyncState('payments');
-          const lastSyncTime = paymentsSyncState?.lastSyncedAt || new Date(0);
+      // Check if sync is already running
+      const existingSync = await db.query.syncState.findFirst({
+        where: and(
+          eq(syncState.status, 'in_progress'),
+          eq(syncState.isComplete, false)
+        )
+      });
 
-          return res.status(409).json({
-            success: false,
-            error: "A sync is already in progress. Please try again later.",
-            lastSyncTime: lastSyncTime.toISOString()
-          });
-        }
+      if (existingSync) {
+        console.log("Sync already in progress. Skipping new sync request.");
+        return res.status(409).json({
+          success: false,
+          error: "A sync is already in progress",
+          lastSyncTime: existingSync.lastSyncedAt.toISOString()
+        });
       }
+
+      // Create new sync state
+      const newSyncState: InsertSyncState = {
+        syncType: 'payments',
+        lastSyncedAt: new Date(),
+        processedCount: 0,
+        totalCount: 0,
+        isComplete: false,
+        status: 'in_progress',
+        lastCheckpoint: null,
+        errorMessage: null
+      };
+
+      // Insert new sync state
+      const paymentsSyncState = await db.insert(syncState)
+        .values(newSyncState)
+        .returning();
+
+      console.log("Created new sync state:", paymentsSyncState[0]);
+
+      // Simple mutex to prevent concurrent syncs
+      //let isSyncRunning = false;
+      //let syncStartTime: Date | null = null;
+
+      // Function to check if sync has been running too long (30 minutes)
+      const hasSyncTimedOut = (): boolean => {
+        if (!syncStartTime) return false;
+
+        const timeoutMinutes = 30; // Consider sync stalled after 30 minutes
+        const now = new Date();
+        const diffMs = now.getTime() - syncStartTime.getTime();
+        const diffMinutes = diffMs / (1000 * 60);
+
+        return diffMinutes > timeoutMinutes;
+      };
+
 
       // Set the lock to prevent concurrent syncs
       isSyncRunning = true;
@@ -808,7 +963,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`Using provided date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       } else {
         // Check if we've done a sync before
-        const lastPaymentSync = await pgStorage.getSyncState('payments');
+        const lastPaymentSync = await db.query.syncState.findFirst({
+          where: eq(syncState.syncType, 'payments')
+        });
 
         if (lastPaymentSync && lastPaymentSync.isComplete && lastPaymentSync.lastSyncedAt) {
           // This is not initial sync - get data since last sync
@@ -836,13 +993,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("--- STEP 1: SYNCING PAYMENTS ---");
 
       // Check for existing payments sync state
-      let paymentsSyncState = await pgStorage.getSyncState('payments');
+      let paymentsSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'payments')
+      });
       let lastCheckpoint: any = null;
 
       if (paymentsSyncState && !paymentsSyncState.isComplete) {
         // Resume from checkpoint
         console.log("Resuming payments sync from checkpoint:", {
-                    lastSyncAt: paymentsSyncState.lastSyncedAt,
+          lastSyncAt: paymentsSyncState.lastSyncedAt,
           processed: paymentsSyncState.processedCount,
           total: paymentsSyncState.totalCount
         });
@@ -854,16 +1013,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lastSyncedAt: new Date(),
           processedCount: 0,
           totalCount: 0,
-          isComplete: false,          status: 'in_progress',
-          lastCheckpoint: { lastPosition: 0 }
+          isComplete: false,
+          status: 'in_progress',
+          lastCheckpoint: { lastPosition: 0 },
+          errorMessage: null
         };
 
         if (paymentsSyncState) {
           // Update existing record
-          paymentsSyncState = await pgStorage.updateSyncState(paymentsSyncState.id, syncData);
+          paymentsSyncState = await db.update(syncState)
+            .set(syncData)
+            .where(eq(syncState.syncType, 'payments'))
+            .returning().then(res => res[0]);
         } else {
-          //          // Create new record
-          paymentsSyncState = await pgStorage.createSyncState(syncData);
+          // Create new record
+          paymentsSyncState = await db.insert(syncState)
+            .values(syncData)
+            .returning().then(res => res[0]);
         }
         console.log("Created new payments sync state record:", paymentsSyncState.id);
       }
@@ -874,10 +1040,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`Fetched ${payments.length} total payments`);
 
       // Update sync state with total payment count
-      paymentsSyncState = await pgStorage.updateSyncState(paymentsSyncState.id, {
-        totalCount: payments.length,
-        status: 'processing',
-      });
+      paymentsSyncState = await db.update(syncState)
+        .set({
+          totalCount: payments.length,
+          status: 'processing',
+          lastSyncedAt: new Date()
+        })
+        .where(eq(syncState.id, paymentsSyncState.id))
+        .returning().then(res => res[0]);
 
       // Process each payment with robust error handling
       let processedCount = lastCheckpoint?.lastPosition || 0;
@@ -895,20 +1065,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`Processing payment ${processedCount} of ${payments.length}...`);
 
             // Update checkpoint in database
-            await pgStorage.updateSyncState(paymentsSyncState.id, {
-              processedCount: processedCount,
-              lastSyncedAt: new Date(),
-              lastCheckpoint: { lastPosition: processedCount }
-            });
+            await db.update(syncState)
+              .set({
+                processedCount: processedCount,
+                lastSyncedAt: new Date(),
+                lastCheckpoint: { lastPosition: processedCount }
+              })
+              .where(eq(syncState.id, paymentsSyncState.id))
+              .returning();
           }
 
           // Check if we already have this transaction
-          const existing = await pgStorage.getTransactionBySquareId(payment.id);
+          const existing = await db.query.transactions.findFirst({
+            where: eq(transactions.squareId, payment.id)
+          });
+
           if (!existing) {
             // Convert to our model and save
             const transaction = squareClient.convertSquarePaymentToTransaction(payment);
-            await pgStorage.createTransaction(transaction);
+            const createdTransaction = await db.insert(transactions)
+              .values(transaction)
+              .returning()
+              .then(res => res[0]);
+
             results.transactions++;
+
+            // Handle gift card redemption if this payment used a gift card
+            if (payment.isGiftCardRedemption && payment.sourceId) {
+              console.log(`Processing gift card redemption for payment ${payment.id}`);
+              try {
+                // Find the gift card used in this payment
+                const giftCard = await db.query.giftCards.findFirst({
+                  where: eq(giftCards.squareId, payment.sourceId)
+                });
+
+                if (giftCard) {
+                  console.log(`Found gift card for redemption:`, {
+                    squareId: giftCard.squareId,
+                    internalId: giftCard.id,
+                    currentAmount: giftCard.amount,
+                    redeemedAmount: giftCard.redeemedAmount
+                  });
+
+                  // Create redemption record
+                  const redemption = {
+                    giftCardId: giftCard.id,
+                    amount: payment.redemptionAmount,
+                    transactionId: createdTransaction.id,
+                    timestamp: createdTransaction.timestamp
+                  };
+
+                  // Log redemption details before insert
+                  console.log(`Creating gift card redemption record:`, redemption);
+
+                  // Insert redemption record
+                  const createdRedemption = await db.insert(giftCardRedemptions)
+                    .values(redemption)
+                    .returning();
+
+                  console.log(`Created redemption record:`, createdRedemption[0]);
+
+                  // Update gift card redeemed amount
+                  const updatedGiftCard = await db.update(giftCards)
+                    .set({
+                      redeemedAmount: sql`COALESCE(${giftCards.redeemedAmount}, 0) + ${payment.redemptionAmount}`
+                    })
+                    .where(eq(giftCards.id, giftCard.id))
+                    .returning();
+
+                  console.log(`Updated gift card redeemed amount:`, {
+                    giftCardId: giftCard.id,
+                    newRedeemedAmount: updatedGiftCard[0].redeemedAmount
+                  });
+                } else {
+                  console.warn(`Gift card ${payment.sourceId} not found for redemption in payment ${payment.id}`);
+                }
+              } catch (redemptionError) {
+                console.error(`Error processing gift card redemption for payment ${payment.id}:`, redemptionError);
+                // Continue processing other payments even if this redemption fails
+              }
+            }
           } else {
             existingCount++;
           }
@@ -919,12 +1155,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Create a checkpoint so we don't lose progress
           if (i % 10 === 0) {
-            await pgStorage.updateSyncState(paymentsSyncState.id, {
-              processedCount: i,
-              lastSyncedAt: new Date(),
-              lastCheckpoint: { lastPosition: i },
-              errorMessage: `Skipped ${errorCount} payment records with errors`
-            });
+            await db.update(syncState)
+              .set({
+                processedCount: i,
+                lastSyncedAt: new Date(),
+                lastCheckpoint: { lastPosition: i },
+                errorMessage: `Skipped ${errorCount} payment records with errors`
+              })
+              .where(eq(syncState.id, paymentsSyncState.id))
+              .returning();
           }
 
           // Continue with next record
@@ -935,19 +1174,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`Payments sync complete: ${processedCount} processed, ${existingCount} already existed, ${errorCount} errors, added ${results.transactions} new transactions`);
 
       // Mark payments sync as complete
-      await pgStorage.updateSyncState(paymentsSyncState.id, {
-        processedCount: payments.length,
-        isComplete: true,
-        status: 'completed',
-        lastSyncedAt: new Date()
-      });
+      await db.update(syncState)
+        .set({
+          processedCount: payments.length,
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: new Date()
+        })
+        .where(eq(syncState.id, paymentsSyncState.id))
+        .returning();
 
       // STEP 2: Sync Orders and detect gift card line items
       // --------------------------------------------------
       console.log("--- STEP 2: SYNCING ORDERS AND DETECTING GIFT CARDS ---");
 
       // Check for existing orders sync state
-      let ordersSyncState = await pgStorage.getSyncState('orders');
+      let ordersSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'orders')
+      });
       let ordersCheckpoint: any = null;
 
       if (ordersSyncState && !ordersSyncState.isComplete) {
@@ -967,15 +1211,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalCount: 0,
           isComplete: false,
           status: 'in_progress',
-          lastCheckpoint: { lastPosition: 0 }
+          lastCheckpoint: { lastPosition: 0 },
+          errorMessage: null
         };
 
         if (ordersSyncState) {
           // Update existing record
-          ordersSyncState = await pgStorage.updateSyncState(ordersSyncState.id, syncData);
+          ordersSyncState = await db.update(syncState)
+            .set(syncData)
+            .where(eq(syncState.syncType, 'orders'))
+            .returning().then(res => res[0]);
         } else {
           // Create new record
-          ordersSyncState = await pgStorage.createSyncState(syncData);
+          ordersSyncState = await db.insert(syncState)
+            .values(syncData)
+            .returning().then(res => res[0]);
         }
         console.log("Created new orders sync state record:", ordersSyncState.id);
       }
@@ -986,10 +1236,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`Fetched ${orders.length} total orders`);
 
       // Update sync state with total order count
-      ordersSyncState = await pgStorage.updateSyncState(ordersSyncState.id, {
-        totalCount: orders.length,
-        status: 'processing',
-      });
+      ordersSyncState = await db.update(syncState)
+        .set({
+          totalCount: orders.length,
+          status: 'processing',
+          lastSyncedAt: new Date()
+        })
+        .where(eq(syncState.id, ordersSyncState.id))
+        .returning().then(res => res[0]);
 
       // Process orders and identify gift cards with checkpoints
       let giftCardSalesCount = 0;
@@ -998,13 +1252,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let ordersErrorCount = 0;
 
       console.log(`Starting to process ${orders.length} orders, resuming from position ${ordersProcessed}`);
-      
+
       // First update the total count in orders sync state
-      await pgStorage.updateSyncState(ordersSyncState.id, {
-        totalCount: orders.length,
-        processedCount: ordersProcessed,
-        lastSyncedAt: new Date()
-      });
+      await db.update(syncState)
+        .set({
+          totalCount: orders.length,
+          processedCount: ordersProcessed,
+          lastSyncedAt: new Date()
+        })
+        .where(eq(syncState.id, ordersSyncState.id))
+        .returning();
 
       // Process each order to identify gift card sales
       for (let i = ordersProcessed; i < orders.length; i++) {
@@ -1017,11 +1274,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`Processing order ${ordersProcessed} of ${orders.length}...`);
 
             // Update checkpoint in database
-            await pgStorage.updateSyncState(ordersSyncState.id, {
-              processedCount: ordersProcessed,
-              lastSyncedAt: new Date(),
-              lastCheckpoint: { lastPosition: ordersProcessed }
-            });
+            await db.update(syncState)
+              .set({
+                processedCount: ordersProcessed,
+                lastSyncedAt: new Date(),
+                lastCheckpoint: { lastPosition: ordersProcessed }
+              })
+              .where(eq(syncState.id, ordersSyncState.id))
+              .returning();
           }
 
           // Analyze order for gift card detection
@@ -1061,12 +1321,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Create a checkpoint so we don't lose progress
           if (i % 10 === 0) {
-            await pgStorage.updateSyncState(ordersSyncState.id, {
-              processedCount: i,
-              lastSyncedAt: new Date(),
-              lastCheckpoint: { lastPosition: i },
-              errorMessage: `Skipped ${ordersErrorCount} order records with errors`
-            });
+            await db.update(syncState)
+              .set({
+                processedCount: i,
+                lastSyncedAt: new Date(),
+                lastCheckpoint: { lastPosition: i },
+                errorMessage: `Skipped ${ordersErrorCount} order records with errors`
+              })
+              .where(eq(syncState.id, ordersSyncState.id))
+              .returning();
           }
 
           // Continue with next record
@@ -1079,16 +1342,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Mark orders sync as complete with additional logging
       console.log(`Updating orders sync state to completed: processedCount=${ordersProcessed}, totalCount=${orders.length}`);
-      
+
       // Final update to order sync state
-      const updatedOrderSyncState = await pgStorage.updateSyncState(ordersSyncState.id, {
-        processedCount: ordersProcessed,
-        totalCount: orders.length,
-        isComplete: true,
-        status: 'completed',
-        lastSyncedAt: new Date()
-      });
-      
+      const updatedOrderSyncState = await db.update(syncState)
+        .set({
+          processedCount: ordersProcessed,
+          totalCount: orders.length,
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: new Date()
+        })
+        .where(eq(syncState.id, ordersSyncState.id))
+        .returning().then(res => res[0]);
+
       console.log("Orders sync state after update:", {
         id: updatedOrderSyncState.id,
         syncType: updatedOrderSyncState.syncType,
@@ -1103,7 +1369,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("--- STEP 3: SYNCING GIFT CARDS ---");
 
       // Check for existing gift cards sync state
-      let giftCardsSyncState = await pgStorage.getSyncState('giftCards');
+      let giftCardsSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'giftCards')
+      });
       let giftCardsCheckpoint: any = null;
 
       if (giftCardsSyncState && !giftCardsSyncState.isComplete) {
@@ -1123,15 +1391,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalCount: 0,
           isComplete: false,
           status: 'in_progress',
-          lastCheckpoint: { lastPosition: 0 }
+          lastCheckpoint: { lastPosition: 0 },
+          errorMessage: null
         };
 
         if (giftCardsSyncState) {
           // Update existing record
-          giftCardsSyncState = await pgStorage.updateSyncState(giftCardsSyncState.id, syncData);
+          giftCardsSyncState = await db.update(syncState)
+            .set(syncData)
+            .where(eq(syncState.syncType, 'giftCards'))
+            .returning().then(res => res[0]);
         } else {
           // Create new record
-          giftCardsSyncState = await pgStorage.createSyncState(syncData);
+          giftCardsSyncState = await db.insert(syncState)
+            .values(syncData)
+            .returning().then(res => res[0]);
         }
         console.log("Created new gift cards sync state record:", giftCardsSyncState.id);
       }
@@ -1147,10 +1421,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Update sync state with total gift card count
-      giftCardsSyncState = await pgStorage.updateSyncState(giftCardsSyncState.id, {
-        totalCount: giftCards.length,
-        status: 'processing',
-      });
+      giftCardsSyncState = await db.update(syncState)
+        .set({
+          totalCount: giftCards.length,
+          status: 'processing',
+          lastSyncedAt: new Date()
+        })
+        .where(eq(syncState.id, giftCardsSyncState.id))
+        .returning().then(res => res[0]);
 
       // Process each gift card with error handling
       let giftCardPosition = giftCardsCheckpoint?.lastPosition || 0;
@@ -1170,15 +1448,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`Processing gift card ${giftCardPosition} of ${giftCards.length}...`);
 
             // Update checkpoint in database
-            await pgStorage.updateSyncState(giftCardsSyncState.id, {
-              processedCount: giftCardPosition,
-              lastSyncedAt: new Date(),
-              lastCheckpoint: { lastPosition: giftCardPosition }
-            });
+            await db.update(syncState)
+              .set({
+                processedCount: giftCardPosition,
+                lastSyncedAt: new Date(),
+                lastCheckpoint: { lastPosition: giftCardPosition }
+              })
+              .where(eq(syncState.id, giftCardsSyncState.id))
+              .returning();
           }
 
           // Check if we already have this gift card
-          const existing = await pgStorage.getGiftCardBySquareId(giftCard.id);
+          const existing = await db.query.giftCards.findFirst({
+            where: eq(giftCards.squareId, giftCard.id)
+          });
           if (!existing) {
             // Convert to our model and save
             const card = squareClient.convertSquareGiftCardToGiftCard(giftCard);
@@ -1191,7 +1474,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log(`WARNING: Gift card ${giftCard.id} has zero amount`);
             }
 
-            await pgStorage.createGiftCard(card);
+            await db.insert(giftCards).values(card);
             results.giftCards++;
 
             // Log every successful gift card insert
@@ -1205,7 +1488,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               // Update the card with the new amount
               await db.update(giftCards)
                 .set({ amount: updatedCard.amount, squareData: updatedCard.squareData })
-                .where(eq(giftCards.squareId, giftCard.id));
+                .where(eq(giftCards.squareId, giftCard.id))
+                .returning();
 
               console.log(`UPDATED gift card ${giftCard.id} amount from $0 to $${updatedCard.amount.toFixed(2)}`);
               nonZeroAmountCards++;
@@ -1220,12 +1504,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Create a checkpoint so we don't lose progress
           if (i % 5 === 0) {
-            await pgStorage.updateSyncState(giftCardsSyncState.id, {
-              processedCount: i,
-              lastSyncedAt: new Date(),
-              lastCheckpoint: { lastPosition: i },
-              errorMessage: `Skipped ${giftCardErrorCount} gift card records with errors`
-            });
+            await db.update(syncState)
+              .set({
+                processedCount: i,
+                lastSyncedAt: new Date(),
+                lastCheckpoint: { lastPosition: i },
+                errorMessage: `Skipped ${giftCardErrorCount} gift card records with errors`
+              })
+              .where(eq(syncState.id, giftCardsSyncState.id))
+              .returning();
           }
 
           // Continue with next record
@@ -1237,12 +1524,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`Gift card amount summary: ${nonZeroAmountCards} cards with amounts > 0, ${zeroAmountCards} cards with zero amounts`);
 
       // Mark gift cards sync as complete
-      await pgStorage.updateSyncState(giftCardsSyncState.id, {
-        processedCount: giftCards.length,
-        isComplete: true,
-        status: 'completed',
-        lastSyncedAt: new Date()
-      });
+      await db.update(syncState)
+        .set({
+          processedCount: giftCards.length,
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: new Date()
+        })
+        .where(eq(syncState.id, giftCardsSyncState.id))
+        .returning();
 
       // All sync operations complete
       const syncType = isInitialSync ? 'initial (90 days)' : 'incremental';
@@ -1275,13 +1565,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Try to update all sync states
         const syncTypes = ['payments', 'orders', 'giftCards'];
         for (const syncType of syncTypes) {
-          const syncState = await pgStorage.getSyncState(syncType);
+          const syncState = await db.query.syncState.findFirst({
+            where: eq(syncState.syncType, syncType)
+          });
           if (syncState) {
-            await pgStorage.updateSyncState(syncState.id, {
-              status: 'error',
-              errorMessage: error instanceof Error ? error.message : "Unknown error",
-              lastSyncedAt: new Date()
-            });
+            await db.update(syncState)
+              .set({
+                status: 'error',
+                errorMessage: error instanceof Error ? error.message : "Unknown error",
+                lastSyncedAt: new Date()
+              })
+              .where(eq(syncState.id, syncState.id))
+              .returning();
           }
         }
       } catch (dbError) {
@@ -1304,6 +1599,5 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Create and return HTTP server
   const httpServer = createServer(app);
-
   return httpServer;
 }
