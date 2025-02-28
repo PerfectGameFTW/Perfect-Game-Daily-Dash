@@ -6,14 +6,17 @@ if (typeof BigInt.prototype.toJSON !== 'function') {
 }
 
 import { Client, Environment } from 'square';
-import { 
+import {
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
-  Category, TransactionStatus, syncState
+  Category, TransactionStatus, syncState, InsertOrder, InsertOrderLineItem, InsertOrderModifier, InsertOrderDiscount
 } from '@shared/schema';
 import { toZonedTime } from 'date-fns-tz';
 import dotenv from 'dotenv';
 import { db } from './db'; // Import db directly instead of pgStorage
+import { eq } from 'drizzle-orm';
+import { orders } from './schema'; // Assuming this is where the orders table schema is defined
+
 
 // Define Eastern timezone constant
 const EASTERN_TIMEZONE = 'America/New_York';
@@ -49,11 +52,11 @@ const squareClient = new Client({
   environment: Environment.Production
 });
 
-// Fetch orders from Square API
+// Update the fetchOrders method to better handle order data
 export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any[]> {
   try {
     const now = new Date();
-    const start = startDate || new Date(now.setDate(now.getDate() - 30)); // Default to last 30 days
+    const start = startDate || new Date(now.setDate(now.getDate() - 30));
     const end = endDate || new Date();
 
     // Format dates for Square API
@@ -62,7 +65,6 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
 
     console.log(`Fetching orders from ${startTime} to ${endTime}`);
 
-    // Create search request body for v29.0.0
     const searchRequest = {
       locationIds: [process.env.SQUARE_LOCATION_ID!],
       query: {
@@ -82,55 +84,93 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
           sortOrder: 'DESC'
         }
       },
-      // Include all relevant fields to analyze gift card purchases
       returnEntries: true,
-      limit: 500 // Increased to get more results on a single request
+      limit: 500
     };
 
     // Make API request to Square Orders API
     const response = await squareClient.ordersApi.searchOrders(searchRequest);
-
-    // Extract orders from the SearchOrdersResponse
     const orders = response.result.orders || [];
-    console.log(`Fetched ${orders.length} orders from Square API between ${startTime} and ${endTime}`);
 
-    // Look for gift card items
-    let giftCardOrders = 0;
-    let giftCardAmount = 0;
+    // Convert Square orders to our schema format
+    const processedOrders = orders.map(order => ({
+      squareId: order.id,
+      status: order.state,
+      totalMoney: order.totalMoney ? Number(order.totalMoney.amount) / 100 : 0,
+      totalTax: order.totalTaxMoney ? Number(order.totalTaxMoney.amount) / 100 : 0,
+      totalDiscount: order.totalDiscountMoney ? Number(order.totalDiscountMoney.amount) / 100 : 0,
+      createdAt: new Date(order.createdAt),
+      closedAt: order.closedAt ? new Date(order.closedAt) : null,
+      source: order.source?.name || 'unknown',
+      squareData: processSafeSquareData(order)
+    }));
 
-    for (const order of orders) {
-      if (order.lineItems) {
-        for (const item of order.lineItems) {
-          if (
-            (item.name && item.name.toLowerCase().includes('gift card')) ||
-            (item.catalogObjectId && item.catalogObjectId.includes('GIFT_CARD')) ||
-            (item.note && item.note.toLowerCase().includes('gift card')) ||
-            (item.itemType && item.itemType === 'GIFT_CARD')
-          ) {
-            giftCardOrders++;
-            const itemAmount = item.basePriceMoney && item.basePriceMoney.amount 
-              ? Number(item.basePriceMoney.amount) / 100 
-              : 0;
-            giftCardAmount += itemAmount;
-
-            console.log(`Found gift card item! Order ID: ${order.id}, Item: ${item.name}, Amount: $${itemAmount}`);
-          }
-        }
-      }
-    }
-
-    if (giftCardAmount > 0) {
-      console.log(`GIFT CARD SUMMARY: Found ${giftCardOrders} gift card orders totaling $${giftCardAmount.toFixed(2)}`);
-    }
-
-    return orders;
+    console.log(`Processed ${processedOrders.length} orders from Square API`);
+    return processedOrders;
   } catch (error) {
     console.error('Error fetching orders from Square:', error);
-    if (error && typeof error === 'object') {
-      console.error('Detailed error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    }
-    return [];
+    throw error;
   }
+}
+
+// Add a new function to convert Square order to our format
+export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
+  const safeOrder = processSafeSquareData(squareOrder);
+
+  return {
+    squareId: safeOrder.id,
+    status: safeOrder.state,
+    totalMoney: safeOrder.totalMoney ? Number(safeOrder.totalMoney.amount) / 100 : 0,
+    totalTax: safeOrder.totalTaxMoney ? Number(safeOrder.totalTaxMoney.amount) / 100 : 0,
+    totalDiscount: safeOrder.totalDiscountMoney ? Number(safeOrder.totalDiscountMoney.amount) / 100 : 0,
+    createdAt: new Date(safeOrder.createdAt),
+    closedAt: safeOrder.closedAt ? new Date(safeOrder.closedAt) : null,
+    source: safeOrder.source?.name || 'unknown',
+    squareData: safeOrder
+  };
+}
+
+// Add a function to process line items
+export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: number): InsertOrderLineItem {
+  const safeLineItem = processSafeSquareData(lineItem);
+
+  return {
+    orderId,
+    name: safeLineItem.name,
+    quantity: safeLineItem.quantity || 1,
+    basePriceMoney: safeLineItem.basePriceMoney ? Number(safeLineItem.basePriceMoney.amount) / 100 : 0,
+    totalMoney: safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0,
+    squareData: safeLineItem
+  };
+}
+
+// Add a function to process modifiers
+export function convertSquareModifierToOrderModifier(modifier: any, lineItemId: number): InsertOrderModifier {
+  const safeModifier = processSafeSquareData(modifier);
+
+  return {
+    lineItemId,
+    name: safeModifier.name,
+    basePriceMoney: safeModifier.basePriceMoney ? Number(safeModifier.basePriceMoney.amount) / 100 : null,
+    totalPriceMoney: safeModifier.totalPriceMoney ? Number(safeModifier.totalPriceMoney.amount) / 100 : null,
+    squareData: safeModifier
+  };
+}
+
+// Add a function to process discounts
+export function convertSquareDiscountToOrderDiscount(discount: any, orderId: number): InsertOrderDiscount {
+  const safeDiscount = processSafeSquareData(discount);
+
+  return {
+    orderId,
+    name: safeDiscount.name,
+    type: safeDiscount.type,
+    percentage: safeDiscount.percentage || null,
+    amountMoney: safeDiscount.amountMoney ? Number(safeDiscount.amountMoney.amount) / 100 : null,
+    appliedMoney: safeDiscount.appliedMoney ? Number(safeDiscount.appliedMoney.amount) / 100 : 0,
+    scope: safeDiscount.scope || 'ORDER',
+    squareData: safeDiscount
+  };
 }
 
 // Add enhanced gift card redemption detection
@@ -138,7 +178,7 @@ function isGiftCardRedemption(payment: any): boolean {
   try {
     // Check for gift card payment source
     const isGiftCard = (
-      (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
+      (payment.sourceType && payment.sourceType === 'GIFT_CARD') ||
       (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD')
     );
 
@@ -162,8 +202,8 @@ function isGiftCardRedemption(payment: any): boolean {
       // Add additional information to the payment object
       payment.isGiftCardRedemption = true;
       payment.sourceId = sourceId;
-      payment.redemptionAmount = payment.amountMoney 
-        ? Number(payment.amountMoney.amount) / 100 
+      payment.redemptionAmount = payment.amountMoney
+        ? Number(payment.amountMoney.amount) / 100
         : 0;
     }
 
@@ -187,7 +227,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
 
     // Create or update sync state
     let syncStateDb = await db.getSyncState('payments');
-    let syncState:syncState;
+    let syncState: syncState;
     if (!syncStateDb) {
       syncState = await db.createSyncState({
         syncType: 'payments',
@@ -229,6 +269,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           undefined,
           undefined,
           undefined,
+          undefined,
           100
         );
 
@@ -240,8 +281,8 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
             console.log(`Processing gift card redemption payment: ${payment.id}`);
             // Add redemption information to the payment
             payment.isGiftCardRedemption = true;
-            payment.redemptionAmount = payment.amountMoney 
-              ? Number(payment.amountMoney.amount) / 100 
+            payment.redemptionAmount = payment.amountMoney
+              ? Number(payment.amountMoney.amount) / 100
               : 0;
             payment.sourceId = payment.sourceId || payment.cardDetails?.card?.id;
 
@@ -302,7 +343,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
 
     const orderMap = new Map();
     orders.forEach(order => {
-      orderMap.set(order.id, order);
+      orderMap.set(order.squareId, order);
     });
 
     let paymentsWithOrders = 0;
@@ -344,8 +385,8 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   // Gift card PAYMENTS - When a customer PAYS USING a gift card (this should NOT be categorized as a gift card)
 
   // First check if this is a payment USING a gift card (not a gift card purchase)
-  const paidWithGiftCard = 
-    (payment.sourceType && payment.sourceType === 'GIFT_CARD') || 
+  const paidWithGiftCard =
+    (payment.sourceType && payment.sourceType === 'GIFT_CARD') ||
     (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD');
 
   let category: Category = 'retail'; // Default category
@@ -371,13 +412,13 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     // Check order data for gift card items
     if (payment.orderId && payment.orderData) {
       try {
-        const orderData = typeof payment.orderData === 'string' 
-          ? JSON.parse(payment.orderData) 
+        const orderData = typeof payment.orderData === 'string'
+          ? JSON.parse(payment.orderData)
           : payment.orderData;
 
         if (orderData.lineItems && Array.isArray(orderData.lineItems)) {
-          const giftCardItems = orderData.lineItems.filter((item: any) => 
-            item.itemType === 'GIFT_CARD' || 
+          const giftCardItems = orderData.lineItems.filter((item: any) =>
+            item.itemType === 'GIFT_CARD' ||
             (item.name && item.name.toLowerCase().includes('gift card'))
           );
 
@@ -508,7 +549,7 @@ export async function fetchGiftCards(): Promise<any[]> {
 
       try {
         const response = await squareClient.giftCardsApi.listGiftCards(
-          undefined,  // type 
+          undefined,  // type
           undefined,  // state
           100,        // limit
           cursor,     // cursor
@@ -617,7 +658,7 @@ export async function searchCatalogForGiftCards(): Promise<any[]> {
       const description = (itemData.description || '').toLowerCase();
 
       return (
-        name.includes('gift card') || 
+        name.includes('gift card') ||
         name.includes('gift certificate') ||
         description.includes('gift card') ||
         description.includes('gift certificate')
@@ -629,6 +670,152 @@ export async function searchCatalogForGiftCards(): Promise<any[]> {
   } catch (error) {
     console.error('Error searching catalog for gift cards:', error);
     return [];
+  }
+}
+
+// Add enhanced error handling and logging for Order processing
+export async function processSquareOrder(order: any, db: any): Promise<void> {
+  try {
+    console.log(`Processing Square order: ${order.id}`);
+
+    // Convert order to our format
+    const insertOrder = convertSquareOrderToOrder(order);
+    console.log(`Converted order ${order.id} to internal format`);
+
+    // Create order in database
+    const savedOrder = await db.createOrder(insertOrder);
+    console.log(`Saved order ${order.id} to database with internal ID ${savedOrder.id}`);
+
+    // Process line items
+    if (order.lineItems && Array.isArray(order.lineItems)) {
+      for (const lineItem of order.lineItems) {
+        try {
+          const insertLineItem = convertSquareLineItemToOrderLineItem(lineItem, savedOrder.id);
+          const savedLineItem = await db.createOrderItem(insertLineItem);
+          console.log(`Saved line item for order ${order.id}: ${lineItem.name}`);
+
+          // Process modifiers for this line item
+          if (lineItem.modifiers && Array.isArray(lineItem.modifiers)) {
+            for (const modifier of lineItem.modifiers) {
+              try {
+                const insertModifier = convertSquareModifierToOrderModifier(modifier, savedLineItem.id);
+                await db.createOrderModifier(insertModifier);
+                console.log(`Saved modifier for line item ${lineItem.name}: ${modifier.name}`);
+              } catch (modifierError) {
+                console.error(`Error processing modifier for line item ${lineItem.name}:`, modifierError);
+                // Continue processing other modifiers
+              }
+            }
+          }
+        } catch (lineItemError) {
+          console.error(`Error processing line item for order ${order.id}:`, lineItemError);
+          // Continue processing other line items
+        }
+      }
+    }
+
+    // Process discounts
+    if (order.discounts && Array.isArray(order.discounts)) {
+      for (const discount of order.discounts) {
+        try {
+          const insertDiscount = convertSquareDiscountToOrderDiscount(discount, savedOrder.id);
+          await db.createOrderDiscount(insertDiscount);
+          console.log(`Saved discount for order ${order.id}: ${discount.name}`);
+        } catch (discountError) {
+          console.error(`Error processing discount for order ${order.id}:`, discountError);
+          // Continue processing other discounts
+        }
+      }
+    }
+
+    // Link order to transaction if available
+    if (order.tenders && Array.isArray(order.tenders)) {
+      for (const tender of order.tenders) {
+        if (tender.paymentId) {
+          try {
+            const transaction = await db.getTransactionBySquareId(tender.paymentId);
+            if (transaction) {
+              await db.update(orders)
+                .set({ transactionId: transaction.id })
+                .where(eq(orders.id, savedOrder.id))
+                .execute();
+              console.log(`Linked order ${order.id} to transaction ${tender.paymentId}`);
+            }
+          } catch (linkError) {
+            console.error(`Error linking order ${order.id} to transaction ${tender.paymentId}:`, linkError);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error processing Square order:', error);
+    throw error;
+  }
+}
+
+// Add function to sync orders
+export async function syncOrders(db: any, startDate?: Date, endDate?: Date): Promise<void> {
+  try {
+    // Create or get orders sync state
+    let syncState = await db.getSyncState('orders');
+    if (!syncState) {
+      syncState = await db.createSyncState({
+        syncType: 'orders',
+        lastSyncedAt: new Date(),
+        currentPage: 1,
+        totalPages: 0,
+        processedCount: 0,
+        totalCount: 0,
+        cursor: '',
+        isComplete: false,
+        status: 'pending',
+        errorMessage: null,
+        lastCheckpoint: null
+      });
+    }
+
+    console.log(`Starting orders sync from ${startDate?.toISOString() || '30 days ago'} to ${endDate?.toISOString() || 'now'}`);
+
+    // Fetch orders from Square
+    const orders = await fetchOrders(startDate, endDate);
+    console.log(`Fetched ${orders.length} orders from Square`);
+
+    // Process each order
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const order of orders) {
+      try {
+        await processSquareOrder(order, db);
+        successCount++;
+
+        // Update sync progress
+        await db.updateSyncState(syncState.id, {
+          processedCount: successCount,
+          totalCount: orders.length,
+          lastSyncedAt: new Date(),
+          status: 'in_progress'
+        });
+      } catch (error) {
+        errorCount++;
+        console.error(`Failed to process order ${order.id}:`, error);
+      }
+    }
+
+    // Update final sync state
+    await db.updateSyncState(syncState.id, {
+      processedCount: successCount,
+      totalCount: orders.length,
+      isComplete: true,
+      status: errorCount > 0 ? 'completed_with_errors' : 'completed',
+      errorMessage: errorCount > 0 ? `Failed to process ${errorCount} orders` : null,
+      lastSyncedAt: new Date()
+    });
+
+    console.log(`Completed orders sync. Success: ${successCount}, Errors: ${errorCount}`);
+  } catch (error) {
+    console.error('Error during orders sync:', error);
+    throw error;
   }
 }
 

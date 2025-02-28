@@ -8,7 +8,7 @@ import {
   OrderLineItem, InsertOrderLineItem,
   OrderModifier, InsertOrderModifier,
   OrderDiscount, InsertOrderDiscount,
-  DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
+  DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary, OrderSummary,
   DateRange, TransactionStatus,
   transactions, giftCards, giftCardRedemptions, users, syncState,
   orders, orderLineItems, orderModifiers, orderDiscounts
@@ -457,6 +457,86 @@ export class PgStorage implements IStorage {
   async createOrderDiscount(insertDiscount: InsertOrderDiscount): Promise<OrderDiscount> {
     const result = await db.insert(orderDiscounts).values(insertDiscount).returning();
     return result[0];
+  }
+
+  async getOrderSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<OrderSummary> {
+    const start = startDate ? new Date(startDate) : new Date();
+    const end = endDate ? new Date(endDate) : start;
+
+    // Format dates for the query
+    const startStr = format(start, 'yyyy-MM-dd');
+    const endStr = format(end, 'yyyy-MM-dd');
+
+    // Get orders within date range
+    const ordersResult = await db.execute(sql`
+      WITH order_metrics AS (
+        SELECT 
+          o.id as order_id,
+          o.total_money,
+          li.name as item_name,
+          li.quantity,
+          li.total_money as item_revenue
+        FROM orders o
+        LEFT JOIN order_line_items li ON li.order_id = o.id
+        WHERE DATE(o.created_at) >= ${startStr}::date
+          AND DATE(o.created_at) <= ${endStr}::date
+          AND o.status = 'COMPLETED'
+      ),
+      top_items AS (
+        SELECT 
+          item_name,
+          SUM(quantity) as total_quantity,
+          SUM(item_revenue) as total_revenue
+        FROM order_metrics
+        WHERE item_name IS NOT NULL
+        GROUP BY item_name
+        ORDER BY total_revenue DESC
+        LIMIT 5
+      )
+      SELECT 
+        COUNT(DISTINCT order_id) as total_orders,
+        SUM(total_money) as total_revenue,
+        SUM(quantity) as total_items,
+        ARRAY_AGG(ROW(item_name, total_quantity, total_revenue)::text)
+          FILTER (WHERE item_name IS NOT NULL) as top_items
+      FROM order_metrics
+      CROSS JOIN top_items;
+    `);
+
+    // Calculate total discounts and taxes
+    const totalsResult = await db.execute(sql`
+      SELECT 
+        SUM(total_tax) as tax_total,
+        SUM(total_discount) as discount_total
+      FROM orders
+      WHERE DATE(created_at) >= ${startStr}::date
+        AND DATE(created_at) <= ${endStr}::date
+        AND status = 'COMPLETED';
+    `);
+
+    const { rows: [orderMetrics] } = ordersResult;
+    const { rows: [orderTotals] } = totalsResult;
+
+    // Parse top selling items from the array
+    const topSellingItems = (orderMetrics.top_items || []).map((item: string) => {
+      const [name, quantity, revenue] = item
+        .replace(/[()]/g, '')
+        .split(',')
+        .map((s, i) => i === 0 ? s : Number(s));
+      return { name, quantity, revenue };
+    });
+
+    return {
+      totalOrders: Number(orderMetrics.total_orders) || 0,
+      totalRevenue: Number(orderMetrics.total_revenue) || 0,
+      averageOrderValue: orderMetrics.total_orders > 0 
+        ? Number(orderMetrics.total_revenue) / Number(orderMetrics.total_orders) 
+        : 0,
+      itemsSold: Number(orderMetrics.total_items) || 0,
+      topSellingItems,
+      discountTotal: Number(orderTotals.discount_total) || 0,
+      taxTotal: Number(orderTotals.tax_total) || 0
+    };
   }
 }
 

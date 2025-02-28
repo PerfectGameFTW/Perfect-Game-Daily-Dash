@@ -870,9 +870,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   apiRouter.post("/sync", async (req, res) => {
     try {
       let syncStartTime: Date | null = null;
-      letisSyncRunning = false;
-
-      // Check if sync is already running
+      let isSyncRunning = false;      // Check if sync is already running
       const existingSync = await db.query.syncState.findFirst({
         where: and(
           eq(syncState.status, 'in_progress'),
@@ -1591,6 +1589,169 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Failed to sync with Square",
         details: error instanceof Error ? error.message : "Unknown error"
       });
+    }
+  });
+
+  // Add Order-related routes after existing routes
+  apiRouter.get("/order-summary", async (req, res) => {
+    try {
+      // Parse date range from query (default to today if not provided)
+      const dateRange = req.query.dateRange as string || "today";
+
+      // Validate date range
+      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
+      if (!parsedDateRange.success) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
+
+      // Parse custom date range if provided
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+
+      if (req.query.startDate && req.query.endDate) {
+        try {
+          const startDateStr = req.query.startDate as string;
+          const endDateStr = req.query.endDate as string;
+
+          startDate = startDateStr.includes('T') ? new Date(startDateStr) :
+            parse(startDateStr, "yyyy-MM-dd", new Date());
+          endDate = endDateStr.includes('T') ? new Date(endDateStr) :
+            parse(endDateStr, "yyyy-MM-dd", new Date());
+
+        } catch (err) {
+          console.error('Error parsing order summary dates:', err);
+        }
+      }
+
+      const orderSummary = await pgStorage.getOrderSummary(parsedDateRange.data, startDate, endDate);
+      res.json(orderSummary);
+    } catch (error) {
+      console.error("Error getting order summary:", error);
+      res.status(500).json({ error: "Server error while getting order summary data" });
+    }
+  });
+
+  // Get detailed order information
+  apiRouter.get("/orders/:orderId", async (req, res) => {
+    try {
+      const orderId = parseInt(req.params.orderId);
+      if (isNaN(orderId)) {
+        return res.status(400).json({ error: "Invalid order ID" });
+      }
+
+      // Get order details
+      const order = await pgStorage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Get line items
+      const lineItems = await pgStorage.getOrderItems(orderId);
+
+      // Get modifiers for each line item
+      const lineItemsWithModifiers = await Promise.all(
+        lineItems.map(async (item) => {
+          const modifiers = await pgStorage.getOrderModifiers(item.id);
+          return { ...item, modifiers };
+        })
+      );
+
+      // Get discounts
+      const discounts = await pgStorage.getOrderDiscounts(orderId);
+
+      res.json({
+        order,
+        lineItems: lineItemsWithModifiers,
+        discounts
+      });
+    } catch (error) {
+      console.error("Error getting order details:", error);
+      res.status(500).json({ error: "Server error while getting order details" });
+    }
+  });
+
+  // Sync orders with Square
+  apiRouter.post("/sync/orders", async (req, res) => {
+    try {
+      // Parse date range if provided
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+
+      if (req.body.startDate) {
+        startDate = new Date(req.body.startDate);
+      }
+      if (req.body.endDate) {
+        endDate = new Date(req.body.endDate);
+      }
+
+      // Start syncing orders
+      await squareClient.syncOrders(pgStorage, startDate, endDate);
+
+      res.json({ success: true, message: "Order sync initiated successfully" });
+    } catch (error) {
+      console.error("Error syncing orders:", error);
+      res.status(500).json({
+        error: "Failed to sync orders",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
+  // Get orders by date range
+  apiRouter.get("/orders", async (req, res) => {
+    try {
+      // Parse date range from query (default to today if not provided)
+      const dateRange = req.query.dateRange as string || "today";
+
+      // Validate date range
+      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
+      if (!parsedDateRange.success) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
+
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+
+      if (req.query.startDate && req.query.endDate) {
+        try {
+          const startDateStr = req.query.startDate as string;
+          const endDateStr = req.query.endDate as string;
+
+          if (startDateStr.includes('T')) {
+            startDate = new Date(startDateStr);
+          } else {
+            startDate = parse(startDateStr, "yyyy-MM-dd", new Date());
+          }
+
+          if (endDateStr.includes('T')) {
+            endDate = new Date(endDateStr);
+          } else {
+            endDate = parse(endDateStr, "yyyy-MM-dd", new Date());
+          }
+        } catch (err) {
+          console.error('Error parsing order dates:', err);
+        }
+      }
+
+      // Fetch orders from Square API
+      const orders = await squareClient.fetchOrders(startDate, endDate);
+
+      // Convert orders to our format and save them
+      const processedOrders = [];
+      for (const order of orders) {
+        try {
+          const insertOrder = squareClient.convertSquareOrderToOrder(order);
+          const savedOrder = await pgStorage.createOrder(insertOrder);
+          processedOrders.push(savedOrder);
+        } catch (error) {
+          console.error(`Error processing order ${order.id}:`, error);
+        }
+      }
+
+      res.json(processedOrders);
+    } catch (error) {
+      console.error("Error getting orders:", error);
+      res.status(500).json({ error: "Server error while getting orders" });
     }
   });
 
