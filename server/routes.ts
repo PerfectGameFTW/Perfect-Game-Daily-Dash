@@ -6,7 +6,8 @@ import {
   InsertTransaction, 
   InsertGiftCard, 
   InsertSyncState,
-  transactions 
+  transactions,
+  giftCards
 } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
@@ -98,78 +99,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Parse date range from query (default to today if not provided)
       const dateRange = req.query.dateRange as string || "today";
 
-// Add a route to update gift cards with zero amounts from Square API
-app.get('/api/fix-gift-cards', async (req, res) => {
-  try {
-    console.log("Starting fix for gift cards with zero amounts...");
-    
-    // Get all gift cards with zero amounts from the database
-    const zeroAmountCards = await db.select()
-      .from(giftCards)
-      .where(eq(giftCards.amount, 0));
-    
-    console.log(`Found ${zeroAmountCards.length} gift cards with zero amounts`);
-    
-    // Fetch all gift cards from Square
-    const squareGiftCards = await squareClient.fetchGiftCards();
-    console.log(`Fetched ${squareGiftCards.length} gift cards from Square`);
-    
-    // Create a map for quick lookup
-    const squareGiftCardMap = new Map();
-    squareGiftCards.forEach(card => {
-      squareGiftCardMap.set(card.id, card);
-    });
-    
-    // Update each card with zero amount
-    let updatedCount = 0;
-    let stillZeroCount = 0;
-    
-    for (const card of zeroAmountCards) {
-      console.log(`Processing card ${card.squareId}...`);
-      
-      const squareCard = squareGiftCardMap.get(card.squareId);
-      if (!squareCard) {
-        console.log(`Card ${card.squareId} not found in Square data`);
-        continue;
-      }
-      
-      console.log(`Square data for card ${card.squareId}:`, JSON.stringify(squareCard, null, 2));
-      
-      // Convert to our model
-      const updatedCard = squareClient.convertSquareGiftCardToGiftCard(squareCard);
-      
-      if (updatedCard.amount > 0) {
-        // Update the card with the new amount
-        await db.update(giftCards)
-          .set({ 
-            amount: updatedCard.amount, 
-            squareData: updatedCard.squareData 
-          })
-          .where(eq(giftCards.squareId, card.squareId));
-        
-        console.log(`UPDATED gift card ${card.squareId} amount from $0 to $${updatedCard.amount.toFixed(2)}`);
-        updatedCount++;
-      } else {
-        console.log(`Card ${card.squareId} still has zero amount after conversion`);
-        stillZeroCount++;
-      }
-    }
-    
-    res.json({
-      success: true,
-      totalProcessed: zeroAmountCards.length,
-      updatedCount,
-      stillZeroCount
-    });
-    
-  } catch (error) {
-    console.error("Error fixing gift cards:", error);
-    res.status(500).json({
-      error: "Failed to fix gift cards",
-      message: error instanceof Error ? error.message : "Unknown error"
-    });
-  }
-});
+
 
 
       // Validate date range
@@ -654,6 +584,79 @@ app.get('/api/fix-gift-cards', async (req, res) => {
       console.error("Error checking gift card items:", error);
       res.status(500).json({ 
         error: "Failed to check gift card items",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
+  // Add a route to update gift cards with zero amounts from Square API
+  apiRouter.get("/fix-gift-cards", async (req, res) => {
+    try {
+      console.log("Starting fix for gift cards with zero amounts...");
+      
+      // Get all gift cards with zero amounts from the database
+      const zeroAmountCards = await db.select()
+        .from(giftCards)
+        .where(eq(giftCards.amount, 0));
+      
+      console.log(`Found ${zeroAmountCards.length} gift cards with zero amounts`);
+      
+      // Fetch all gift cards from Square
+      const squareGiftCards = await squareClient.fetchGiftCards();
+      console.log(`Fetched ${squareGiftCards.length} gift cards from Square`);
+      
+      // Create a map for quick lookup
+      const squareGiftCardMap = new Map();
+      squareGiftCards.forEach(card => {
+        squareGiftCardMap.set(card.id, card);
+      });
+      
+      // Update each card with zero amount
+      let updatedCount = 0;
+      let stillZeroCount = 0;
+      
+      for (const card of zeroAmountCards) {
+        console.log(`Processing card ${card.squareId}...`);
+        
+        const squareCard = squareGiftCardMap.get(card.squareId);
+        if (!squareCard) {
+          console.log(`Card ${card.squareId} not found in Square data`);
+          continue;
+        }
+        
+        console.log(`Square data for card ${card.squareId}:`, JSON.stringify(squareCard, null, 2));
+        
+        // Convert to our model
+        const updatedCard = squareClient.convertSquareGiftCardToGiftCard(squareCard);
+        
+        if (updatedCard.amount > 0) {
+          // Update the card with the new amount
+          await db.update(giftCards)
+            .set({ 
+              amount: updatedCard.amount, 
+              squareData: updatedCard.squareData 
+            })
+            .where(eq(giftCards.squareId, card.squareId));
+          
+          console.log(`UPDATED gift card ${card.squareId} amount from $0 to $${updatedCard.amount.toFixed(2)}`);
+          updatedCount++;
+        } else {
+          console.log(`Card ${card.squareId} still has zero amount after conversion`);
+          stillZeroCount++;
+        }
+      }
+      
+      res.json({
+        success: true,
+        totalProcessed: zeroAmountCards.length,
+        updatedCount,
+        stillZeroCount
+      });
+      
+    } catch (error) {
+      console.error("Error fixing gift cards:", error);
+      res.status(500).json({
+        error: "Failed to fix gift cards",
         message: error instanceof Error ? error.message : "Unknown error"
       });
     }
