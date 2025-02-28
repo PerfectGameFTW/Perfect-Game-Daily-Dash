@@ -22,7 +22,7 @@ describe('Timestamp Handling', () => {
     ...overrides
   });
 
-  // Clean up test orders before all tests
+  // Clean up test orders before each test
   beforeAll(async () => {
     await db.execute(sql`DELETE FROM orders WHERE square_id LIKE 'TEST_TIMESTAMP_ORDER%'`);
   });
@@ -107,17 +107,25 @@ describe('Timestamp Handling', () => {
   });
 
   describe('Date Range Queries', () => {
+    let testOrders: { id: number; squareId: string }[] = [];
+
+    // Clean up and create test orders before date range tests
     beforeAll(async () => {
+      await db.execute(sql`DELETE FROM orders WHERE square_id LIKE 'TEST_TIMESTAMP_ORDER%'`);
+
       // Create test orders spanning midnight ET
       const orders = [
-        getTestOrder({ createdAt: new Date('2025-02-28T04:59:00Z') }), // 11:59pm ET previous day
-        getTestOrder({ createdAt: new Date('2025-02-28T05:01:00Z') }), // 12:01am ET
-        getTestOrder({ createdAt: new Date('2025-03-01T04:59:00Z') }), // 11:59pm ET
-        getTestOrder({ createdAt: new Date('2025-03-01T05:01:00Z') })  // 12:01am ET next day
+        getTestOrder({ createdAt: new Date('2025-02-28T04:59:00Z') }), // 11:59pm ET on Feb 27
+        getTestOrder({ createdAt: new Date('2025-02-28T05:01:00Z') }), // 12:01am ET on Feb 28
+        getTestOrder({ createdAt: new Date('2025-02-28T16:00:00Z') }), // 11:00am ET on Feb 28
+        getTestOrder({ createdAt: new Date('2025-03-01T04:59:00Z') }), // 11:59pm ET on Feb 28
+        getTestOrder({ createdAt: new Date('2025-03-01T05:01:00Z') })  // 12:01am ET on Mar 1
       ];
 
+      // Insert all orders
       for (const order of orders) {
-        await pgStorage.createOrder(order);
+        const result = await pgStorage.createOrder(order);
+        testOrders.push({ id: result.id, squareId: result.squareId });
       }
     });
 
@@ -129,8 +137,8 @@ describe('Timestamp Handling', () => {
         WHERE DATE(created_at_et) = '2025-02-28'
       `);
 
-      // Should only include orders between midnight and 11:59pm ET on Feb 28
-      expect(Number(result.rows[0].count)).toBe(2);
+      // Should include orders between midnight and 11:59pm ET on Feb 28 (3 orders)
+      expect(Number(result.rows[0].count)).toBe(3);
     });
 
     it('should handle multi-day ranges correctly', async () => {
@@ -141,7 +149,7 @@ describe('Timestamp Handling', () => {
           AND DATE(created_at_et) <= '2025-03-01'
       `);
 
-      // Should include all 4 test orders
+      // Should include all orders from midnight Feb 28 to 11:59pm Mar 1 (4 orders)
       expect(Number(result.rows[0].count)).toBe(4);
     });
 
@@ -155,7 +163,7 @@ describe('Timestamp Handling', () => {
           AND created_at_et <= ${end}
       `);
 
-      // Should include orders for the current ET business day
+      // Should return a valid count
       expect(typeof Number(result.rows[0].count)).toBe('number');
     });
   });
