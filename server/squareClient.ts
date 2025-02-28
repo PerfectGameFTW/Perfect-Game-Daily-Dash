@@ -523,6 +523,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
 
   // DIRECT CHECK: First check if balanceMoney exists (camelCase version from API)
   if (giftCard.balanceMoney && giftCard.balanceMoney.amount !== undefined) {
+    // NOTE: The amount is a string like "7600" which needs to be converted to a number and divided by 100
     amount = typeof giftCard.balanceMoney.amount === 'bigint' 
       ? Number(giftCard.balanceMoney.amount) / 100 
       : Number(giftCard.balanceMoney.amount) / 100;
