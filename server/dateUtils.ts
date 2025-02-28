@@ -4,172 +4,106 @@
  * through dedicated database views (*_et).
  */
 import { format, addDays, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { formatInTimeZone } from 'date-fns-tz';
 import { DateRange } from '@shared/schema';
 
 /** Eastern Timezone identifier used throughout the application */
 export const EASTERN_TIMEZONE = 'America/New_York';
 
 /**
- * Converts a date to UTC for database storage
- * All timestamps should be stored in UTC using PostgreSQL's timestamptz type
- * 
- * @param date The date to convert to UTC
- * @returns A new Date object in UTC
- * 
- * @example
- * const timestamp = toUTCStorage(new Date()); // For storing in database
+ * Gets the start and end dates in Eastern Time for any given date range
+ * Ensures consistent midnight-to-midnight business day boundaries in Eastern Time
  */
-export function toUTCStorage(date: Date): Date {
-  console.log('Converting to UTC storage:', {
-    input: date.toISOString(),
-    output: new Date(date.toUTCString()).toISOString()
-  });
-  return new Date(date.toUTCString());
-}
-
-/**
- * Gets a date range in UTC for database queries
- * This ensures consistent midnight-to-midnight business day boundaries in Eastern Time
- * 
- * @param dateRange The type of date range to generate
- * @param startDate Optional start date for custom ranges
- * @param endDate Optional end date for custom ranges
- * @returns Object containing start and end dates in UTC
- * 
- * @example
- * const { start, end } = getUTCDateRange('today');
- * // start will be 00:00:00 ET in UTC
- * // end will be 23:59:59.999 ET in UTC
- */
-export function getUTCDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
-  console.log('Processing date range request:', {
-    dateRange,
-    startDate: startDate?.toISOString(),
-    endDate: endDate?.toISOString()
-  });
-
-  // Get the current date in Eastern Time for date range calculations
+export function getEasternDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
+  // Get current time in Eastern timezone
   const now = new Date();
-  const easternNow = toZonedTime(now, EASTERN_TIMEZONE);
-  const todayEasternStr = format(easternNow, 'yyyy-MM-dd');
+  const startStr: string;
+  const endStr: string;
 
-  // Variables to store our date range strings
-  let startDateStr: string;
-  let endDateStr: string;
-
-  // Determine date strings based on range type
-  if (startDate && (dateRange === 'custom' || endDate)) {
-    // Convert to Eastern Time to get the correct date (ignore time)
-    const startInEastern = toZonedTime(startDate, EASTERN_TIMEZONE);
-    const endInEastern = endDate ? toZonedTime(endDate, EASTERN_TIMEZONE) : startInEastern;
-
-    // Extract just the date components (no time)
-    startDateStr = format(startInEastern, 'yyyy-MM-dd');
-    endDateStr = format(endInEastern, 'yyyy-MM-dd');
-
-    console.log('Custom date range conversion:', {
-      inputStart: startDate.toISOString(),
-      inputEnd: endDate?.toISOString(),
-      easternStart: startDateStr,
-      easternEnd: endDateStr
-    });
+  // Calculate date range boundaries in ET
+  if (startDate && endDate && dateRange === 'custom') {
+    startStr = formatInTimeZone(startDate, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+    endStr = formatInTimeZone(endDate, EASTERN_TIMEZONE, 'yyyy-MM-dd');
   } else {
-    // For predefined ranges, calculate the dates in Eastern Time
+    const today = formatInTimeZone(now, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+
     switch (dateRange) {
       case 'today':
-        startDateStr = todayEasternStr;
-        endDateStr = todayEasternStr;
+        startStr = today;
+        endStr = today;
         break;
-      case 'yesterday':
-        const yesterdayEastern = subDays(easternNow, 1);
-        startDateStr = format(yesterdayEastern, 'yyyy-MM-dd');
-        endDateStr = startDateStr;
+      case 'yesterday': {
+        const yesterday = subDays(now, 1);
+        const yesterdayStr = formatInTimeZone(yesterday, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        startStr = yesterdayStr;
+        endStr = yesterdayStr;
         break;
-      case 'last7days':
-        startDateStr = format(subDays(easternNow, 6), 'yyyy-MM-dd');
-        endDateStr = todayEasternStr;
+      }
+      case 'last7days': {
+        const sevenDaysAgo = subDays(now, 6); // Last 7 days including today
+        startStr = formatInTimeZone(sevenDaysAgo, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        endStr = today;
         break;
-      case 'last30days':
-        startDateStr = format(subDays(easternNow, 29), 'yyyy-MM-dd');
-        endDateStr = todayEasternStr;
+      }
+      case 'last30days': {
+        const thirtyDaysAgo = subDays(now, 29); // Last 30 days including today
+        startStr = formatInTimeZone(thirtyDaysAgo, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        endStr = today;
         break;
-      case 'thisMonth':
-        const firstOfMonth = startOfMonth(easternNow);
-        const lastOfMonth = endOfMonth(easternNow);
-        startDateStr = format(firstOfMonth, 'yyyy-MM-dd');
-        endDateStr = format(lastOfMonth, 'yyyy-MM-dd');
+      }
+      case 'thisMonth': {
+        const firstOfMonth = startOfMonth(now);
+        const lastOfMonth = endOfMonth(now);
+        startStr = formatInTimeZone(firstOfMonth, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        endStr = formatInTimeZone(lastOfMonth, EASTERN_TIMEZONE, 'yyyy-MM-dd');
         break;
-      case 'lastMonth':
-        const lastMonthDate = subMonths(easternNow, 1);
-        const firstOfLastMonth = startOfMonth(lastMonthDate);
-        const lastOfLastMonth = endOfMonth(lastMonthDate);
-        startDateStr = format(firstOfLastMonth, 'yyyy-MM-dd');
-        endDateStr = format(lastOfLastMonth, 'yyyy-MM-dd');
+      }
+      case 'lastMonth': {
+        const lastMonth = subMonths(now, 1);
+        const firstOfLastMonth = startOfMonth(lastMonth);
+        const lastOfLastMonth = endOfMonth(lastMonth);
+        startStr = formatInTimeZone(firstOfLastMonth, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        endStr = formatInTimeZone(lastOfLastMonth, EASTERN_TIMEZONE, 'yyyy-MM-dd');
         break;
-      case 'custom':
-        throw new Error('Start date and end date must be provided for custom date range');
+      }
       default:
-        startDateStr = todayEasternStr;
-        endDateStr = todayEasternStr;
+        startStr = today;
+        endStr = today;
     }
-
-    console.log('Predefined date range conversion:', {
-      range: dateRange,
-      easternStart: startDateStr,
-      easternEnd: endDateStr
-    });
   }
 
-  // Create UTC dates that represent midnight Eastern Time for start/end days
-  const startUTC = new Date(`${startDateStr}T00:00:00-05:00`);
-  const endUTC = new Date(`${endDateStr}T23:59:59.999-05:00`);
-
-  console.log('Final date range:', {
-    utcStart: startUTC.toISOString(),
-    utcEnd: endUTC.toISOString(),
-    easternStart: formatInTimeZone(startUTC, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz'),
-    easternEnd: formatInTimeZone(endUTC, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+  console.log('Date range calculation:', {
+    range: dateRange,
+    input: {
+      startDate: startDate?.toISOString(),
+      endDate: endDate?.toISOString()
+    },
+    calculated: {
+      startStr,
+      endStr,
+      timezone: EASTERN_TIMEZONE
+    }
   });
 
-  return { start: startUTC, end: endUTC };
+  return {
+    start: new Date(`${startStr}T00:00:00`),
+    end: new Date(`${endStr}T23:59:59.999`)
+  };
 }
 
 /**
- * Format a UTC date in Eastern Time for display
- * Use this for presenting timestamps to users in the application's timezone
- * 
- * @param date The UTC date to format
- * @param formatStr Optional format string (defaults to 'yyyy-MM-dd HH:mm:ss zzz')
- * @returns Formatted date string in Eastern Time
- * 
- * @example
- * const display = formatInEasternTime(order.createdAt);
+ * Format hour number to AM/PM string
  */
-export function formatInEasternTime(date: Date, formatStr: string = 'yyyy-MM-dd HH:mm:ss zzz'): string {
-  const formatted = formatInTimeZone(date, EASTERN_TIMEZONE, formatStr);
-  console.log('Formatting timestamp:', {
-    utcInput: date.toISOString(),
-    easternOutput: formatted
-  });
-  return formatted;
+export function formatHour(hour: number): string {
+  if (hour === 0) return '12 AM';
+  if (hour === 12) return '12 PM';
+  if (hour < 12) return `${hour} AM`;
+  return `${hour - 12} PM`;
 }
 
 /**
- * Convert a UTC date to Eastern Time for reporting
- * This is primarily used internally by the Eastern Time database views
- * 
- * @param date The UTC date to convert
- * @returns Date object representing the same instant in Eastern Time
- * 
- * @example
- * const easternDate = toEasternTime(transaction.timestamp);
+ * Format a date string in Eastern Time
  */
-export function toEasternTime(date: Date): Date {
-  const eastern = toZonedTime(date, EASTERN_TIMEZONE);
-  console.log('Converting to Eastern Time:', {
-    utcInput: date.toISOString(),
-    easternOutput: eastern.toISOString()
-  });
-  return eastern;
+export function formatEasternDate(date: Date): string {
+  return formatInTimeZone(date, EASTERN_TIMEZONE, 'yyyy-MM-dd');
 }

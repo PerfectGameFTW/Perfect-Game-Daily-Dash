@@ -4,22 +4,19 @@ import {
   GiftCardRedemption, InsertGiftCardRedemption,
   User, InsertUser,
   SyncState, InsertSyncState,
-  Order, InsertOrder,
-  OrderLineItem, InsertOrderLineItem,
-  OrderModifier, InsertOrderModifier,
-  OrderDiscount, InsertOrderDiscount,
-  DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary, OrderSummary,
+  DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
   DateRange, TransactionStatus,
   transactions, giftCards, giftCardRedemptions, users, syncState,
-  orders, orderLineItems, orderModifiers, orderDiscounts
+  orders, orderLineItems, orderModifiers, orderDiscounts, Order, InsertOrder, OrderLineItem, InsertOrderLineItem, OrderModifier, InsertOrderModifier, OrderDiscount, InsertOrderDiscount, OrderSummary
 } from "@shared/schema";
-import { format } from "date-fns";
-import { EASTERN_TIMEZONE } from "./dateUtils";
-import { IStorage } from "./storage";
+import { eq, and, sql } from "drizzle-orm";
+import { db } from "./db";
+import { getEasternDateRange, formatEasternDate, formatHour, EASTERN_TIMEZONE } from "./dateUtils";
+import { formatInTimeZone } from 'date-fns-tz';
+import { subDays } from 'date-fns';
 import pg from "pg";
 const { Pool } = pg;
 import { drizzle } from "drizzle-orm/node-postgres";
-import { eq, and, sql } from "drizzle-orm";
 
 // Initialize PostgreSQL connection pool
 const pool = new Pool({
@@ -27,7 +24,7 @@ const pool = new Pool({
 });
 
 // Initialize Drizzle
-export const db = drizzle(pool);
+export const db2 = drizzle(pool);
 
 export class PgStorage implements IStorage {
   // User methods
@@ -50,12 +47,9 @@ export class PgStorage implements IStorage {
   async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status: TransactionStatus = 'completed'): Promise<Transaction[]> {
     console.log('DIAGNOSTIC - getTransactions start', { dateRange, startDate, endDate, status });
 
-    const start = startDate ? new Date(startDate) : new Date();
-    const end = endDate ? new Date(endDate) : start;
-
-    // Format dates for the query
-    const startStr = format(start, 'yyyy-MM-dd');
-    const endStr = format(end, 'yyyy-MM-dd');
+    const {start, end} = getEasternDateRange(dateRange, startDate, endDate);
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
 
     console.log('Using date range:', {
       startStr,
@@ -162,110 +156,86 @@ export class PgStorage implements IStorage {
   async getDailySummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<DailySummary> {
     console.log('DIAGNOSTIC - getDailySummary start', { dateRange, startDate, endDate });
 
-    // Convert input dates to Eastern Time for consistent comparison
-    const start = startDate ? new Date(startDate) : new Date();
-    const end = endDate ? new Date(endDate) : start;
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
 
-    // Format dates for the query
-    const startStr = format(start, 'yyyy-MM-dd');
-    const endStr = format(end, 'yyyy-MM-dd');
+    console.log('Daily summary query range:', { startStr, endStr });
 
-    console.log('Using date range for daily summary:', {
-      startStr,
-      endStr,
-      timezone: EASTERN_TIMEZONE
-    });
-
-    // Query using Eastern Time views for current period with more detailed calculations
-    const currentTransactions = await db.execute(sql`
+    // Query current period metrics
+    const currentResult = await db.execute(sql`
       WITH daily_metrics AS (
         SELECT 
-          DATE(te.timestamp_et) as date,
-          COUNT(*) as order_count,
-          SUM(t.amount) as daily_total,
-          SUM(CASE WHEN t.category_id = 'giftCard' THEN t.amount ELSE 0 END) as gift_card_total
-        FROM transactions_et te
-        JOIN transactions t ON t.id = te.id
-        WHERE DATE(te.timestamp_et) >= ${startStr}::date
-          AND DATE(te.timestamp_et) <= ${endStr}::date
-          AND t.status = 'completed'
-        GROUP BY DATE(te.timestamp_et)
+          date_et,
+          COUNT(*) as transaction_count,
+          SUM(amount) as revenue,
+          SUM(CASE WHEN category_id = 'giftCard' THEN amount ELSE 0 END) as gift_card_sales
+        FROM transactions_et
+        WHERE date_et >= ${startStr}::date
+          AND date_et <= ${endStr}::date
+          AND status = 'completed'
+        GROUP BY date_et
       )
       SELECT 
-        SUM(daily_total) as total_revenue,
-        SUM(order_count) as total_orders,
-        SUM(gift_card_total) as gift_card_sales,
-        COUNT(DISTINCT date) as days_count
+        COALESCE(SUM(revenue), 0) as total_revenue,
+        COALESCE(SUM(transaction_count), 0) as total_orders,
+        COALESCE(SUM(gift_card_sales), 0) as gift_card_sales,
+        COUNT(DISTINCT date_et) as days_covered
       FROM daily_metrics
     `);
-
-    console.log('DIAGNOSTIC - Daily summary query results:', {
-      totalRevenue: currentTransactions.rows[0]?.total_revenue,
-      totalOrders: currentTransactions.rows[0]?.total_orders,
-      giftCardSales: currentTransactions.rows[0]?.gift_card_sales,
-      daysCount: currentTransactions.rows[0]?.days_count
-    });
 
     // Calculate previous period dates
-    const prevStart = new Date(start);
-    prevStart.setDate(prevStart.getDate() - (end.getDate() - start.getDate() + 1));
-    const prevEnd = new Date(end);
-    prevEnd.setDate(prevEnd.getDate() - (end.getDate() - start.getDate() + 1));
+    const prevStart = subDays(start, end.getDate() - start.getDate() + 1);
+    const prevEnd = subDays(end, end.getDate() - start.getDate() + 1);
+    const prevStartStr = formatEasternDate(prevStart);
+    const prevEndStr = formatEasternDate(prevEnd);
 
-    const prevStartStr = format(prevStart, 'yyyy-MM-dd');
-    const prevEndStr = format(prevEnd, 'yyyy-MM-dd');
+    console.log('Previous period range:', { prevStartStr, prevEndStr });
 
-    // Query using Eastern Time views for previous period
-    const prevTransactions = await db.execute(sql`
+    // Query previous period metrics
+    const prevResult = await db.execute(sql`
       WITH daily_metrics AS (
         SELECT 
-          DATE(te.timestamp_et) as date,
-          COUNT(*) as order_count,
-          SUM(t.amount) as daily_total,
-          SUM(CASE WHEN t.category_id = 'giftCard' THEN t.amount ELSE 0 END) as gift_card_total
-        FROM transactions_et te
-        JOIN transactions t ON t.id = te.id
-        WHERE DATE(te.timestamp_et) >= ${prevStartStr}::date
-          AND DATE(te.timestamp_et) <= ${prevEndStr}::date
-          AND t.status = 'completed'
-        GROUP BY DATE(te.timestamp_et)
+          date_et,
+          COUNT(*) as transaction_count,
+          SUM(amount) as revenue,
+          SUM(CASE WHEN category_id = 'giftCard' THEN amount ELSE 0 END) as gift_card_sales
+        FROM transactions_et
+        WHERE date_et >= ${prevStartStr}::date
+          AND date_et <= ${prevEndStr}::date
+          AND status = 'completed'
+        GROUP BY date_et
       )
       SELECT 
-        SUM(daily_total) as total_revenue,
-        SUM(order_count) as total_orders,
-        SUM(gift_card_total) as gift_card_sales,
-        COUNT(DISTINCT date) as days_count
+        COALESCE(SUM(revenue), 0) as total_revenue,
+        COALESCE(SUM(transaction_count), 0) as total_orders,
+        COALESCE(SUM(gift_card_sales), 0) as gift_card_sales,
+        COUNT(DISTINCT date_et) as days_covered
       FROM daily_metrics
     `);
 
+    const current = currentResult.rows[0];
+    const prev = prevResult.rows[0];
+
     // Calculate metrics
-    const totalRevenue = currentTransactions.rows[0]?.total_revenue || 0;
-    const totalOrders = currentTransactions.rows[0]?.total_orders || 0;
+    const totalRevenue = Number(current.total_revenue) || 0;
+    const totalOrders = Number(current.total_orders) || 0;
     const averageOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-    const prevTotalRevenue = prevTransactions.rows[0]?.total_revenue || 0;
-    const prevTotalOrders = prevTransactions.rows[0]?.total_orders || 0;
+    const prevTotalRevenue = Number(prev.total_revenue) || 0;
+    const prevTotalOrders = Number(prev.total_orders) || 0;
     const prevAverageOrder = prevTotalOrders > 0 ? prevTotalRevenue / prevTotalOrders : 0;
 
-    // Calculate gift card metrics
-    const giftCardSales = currentTransactions.rows[0]?.gift_card_sales || 0;
-    const prevGiftCardSales = prevTransactions.rows[0]?.gift_card_sales || 0;
+    const giftCardSales = Number(current.gift_card_sales) || 0;
+    const prevGiftCardSales = Number(prev.gift_card_sales) || 0;
 
-    // Calculate change percentages
-    const revenueChange = prevTotalRevenue > 0
-      ? ((totalRevenue - prevTotalRevenue) / prevTotalRevenue) * 100
-      : 0;
-    const ordersChange = prevTotalOrders > 0
-      ? ((totalOrders - prevTotalOrders) / prevTotalOrders) * 100
-      : 0;
-    const averageOrderChange = prevAverageOrder > 0
-      ? ((averageOrder - prevAverageOrder) / prevAverageOrder) * 100
-      : 0;
-    const giftCardSalesChange = prevGiftCardSales > 0
-      ? ((giftCardSales - prevGiftCardSales) / prevGiftCardSales) * 100
-      : 0;
+    // Calculate changes
+    const revenueChange = prevTotalRevenue > 0 ? ((totalRevenue - prevTotalRevenue) / prevTotalRevenue) * 100 : 0;
+    const ordersChange = prevTotalOrders > 0 ? ((totalOrders - prevTotalOrders) / prevTotalOrders) * 100 : 0;
+    const averageOrderChange = prevAverageOrder > 0 ? ((averageOrder - prevAverageOrder) / prevAverageOrder) * 100 : 0;
+    const giftCardSalesChange = prevGiftCardSales > 0 ? ((giftCardSales - prevGiftCardSales) / prevGiftCardSales) * 100 : 0;
 
-    return {
+    const summary: DailySummary = {
       totalRevenue,
       revenueChange,
       totalOrders,
@@ -274,12 +244,15 @@ export class PgStorage implements IStorage {
       averageOrderChange,
       giftCardSales,
       giftCardSalesChange,
-      date: format(end, 'MMMM d, yyyy')
+      date: formatInTimeZone(end, EASTERN_TIMEZONE, 'MMMM d, yyyy')
     };
+
+    console.log('Calculated daily summary:', summary);
+    return summary;
   }
 
   async getCategoryRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<CategoryRevenue[]> {
-    const { start, end } = this.getDateRange(dateRange, startDate, endDate);
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
 
     // Define category colors matching the design
     const categoryColors: Record<string, string> = {
@@ -289,9 +262,6 @@ export class PgStorage implements IStorage {
       services: '#10B981',
       giftCard: '#F59E0B'
     };
-
-    // Note: We've removed special case handling for "today" - all data is now consistently
-    // processed from the database regardless of date
 
     const currentTransactions = await this.getTransactions(dateRange, start, end);
 
@@ -313,64 +283,46 @@ export class PgStorage implements IStorage {
   }
 
   async getHourlyRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<HourlyRevenue[]> {
-    const { start, end } = this.getDateRange(dateRange, startDate, endDate);
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
 
-    // Use the imported EASTERN_TIMEZONE constant
+    console.log('Hourly revenue query range:', { startStr, endStr });
 
-    // Initialize hourly buckets (midnight to 11 PM)
-    const hourlyMap = new Map<string, number>();
+    // Query hourly revenue using the ET view
+    const result = await db.execute(sql`
+      WITH hourly_revenue AS (
+        SELECT 
+          hour_et,
+          SUM(amount) as revenue
+        FROM transactions_et
+        WHERE date_et >= ${startStr}::date
+          AND date_et <= ${endStr}::date
+          AND status = 'completed'
+        GROUP BY hour_et
+      )
+      SELECT 
+        hour_et,
+        COALESCE(revenue, 0) as amount
+      FROM generate_series(0, 23) as h(hour_et)
+      LEFT JOIN hourly_revenue USING (hour_et)
+      ORDER BY hour_et
+    `);
 
-    for (let hour = 0; hour <= 23; hour++) {
-      const formattedHour = hour === 0
-        ? '12 AM'
-        : hour < 12
-          ? `${hour} AM`
-          : hour === 12
-            ? '12 PM'
-            : `${hour - 12} PM`;
-      hourlyMap.set(formattedHour, 0);
-    }
-
-    // Note: We've removed special case handling for "today" - all data is now consistently
-    // processed from the database regardless of date
-
-    const currentTransactions = await this.getTransactions(dateRange, start, end);
-
-    // Group transactions by hour - only count completed transactions
-    const completedTransactions = currentTransactions.filter(t => t.status === 'completed');
-    completedTransactions.forEach(transaction => {
-      // Convert transaction timestamp to Eastern time for proper hour grouping
-      const utcDate = new Date(transaction.timestamp);
-      const easternDate = toZonedTime(utcDate, EASTERN_TIMEZONE);
-      const hour = easternDate.getHours();
-
-      const formattedHour = hour === 0
-        ? '12 AM'
-        : hour < 12
-          ? `${hour} AM`
-          : hour === 12
-            ? '12 PM'
-            : `${hour - 12} PM`;
-
-      const currentAmount = hourlyMap.get(formattedHour) || 0;
-      hourlyMap.set(formattedHour, currentAmount + transaction.amount);
-    });
-
-    // Format the result, maintaining the 24-hour order
-    return Array.from(hourlyMap.entries()).map(([hour, amount]) => ({
-      hour,
-      amount
+    // Format hours and ensure we have data for all 24 hours
+    const hourlyData = result.rows.map(row => ({
+      hour: formatHour(Number(row.hour_et)),
+      amount: Number(row.amount) || 0
     }));
+
+    console.log('Hourly revenue data:', hourlyData);
+    return hourlyData;
   }
 
   async getGiftCardSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<GiftCardSummary> {
-    // Convert input dates to Eastern Time for consistent comparison
-    const start = startDate ? new Date(startDate) : new Date();
-    const end = endDate ? new Date(endDate) : start;
-
-    // Format dates for the query
-    const startStr = format(start, 'yyyy-MM-dd');
-    const endStr = format(end, 'yyyy-MM-dd');
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
 
     // Query gift card sales using Eastern Time view
     const giftCardSales = await db.execute(sql`
@@ -404,14 +356,10 @@ export class PgStorage implements IStorage {
     };
   }
 
-
-
   private getDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
-    // Use the imported getEasternDateRange function
     return getEasternDateRange(dateRange, startDate, endDate);
   }
 
-  // Sync state management methods
   async getSyncState(syncType: string): Promise<SyncState | undefined> {
     const result = await db.select()
       .from(syncState)
@@ -454,7 +402,6 @@ export class PgStorage implements IStorage {
     };
   }
 
-  // Order methods
   async getOrder(id: number): Promise<Order | undefined> {
     try {
       console.log(`Fetching order with ID: ${id}`);
@@ -632,12 +579,9 @@ export class PgStorage implements IStorage {
   }
 
   async getOrderSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<OrderSummary> {
-    const start = startDate ? new Date(startDate) : new Date();
-    const end = endDate ? new Date(endDate) : start;
-
-    // Format dates for the query - will be interpreted in Eastern Time
-    const startStr = format(start, 'yyyy-MM-dd');
-    const endStr = format(end, 'yyyy-MM-dd');
+    const {start, end} = getEasternDateRange(dateRange, startDate, endDate);
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
 
     // Use orders_et view for Eastern Time-based reporting
     const ordersResult = await db.execute(sql`
@@ -715,10 +659,8 @@ export class PgStorage implements IStorage {
 export const pgStorage = new PgStorage();
 
 // Placeholder functions - replace with actual implementations
-const getEasternDateRange = (dateRange: DateRange, startDate?: Date, endDate?: Date) => ({start: new Date(), end: new Date()});
 const toZonedTime = (date: Date, timezone: string) => new Date();
 
-// Assume these error classes are defined elsewhere and imported.  Necessary for compilation.
 class OrderError extends Error {
     constructor(message: string, code: string, cause?: Error) {
         super(message);
@@ -747,3 +689,5 @@ class OrderProcessingError extends OrderError {
         super(message, 'ORDER_PROCESSING_ERROR', cause);
     }
 }
+
+interface IStorage {}
