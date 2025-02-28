@@ -12,13 +12,12 @@ export const EASTERN_TIMEZONE = 'America/New_York';
 
 /**
  * Gets the start and end dates in Eastern Time for any given date range
- * Ensures consistent midnight-to-midnight business day boundaries in Eastern Time
+ * Returns dates that match the SQL view's date_et boundaries
  */
 export function getEasternDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
-  // Get current time in Eastern timezone
   const now = new Date();
-  const startStr: string;
-  const endStr: string;
+  let startStr: string;
+  let endStr: string;
 
   // Calculate date range boundaries in ET
   if (startDate && endDate && dateRange === 'custom') {
@@ -34,28 +33,26 @@ export function getEasternDateRange(dateRange: DateRange, startDate?: Date, endD
         break;
       case 'yesterday': {
         const yesterday = subDays(now, 1);
-        const yesterdayStr = formatInTimeZone(yesterday, EASTERN_TIMEZONE, 'yyyy-MM-dd');
-        startStr = yesterdayStr;
-        endStr = yesterdayStr;
+        startStr = formatInTimeZone(yesterday, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        endStr = startStr;
         break;
       }
       case 'last7days': {
-        const sevenDaysAgo = subDays(now, 6); // Last 7 days including today
+        const sevenDaysAgo = subDays(now, 6);
         startStr = formatInTimeZone(sevenDaysAgo, EASTERN_TIMEZONE, 'yyyy-MM-dd');
         endStr = today;
         break;
       }
       case 'last30days': {
-        const thirtyDaysAgo = subDays(now, 29); // Last 30 days including today
+        const thirtyDaysAgo = subDays(now, 29);
         startStr = formatInTimeZone(thirtyDaysAgo, EASTERN_TIMEZONE, 'yyyy-MM-dd');
         endStr = today;
         break;
       }
       case 'thisMonth': {
         const firstOfMonth = startOfMonth(now);
-        const lastOfMonth = endOfMonth(now);
         startStr = formatInTimeZone(firstOfMonth, EASTERN_TIMEZONE, 'yyyy-MM-dd');
-        endStr = formatInTimeZone(lastOfMonth, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+        endStr = formatInTimeZone(now, EASTERN_TIMEZONE, 'yyyy-MM-dd');
         break;
       }
       case 'lastMonth': {
@@ -85,10 +82,18 @@ export function getEasternDateRange(dateRange: DateRange, startDate?: Date, endD
     }
   });
 
+  // Return UTC dates that correspond to the ET date boundaries
   return {
-    start: new Date(`${startStr}T00:00:00`),
-    end: new Date(`${endStr}T23:59:59.999`)
+    start: new Date(`${startStr}T00:00:00-05:00`),
+    end: new Date(`${endStr}T23:59:59.999-05:00`)
   };
+}
+
+/**
+ * Format a date string in Eastern Time for SQL queries
+ */
+export function formatEasternDate(date: Date): string {
+  return formatInTimeZone(date, EASTERN_TIMEZONE, 'yyyy-MM-dd');
 }
 
 /**
@@ -99,11 +104,4 @@ export function formatHour(hour: number): string {
   if (hour === 12) return '12 PM';
   if (hour < 12) return `${hour} AM`;
   return `${hour - 12} PM`;
-}
-
-/**
- * Format a date string in Eastern Time
- */
-export function formatEasternDate(date: Date): string {
-  return formatInTimeZone(date, EASTERN_TIMEZONE, 'yyyy-MM-dd');
 }

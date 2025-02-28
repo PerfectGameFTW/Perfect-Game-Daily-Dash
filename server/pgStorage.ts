@@ -9,11 +9,11 @@ import {
   transactions, giftCards, giftCardRedemptions, users, syncState,
   orders, orderLineItems, orderModifiers, orderDiscounts, Order, InsertOrder, OrderLineItem, InsertOrderLineItem, OrderModifier, InsertOrderModifier, OrderDiscount, InsertOrderDiscount, OrderSummary
 } from "@shared/schema";
-import { eq, and, sql } from "drizzle-orm";
-import { db } from "./db";
 import { getEasternDateRange, formatEasternDate, formatHour, EASTERN_TIMEZONE } from "./dateUtils";
 import { formatInTimeZone } from 'date-fns-tz';
 import { subDays } from 'date-fns';
+import { db } from "./db";
+import { eq, and, sql } from "drizzle-orm";
 import pg from "pg";
 const { Pool } = pg;
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -154,64 +154,38 @@ export class PgStorage implements IStorage {
 
   // Dashboard summary methods using Eastern Time views
   async getDailySummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<DailySummary> {
-    console.log('DIAGNOSTIC - getDailySummary start', { dateRange, startDate, endDate });
+    console.log('Getting daily summary for range:', { dateRange, startDate, endDate });
 
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     const startStr = formatEasternDate(start);
     const endStr = formatEasternDate(end);
 
-    console.log('Daily summary query range:', { startStr, endStr });
-
-    // Query current period metrics
+    // Get current period metrics using the new view
     const currentResult = await db.execute(sql`
-      WITH daily_metrics AS (
-        SELECT 
-          date_et,
-          COUNT(*) as transaction_count,
-          SUM(amount) as revenue,
-          SUM(CASE WHEN category_id = 'giftCard' THEN amount ELSE 0 END) as gift_card_sales
-        FROM transactions_et
-        WHERE date_et >= ${startStr}::date
-          AND date_et <= ${endStr}::date
-          AND status = 'completed'
-        GROUP BY date_et
-      )
       SELECT 
-        COALESCE(SUM(revenue), 0) as total_revenue,
-        COALESCE(SUM(transaction_count), 0) as total_orders,
-        COALESCE(SUM(gift_card_sales), 0) as gift_card_sales,
-        COUNT(DISTINCT date_et) as days_covered
-      FROM daily_metrics
+        SUM(total_revenue) as total_revenue,
+        SUM(completed_transactions) as total_orders,
+        SUM(gift_card_sales) as gift_card_sales
+      FROM daily_metrics_et
+      WHERE date_et >= ${startStr}::date
+        AND date_et <= ${endStr}::date
     `);
 
-    // Calculate previous period dates
+    // Calculate previous period date range
     const prevStart = subDays(start, end.getDate() - start.getDate() + 1);
     const prevEnd = subDays(end, end.getDate() - start.getDate() + 1);
     const prevStartStr = formatEasternDate(prevStart);
     const prevEndStr = formatEasternDate(prevEnd);
 
-    console.log('Previous period range:', { prevStartStr, prevEndStr });
-
-    // Query previous period metrics
+    // Get previous period metrics
     const prevResult = await db.execute(sql`
-      WITH daily_metrics AS (
-        SELECT 
-          date_et,
-          COUNT(*) as transaction_count,
-          SUM(amount) as revenue,
-          SUM(CASE WHEN category_id = 'giftCard' THEN amount ELSE 0 END) as gift_card_sales
-        FROM transactions_et
-        WHERE date_et >= ${prevStartStr}::date
-          AND date_et <= ${prevEndStr}::date
-          AND status = 'completed'
-        GROUP BY date_et
-      )
       SELECT 
-        COALESCE(SUM(revenue), 0) as total_revenue,
-        COALESCE(SUM(transaction_count), 0) as total_orders,
-        COALESCE(SUM(gift_card_sales), 0) as gift_card_sales,
-        COUNT(DISTINCT date_et) as days_covered
-      FROM daily_metrics
+        SUM(total_revenue) as total_revenue,
+        SUM(completed_transactions) as total_orders,
+        SUM(gift_card_sales) as gift_card_sales
+      FROM daily_metrics_et
+      WHERE date_et >= ${prevStartStr}::date
+        AND date_et <= ${prevEndStr}::date
     `);
 
     const current = currentResult.rows[0];
@@ -247,7 +221,7 @@ export class PgStorage implements IStorage {
       date: formatInTimeZone(end, EASTERN_TIMEZONE, 'MMMM d, yyyy')
     };
 
-    console.log('Calculated daily summary:', summary);
+    console.log('Daily summary calculated:', summary);
     return summary;
   }
 
@@ -287,35 +261,31 @@ export class PgStorage implements IStorage {
     const startStr = formatEasternDate(start);
     const endStr = formatEasternDate(end);
 
-    console.log('Hourly revenue query range:', { startStr, endStr });
+    console.log('Getting hourly revenue for range:', { startStr, endStr });
 
-    // Query hourly revenue using the ET view
+    // Use the hourly metrics view with proper hour filling
     const result = await db.execute(sql`
-      WITH hourly_revenue AS (
-        SELECT 
-          hour_et,
-          SUM(amount) as revenue
-        FROM transactions_et
-        WHERE date_et >= ${startStr}::date
-          AND date_et <= ${endStr}::date
-          AND status = 'completed'
-        GROUP BY hour_et
+      WITH hours AS (
+        SELECT generate_series(0, 23) AS hour
       )
       SELECT 
-        hour_et,
-        COALESCE(revenue, 0) as amount
-      FROM generate_series(0, 23) as h(hour_et)
-      LEFT JOIN hourly_revenue USING (hour_et)
-      ORDER BY hour_et
+        h.hour as hour_et,
+        COALESCE(SUM(hm.total_revenue), 0) as amount
+      FROM hours h
+      LEFT JOIN hourly_metrics_et hm ON 
+        h.hour = hm.hour_et AND
+        hm.date_et >= ${startStr}::date AND
+        hm.date_et <= ${endStr}::date
+      GROUP BY h.hour
+      ORDER BY h.hour
     `);
 
-    // Format hours and ensure we have data for all 24 hours
     const hourlyData = result.rows.map(row => ({
       hour: formatHour(Number(row.hour_et)),
       amount: Number(row.amount) || 0
     }));
 
-    console.log('Hourly revenue data:', hourlyData);
+    console.log('Hourly revenue calculated:', hourlyData);
     return hourlyData;
   }
 
