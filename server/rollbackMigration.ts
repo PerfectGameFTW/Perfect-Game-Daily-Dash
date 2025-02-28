@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 
 async function rollbackMigration() {
   console.log('Starting rollback process...');
-  
+
   try {
     // Check if backup tables exist
     const backupTablesExist = await db.execute(sql`
@@ -20,32 +20,32 @@ async function rollbackMigration() {
         WHERE table_name = 'gift_card_redemptions_backup'
       ) as redemptions_exist;
     `);
-    
+
     if (!backupTablesExist) {
       console.error('❌ Backup tables not found. Cannot rollback.');
       return false;
     }
-    
+
     // Restore data from backup tables
     await db.execute(sql`
       -- Restore transactions
       TRUNCATE TABLE transactions;
       INSERT INTO transactions SELECT * FROM transactions_backup;
-      
+
       -- Restore gift cards
       TRUNCATE TABLE gift_cards;
       INSERT INTO gift_cards SELECT * FROM gift_cards_backup;
-      
+
       -- Restore redemptions
       TRUNCATE TABLE gift_card_redemptions;
       INSERT INTO gift_card_redemptions SELECT * FROM gift_card_redemptions_backup;
-      
+
       -- Drop backup tables
       DROP TABLE transactions_backup;
       DROP TABLE gift_cards_backup;
       DROP TABLE gift_card_redemptions_backup;
     `);
-    
+
     console.log('✅ Successfully rolled back to previous state');
     return true;
   } catch (error) {
@@ -54,7 +54,7 @@ async function rollbackMigration() {
   }
 }
 
-// Only run if this file is executed directly
-if (require.main === module) {
+// ES Module style execution check
+if (process.argv[1] === new URL(import.meta.url).pathname) {
   rollbackMigration().catch(console.error);
 }
