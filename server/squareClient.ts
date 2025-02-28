@@ -524,18 +524,18 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
   // DIRECT CHECK: First check if balanceMoney exists (camelCase version from API)
   if (giftCard.balanceMoney && giftCard.balanceMoney.amount !== undefined) {
     // NOTE: The amount is a string like "7600" which needs to be converted to a number and divided by 100
-    amount = typeof giftCard.balanceMoney.amount === 'bigint' 
-      ? Number(giftCard.balanceMoney.amount) / 100 
+    amount = typeof giftCard.balanceMoney.amount === 'bigint' || typeof giftCard.balanceMoney.amount === 'string'
+      ? Number(giftCard.balanceMoney.amount) / 100
       : Number(giftCard.balanceMoney.amount) / 100;
     console.log(`Gift card ${giftCard.id} - Using balanceMoney.amount direct match: $${amount}`);
   } 
   // Check for snake_case version (balance_money) as sometimes the API returns different formats
   else if (giftCard.balance_money && giftCard.balance_money.amount !== undefined) {
-    amount = typeof giftCard.balance_money.amount === 'bigint' 
-      ? Number(giftCard.balance_money.amount) / 100 
+    amount = typeof giftCard.balance_money.amount === 'bigint' || typeof giftCard.balance_money.amount === 'string'
+      ? Number(giftCard.balance_money.amount) / 100
       : Number(giftCard.balance_money.amount) / 100;
     console.log(`Gift card ${giftCard.id} - Using balance_money.amount direct match: $${amount}`);
-  } 
+  }
   else {
     // Deeply search for money objects in the gift card data structure
     function findMoneyAmounts(obj: any, path = ''): {path: string, amount: number}[] {
@@ -571,8 +571,8 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
               'initialValueMoney', 'initial_value_money'
             ].includes(key) && 
               obj[key].amount !== undefined) {
-            const moneyAmount = typeof obj[key].amount === 'bigint' 
-              ? Number(obj[key].amount) / 100 
+            const moneyAmount = typeof obj[key].amount === 'bigint' || typeof obj[key].amount === 'string'
+              ? Number(obj[key].amount) / 100
               : Number(obj[key].amount) / 100;
             results.push({path: `${path}.${key}.amount`, amount: moneyAmount});
           }
@@ -620,8 +620,8 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
       // Traditional approaches if we couldn't find any amounts with our deep search
       // Try the specific paths we know about from Square API docs
       if (giftCard.gan_data && giftCard.gan_data.balance_money && giftCard.gan_data.balance_money.amount !== undefined) {
-        amount = typeof giftCard.gan_data.balance_money.amount === 'bigint' 
-          ? Number(giftCard.gan_data.balance_money.amount) / 100 
+        amount = typeof giftCard.gan_data.balance_money.amount === 'bigint' || typeof giftCard.gan_data.balance_money.amount === 'string'
+          ? Number(giftCard.gan_data.balance_money.amount) / 100
           : Number(giftCard.gan_data.balance_money.amount) / 100;
         console.log(`Gift card ${giftCard.id} - Using gan_data.balance_money.amount: $${amount}`);
       } else {
