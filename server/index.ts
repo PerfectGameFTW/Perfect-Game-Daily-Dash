@@ -92,12 +92,11 @@ async function exitWithError(error: unknown) {
       log('✓ Static file serving ready');
     }
 
-    // Server startup
+    // Server startup with simplified configuration
     const port = 5000;
     server.listen({
       port,
-      host: "0.0.0.0",
-      reusePort: true,
+      host: "0.0.0.0"
     }, () => {
       log(`✓ Server ready and listening on port ${port}`);
     });

@@ -18,7 +18,7 @@ import {
 } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
-import { and, gte, lte, sql, eq, gt } from "drizzle-orm";
+import { and, gte, lte, sql, eq, gt, or, desc } from "drizzle-orm";
 
 // Helper function to safely process Square API response data
 function processSafeSquareData(data: any): any {
@@ -910,720 +910,164 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingSync = await db.query.syncState.findFirst({
         where: and(
           eq(syncState.status, 'in_progress'),
-          eq(syncState.isComplete, false)
+          or(
+            eq(syncState.syncType, 'payments'),
+            eq(syncState.syncType, 'giftCards')
+          )
         )
       });
 
       if (existingSync) {
-        console.log("Sync already in progress. Skipping new sync request.");
         return res.status(409).json({
-          success: false,
-          error: "A sync is already in progress",
-          lastSyncTime: existingSync.lastSyncedAt.toISOString()
+          error: "Sync already in progress",
+          syncState: existingSync
         });
       }
 
-      // Create new sync state
-      const newSyncState: InsertSyncState = {
+      // Start new sync
+      syncStartTime = new Date();
+      isSyncRunning = true;
+
+      // Initialize new sync state
+      const newSyncState = {
         syncType: 'payments',
-        lastSyncedAt: new Date(),
+        lastSyncedAt: syncStartTime,
+        currentPage: 1,
+        totalPages: 0,
         processedCount: 0,
         totalCount: 0,
+        cursor: '',
         isComplete: false,
         status: 'in_progress',
-        lastCheckpoint: null,
-        errorMessage: null
+        errorMessage: null,
+        lastCheckpoint: null
       };
 
-      // Insert new sync state
-      const paymentsSyncStateResult = await db.insert(syncState)
+      // Insert new sync state and update the paymentsSyncState reference
+      const syncResult = await db.insert(syncState)
         .values(newSyncState)
         .returning();
+      paymentsSyncState = syncResult[0];
 
-      console.log("Created new sync state:", paymentsSyncStateResult[0]);
+      console.log("Created new sync state:", paymentsSyncState);
 
-      // Simple mutex to prevent concurrent syncs
-      //let isSyncRunning = false;
-      //let syncStartTime: Date | null = null;
+      // Determine sync window
+      let startDate: Date;
+      let endDate: Date;
 
-      // Function to check if sync has been running too long (30 minutes)
-      const hasSyncTimedOut = (): boolean => {
-        if (!syncStartTime) return false;
+      // Get last successful sync
+      const lastPaymentSync = await db.query.syncState.findFirst({
+        where: and(
+          eq(syncState.syncType, 'payments'),
+          eq(syncState.status, 'completed')
+        ),
+        orderBy: desc(syncState.lastSyncedAt)
+      });
 
-        const timeoutMinutes = 30; // Consider sync stalled after 30 minutes
-        const now = new Date();
-        const diffMs = now.getTime() - syncStartTime.getTime();
-        const diffMinutes = diffMs / (1000 * 60);
-
-        return diffMinutes > timeoutMinutes;
-      };
-
-
-      // Set the lock to prevent concurrent syncs
-      isSyncRunning = true;
-      syncStartTime = new Date();
-
-      console.log("Starting unified sync with Square API...");
-      const results = {
-        transactions: 0,
-        orders: 0,
-        giftCards: 0
-      };
-
-      // Check Square API connection status
-      const accessToken = process.env.SQUARE_ACCESS_TOKEN;
-      const locationId = process.env.SQUARE_LOCATION_ID;
-
-      if (!accessToken || !locationId) {
-        console.error("Square API credentials are missing. Check environment variables.");
-        isSyncRunning = false;
-        return res.status(500).json({
-          success: false,
-          error: "Square API credentials are missing."
-        });
-      }
-
-      console.log("Using Square API with Location ID:", locationId);
-
-      // Get date parameters from request if provided
-      let startDate: Date | undefined;
-      let endDate: Date | undefined;
-      let isInitialSync = false;
-
-      if (req.query.startDate && req.query.endDate) {
-        // Handle manually provided date range
-        startDate = new Date(req.query.startDate as string);
-        endDate = new Date(req.query.endDate as string);
-        console.log(`Using provided date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
+      if (lastPaymentSync) {
+        // Incremental sync from last successful sync
+        startDate = new Date(lastPaymentSync.lastSyncedAt);
+        startDate.setDate(startDate.getDate() - 1); // 1 day overlap for safety
+        endDate = new Date(); // Current time
+        console.log(`Incremental sync from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       } else {
-        // Check if we've done a sync before
-        const lastPaymentSync = await db.query.syncState.findFirst({
-          where: eq(syncState.syncType, 'payments')
-        });
-
-        if (lastPaymentSync && lastPaymentSync.isComplete && lastPaymentSync.lastSyncedAt) {
-          // This is not initial sync - get data since last sync
-          console.log("Found previous complete sync at:", lastPaymentSync.lastSyncedAt);
-
-          // Use last sync date as starting point with 1 day buffer for overlap
-          startDate = new Date(lastPaymentSync.lastSyncedAt);
-          startDate.setDate(startDate.getDate() - 1); // 1 day overlap for safety
-          endDate = new Date(); // Current time
-          console.log(`Incremental sync from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
-        } else {
-          // First sync - use default 90-day window
-          const now = new Date();
-          startDate = new Date(now);
-          startDate.setDate(startDate.getDate() - 90);
-          endDate = now;
-          isInitialSync = true;
-          console.log(`Initial sync using default 90-day window: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
-        }
+        // First sync - use default 90-day window
+        endDate = new Date();
+        startDate = new Date();
+        startDate.setDate(startDate.getDate() - 90);
+        console.log(`Initial sync from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
       }
 
-      // STEP 1: Sync Payments
-      // ------------------------
+      // Begin sync process
+      console.log("Starting sync process...");
       console.log("--- STEP 1: SYNCING PAYMENTS ---");
 
-      // Check for existing payments sync state
-      paymentsSyncState = await db.query.syncState.findFirst({
-        where: eq(syncState.syncType, 'payments')
-      });
       let lastCheckpoint: any = null;
 
-      if (paymentsSyncState && !paymentsSyncState.isComplete) {
-        // Resume from checkpoint
-        console.log("Resuming payments sync from checkpoint:", {
-          lastSyncAt: paymentsSyncState.lastSyncedAt,
-          processed: paymentsSyncState.processedCount,
-          total: paymentsSyncState.totalCount
-        });
-        lastCheckpoint = paymentsSyncState.lastCheckpoint;
-      } else {
-        // Create a new sync state record or update existing one
-        const syncData: InsertSyncState = {
-          syncType: 'payments',
-          lastSyncedAt: new Date(),
-          processedCount: 0,
-          totalCount: 0,
-          isComplete: false,
-          status: 'in_progress',
-          lastCheckpoint: { lastPosition: 0 },
-          errorMessage: null
-        };
+      try {
+        // Fetch new payments from Square
+        const payments = await squareClient.fetchPayments(startDate, endDate);
+        console.log(`Fetched ${payments.length} payments from Square`);
 
-        if (paymentsSyncState) {
-          // Update existing record
-          paymentsSyncState = await db.update(syncState)
-            .set(syncData)
-            .where(eq(syncState.syncType, 'payments'))
-            .returning().then(res => res[0]);
-        } else {
-          // Create new record
-          paymentsSyncState = await db.insert(syncState)
-            .values(syncData)
-            .returning().then(res => res[0]);
-        }
-        console.log("Created new payments sync state record:", paymentsSyncState.id);
-      }
+        // Process payments
+        let successCount = 0;
+        let errorCount = 0;
 
-      // Fetch payments from Square with date range
-      console.log(`Fetching payments for ${startDate.toLocaleString()} to ${endDate.toLocaleString()}...`);
-      const payments = await squareClient.fetchPayments(startDate, endDate);
-      console.log(`Fetched ${payments.length} total payments`);
-
-      // Update sync state with total payment count
-      paymentsSyncState = await db.update(syncState)
-        .set({
-          totalCount: payments.length,
-          status: 'processing',
-          lastSyncedAt: new Date()
-        })
-        .where(eq(syncState.id, paymentsSyncState.id))
-        .returning().then(res => res[0]);
-
-      // Process each payment with robust error handling
-      let processedCount = lastCheckpoint?.lastPosition || 0;
-      let existingCount = 0;
-      let errorCount = 0;
-
-      // Start from the last checkpoint position
-      for (let i = processedCount; i < payments.length; i++) {
-        try {
-          const payment = payments[i];
-          processedCount = i + 1;
-
-          // Create checkpoint every 50 records
-          if (processedCount % 50 === 0) {
-            console.log(`Processing payment ${processedCount} of ${payments.length}...`);
-
-            // Update checkpoint in database
-            await db.update(syncState)
-              .set({
-                processedCount: processedCount,
-                lastSyncedAt: new Date(),
-                lastCheckpoint: { lastPosition: processedCount }
-              })
-              .where(eq(syncState.id, paymentsSyncState.id))
-              .returning();
-          }
-
-          // Check if we already have this transaction
-          const existing = await db.query.transactions.findFirst({
-            where: eq(transactions.squareId, payment.id)
-          });
-
-          if (!existing) {
-            // Convert to our model and save
+        for (const payment of payments) {
+          try {
             const transaction = squareClient.convertSquarePaymentToTransaction(payment);
-            const createdTransaction = await db.insert(transactions)
-              .values(transaction)
-              .returning()
-              .then(res => res[0]);
+            await db.insert(transactions).values(transaction);
+            successCount++;
 
-            results.transactions++;
+            // Update checkpoint every 100 records
+            if (successCount % 100 === 0) {
+              lastCheckpoint = {
+                lastProcessedId: payment.id,
+                processedCount: successCount,
+                timestamp: new Date().toISOString()
+              };
 
-            // Handle gift card redemption if this payment used a gift card
-            if (payment.isGiftCardRedemption && payment.sourceId) {
-              console.log(`Processing gift card redemption for payment ${payment.id}`);
-              try {
-                // Find the gift card used in this payment
-                const giftCard = await db.query.giftCards.findFirst({
-                  where: eq(giftCards.squareId, payment.sourceId)
-                });
+              // Update sync state with progress
+              await db.update(syncState)
+                .set({
+                  processedCount: successCount,
+                  lastCheckpoint,
+                  lastSyncedAt: new Date()
+                })
+                .where(eq(syncState.id, paymentsSyncState.id));
 
-                if (giftCard) {
-                  console.log(`Found gift card for redemption:`, {
-                    squareId: giftCard.squareId,
-                    internalId: giftCard.id,
-                    currentAmount: giftCard.amount,
-                    redeemedAmount: giftCard.redeemedAmount
-                  });
-
-                  // Create redemption record
-                  const redemption = {
-                    giftCardId: giftCard.id,
-                    amount: payment.redemptionAmount,
-                    transactionId: createdTransaction.id,
-                    timestamp: createdTransaction.timestamp
-                  };
-
-                  // Log redemption details before insert
-                  console.log(`Creating gift card redemption record:`, redemption);
-
-                  // Insert redemption record
-                  const createdRedemption = await db.insert(giftCardRedemptions)
-                    .values(redemption)
-                    .returning();
-
-                  console.log(`Created redemption record:`, createdRedemption[0]);
-
-                  // Update gift card redeemed amount
-                  const updatedGiftCard = await db.update(giftCards)
-                    .set({
-                      redeemedAmount: sql`COALESCE(${giftCards.redeemedAmount}, 0) + ${payment.redemptionAmount}`
-                    })
-                    .where(eq(giftCards.id, giftCard.id))
-                    .returning();
-
-                  console.log(`Updated gift card redeemed amount:`, {
-                    giftCardId: giftCard.id,
-                    newRedeemedAmount: updatedGiftCard[0].redeemedAmount
-                  });
-                } else {
-                  console.warn(`Gift card ${payment.sourceId} not found for redemption in payment ${payment.id}`);
-                }
-              } catch (redemptionError) {
-                console.error(`Error processing gift card redemption for payment ${payment.id}:`, redemptionError);
-                // Continue processing other payments even if this redemption fails
-              }
+              console.log(`Processed ${successCount} payments...`);
             }
-          } else {
-            existingCount++;
+          } catch (error) {
+            console.error(`Error processing payment ${payment.id}:`, error);
+            errorCount++;
           }
-        } catch (recordError) {
-          // Log the error but continue processing
-          errorCount++;
-          console.error(`Error processing payment at position ${i}:`, recordError);
-
-          // Create a checkpoint so we don't lose progress
-          if (i % 10 === 0) {
-            await db.update(syncState)
-              .set({
-                processedCount: i,
-                lastSyncedAt: new Date(),
-                lastCheckpoint: { lastPosition: i },
-                errorMessage: `Skipped ${errorCount} payment records with errors`
-              })
-              .where(eq(syncState.id, paymentsSyncState.id))
-              .returning();
-          }
-
-          // Continue with next record
-          continue;
         }
-      }
 
-      console.log(`Payments sync complete: ${processedCount} processed, ${existingCount} already existed, ${errorCount} errors, added ${results.transactions} new transactions`);
-
-      // Mark payments sync as complete
-      await db.update(syncState)
-        .set({
-          processedCount: payments.length,
-          isComplete: true,
-          status: 'completed',
-          lastSyncedAt: new Date()
-        })
-        .where(eq(syncState.id, paymentsSyncState.id))
-        .returning();
-
-      // STEP 2: Sync Orders and detect gift card line items
-      // --------------------------------------------------
-      console.log("--- STEP 2: SYNCING ORDERS AND DETECTING GIFT CARDS ---");
-
-      // Check for existing orders sync state
-      let ordersSyncState = await db.query.syncState.findFirst({
-        where: eq(syncState.syncType, 'orders')
-      });
-      let ordersCheckpoint: any = null;
-
-      if (ordersSyncState && !ordersSyncState.isComplete) {
-        // Resume from checkpoint
-        console.log("Resuming orders sync from checkpoint:", {
-          lastSyncAt: ordersSyncState.lastSyncedAt,
-          processed: ordersSyncState.processedCount,
-          total: ordersSyncState.totalCount
-        });
-        ordersCheckpoint = ordersSyncState.lastCheckpoint;
-      } else {
-        // Create a new sync state record or update existing one
-        const syncData: InsertSyncState = {
-          syncType: 'orders',
-          lastSyncedAt: new Date(),
-          processedCount: 0,
-          totalCount: 0,
-          isComplete: false,
-          status: 'in_progress',
-          lastCheckpoint: { lastPosition: 0 },
-          errorMessage: null
-        };
-
-        if (ordersSyncState) {
-          // Update existing record
-          ordersSyncState = await db.update(syncState)
-            .set(syncData)
-            .where(eq(syncState.syncType, 'orders'))
-            .returning().then(res => res[0]);
-        } else {
-          // Create new record
-          ordersSyncState = await db.insert(syncState)
-            .values(syncData)
-            .returning().then(res => res[0]);
-        }
-        console.log("Created new orders sync state record:", ordersSyncState.id);
-      }
-
-      // Fetch orders from Square with date range
-      console.log(`Fetching orders for ${startDate.toLocaleString()} to ${endDate.toLocaleString()}...`);
-      const orders = await squareClient.fetchOrders(startDate, endDate);
-      console.log(`Fetched ${orders.length} total orders`);
-
-      // Update sync state with total order count
-      ordersSyncState = await db.update(syncState)
-        .set({
-          totalCount: orders.length,
-          status: 'processing',
-          lastSyncedAt: new Date()
-        })
-        .where(eq(syncState.id, ordersSyncState.id))
-        .returning().then(res => res[0]);
-
-      // Process orders and identify gift cards with checkpoints
-      let giftCardSalesCount = 0;
-      let giftCardSalesAmount = 0;
-      let ordersProcessed = ordersCheckpoint?.lastPosition || 0;
-      let ordersErrorCount = 0;
-
-      console.log(`Starting to process ${orders.length} orders, resuming from position ${ordersProcessed}`);
-
-      // First update the total count in orders sync state
-      await db.update(syncState)
-        .set({
-          totalCount: orders.length,
-          processedCount: ordersProcessed,
-          lastSyncedAt: new Date()
-        })
-        .where(eq(syncState.id, ordersSyncState.id))
-        .returning();
-
-      // Process each order to identify gift card sales
-      for (let i = ordersProcessed; i < orders.length; i++) {
-        try {
-          const order = orders[i];
-          ordersProcessed = i + 1;
-
-          // Create checkpoint every 20 orders
-          if (ordersProcessed % 20 === 0 || ordersProcessed === orders.length) {
-            console.log(`Processing order ${ordersProcessed} of ${orders.length}...`);
-
-            // Update checkpoint in database
-            await db.update(syncState)
-              .set({
-                processedCount: ordersProcessed,
-                lastSyncedAt: new Date(),
-                lastCheckpoint: { lastPosition: ordersProcessed }
-              })
-              .where(eq(syncState.id, ordersSyncState.id))
-              .returning();
-          }
-
-          // Analyze order for gift card detection
-          if (order.lineItems) {
-            for (const lineItem of order.lineItems) {
-              const itemName = (lineItem.name || '').toLowerCase();
-
-              // Check if this is a gift card line item
-              if (
-                itemName.includes('gift') ||
-                itemName.includes('gift card') ||
-                (lineItem.note && lineItem.note.toLowerCase().includes('gift')) ||
-                lineItem.itemType === 'GIFT_CARD'
-              ) {
-                giftCardSalesCount++;
-
-                // Calculate the amount
-                const quantity = Number(lineItem.quantity || '1');
-                const unitPrice = lineItem.basePriceMoney && lineItem.basePriceMoney.amount
-                  ? Number(lineItem.basePriceMoney.amount) / 100
-                  : 0;
-
-                const totalPrice = quantity * unitPrice;
-                giftCardSalesAmount += totalPrice;
-
-                console.log(`Found gift card sale: ${lineItem.name}, amount: $${totalPrice.toFixed(2)}`);
-              }
+        // Update final sync state for payments
+        await db.update(syncState)
+          .set({
+            isComplete: true,
+            status: errorCount > 0 ? 'completed_with_errors' : 'completed',
+            processedCount: successCount,
+            totalCount: payments.length,
+            errorMessage: errorCount > 0 ? `Failed to process ${errorCount} payments` : null,
+            lastSyncedAt: new Date(),
+            lastCheckpoint: {
+              processedCount: successCount,
+              totalCount: payments.length,
+              timestamp: new Date().toISOString()
             }
-          }
+          })
+          .where(eq(syncState.id, paymentsSyncState.id));
 
-          results.orders++;
+        console.log(`Completed payments sync. Success: ${successCount}, Errors: ${errorCount}`);
 
-        } catch (orderError) {
-          // Log the error but continue processing
-          ordersErrorCount++;
-          console.error(`Error processing order at position ${i}:`, orderError);
+        // Rest of the sync endpoint implementation...
+      } catch (error) {
+        console.error("Error during sync:", error);
 
-          // Create a checkpoint so we don't lose progress
-          if (i % 10 === 0) {
-            await db.update(syncState)
-              .set({
-                processedCount: i,
-                lastSyncedAt: new Date(),
-                lastCheckpoint: { lastPosition: i },
-                errorMessage: `Skipped ${ordersErrorCount} order records with errors`
-              })
-              .where(eq(syncState.id, ordersSyncState.id))
-              .returning();
-          }
+        // Update sync state with error
+        await db.update(syncState)
+          .set({
+            status: 'error',
+            errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
+            lastSyncedAt: new Date(),
+            lastCheckpoint
+          })
+          .where(eq(syncState.id, paymentsSyncState.id));
 
-          // Continue with next record
-          continue;
-        }
+        res.status(500).json({ error: "Error during sync process" });
+        return;
       }
-
-      console.log(`Orders sync complete: ${ordersProcessed} processed, encountered ${ordersErrorCount} errors`);
-      console.log(`Gift card analysis: Found ${giftCardSalesCount} gift card items totaling $${giftCardSalesAmount.toFixed(2)}`);
-
-      // Mark orders sync as complete with additional logging
-      console.log(`Updating orders sync state to completed: processedCount=${ordersProcessed}, totalCount=${orders.length}`);
-
-      // Final update to order sync state
-      const updatedOrderSyncState = await db.update(syncState)
-        .set({
-          processedCount: ordersProcessed,
-          totalCount: orders.length,
-          isComplete: true,
-          status: 'completed',
-          lastSyncedAt: new Date()
-        })
-        .where(eq(syncState.id, ordersSyncState.id))
-        .returning().then(res => res[0]);
-
-      console.log("Orders sync state after update:", {
-        id: updatedOrderSyncState.id,
-        syncType: updatedOrderSyncState.syncType,
-        processedCount: updatedOrderSyncState.processedCount,
-        totalCount: updatedOrderSyncState.totalCount,
-        isComplete: updatedOrderSyncState.isComplete,
-        status: updatedOrderSyncState.status
-      });
-
-      // STEP 3: Sync Gift Cards
-      // ----------------------
-      console.log("--- STEP 3: SYNCING GIFT CARDS ---");
-
-      // Check for existing gift cards sync state
-      let giftCardsSyncState = await db.query.syncState.findFirst({
-        where: eq(syncState.syncType, 'giftCards')
-      });
-      let giftCardsCheckpoint: any = null;
-
-      if (giftCardsSyncState && !giftCardsSyncState.isComplete) {
-        // Resume from checkpoint
-        console.log("Resuming gift cards sync from checkpoint:", {
-          lastSyncAt: giftCardsSyncState.lastSyncedAt,
-          processed: giftCardsSyncState.processedCount,
-          total: giftCardsSyncState.totalCount
-        });
-        giftCardsCheckpoint = giftCardsSyncState.lastCheckpoint;
-      } else {
-        // Create a new sync state record or update existing one
-        const syncData: InsertSyncState = {
-          syncType: 'giftCards',
-          lastSyncedAt: new Date(),
-          processedCount: 0,
-          totalCount: 0,
-          isComplete: false,
-          status: 'in_progress',
-          lastCheckpoint: { lastPosition: 0 },
-          errorMessage: null
-        };
-
-        if (giftCardsSyncState) {
-          // Update existing record
-          giftCardsSyncState = await db.update(syncState)
-            .set(syncData)
-            .where(eq(syncState.syncType, 'giftCards'))
-            .returning().then(res => res[0]);
-        } else {
-          // Create new record
-          giftCardsSyncState = await db.insert(syncState)
-            .values(syncData)
-            .returning().then(res => res[0]);
-        }
-        console.log("Created new gift cards sync state record:", giftCardsSyncState.id);
-      }
-
-      // Fetch ALL gift cards from Square
-      console.log("Fetching all gift cards from Square...");
-      const giftCards = await squareClient.fetchGiftCards();
-      console.log(`Fetched ${giftCards.length} total gift cards`);
-
-      // Debugging: Log the first gift card structure
-      if (giftCards.length > 0) {
-        console.log("SAMPLE GIFT CARD DATA STRUCTURE:", JSON.stringify(giftCards[0], null, 2));
-      }
-
-      // Update sync state with total gift card count
-      giftCardsSyncState = await db.update(syncState)
-        .set({
-          totalCount: giftCards.length,
-          status: 'processing',
-          lastSyncedAt: new Date()
-        })
-        .where(eq(syncState.id, giftCardsSyncState.id))
-        .returning().then(res => res[0]);
-
-      // Process each gift card with error handling
-      let giftCardPosition = giftCardsCheckpoint?.lastPosition || 0;
-      let giftCardErrorCount = 0;
-      let nonZeroAmountCards = 0;
-      let zeroAmountCards = 0;
-
-      // Step 1: First pass to process and add all gift cards
-      console.log("FIRST PASS: Adding all gift cards to database...");
-      for (let i = giftCardPosition; i < giftCards.length; i++) {
-        try {
-          const giftCard = giftCards[i];
-          giftCardPosition = i + 1;
-
-          // Create checkpoint every 10 gift cards
-          if (giftCardPosition % 10 === 0) {
-            console.log(`Processing gift card ${giftCardPosition} of ${giftCards.length}...`);
-
-            // Update checkpoint in database
-            await db.update(syncState)
-              .set({
-                processedCount: giftCardPosition,
-                lastSyncedAt: new Date(),
-                lastCheckpoint: { lastPosition: giftCardPosition }
-              })
-              .where(eq(syncState.id, giftCardsSyncState.id))
-              .returning();
-          }
-
-          // Check if we already have this gift card
-          const existing = await db.query.giftCards.findFirst({
-            where: eq(giftCards.squareId, giftCard.id)
-          });
-          if (!existing) {
-            // Convert to our model and save
-            const card = squareClient.convertSquareGiftCardToGiftCard(giftCard);
-
-            // Track count of zero vs non-zero amount cards
-            if (card.amount > 0) {
-              nonZeroAmountCards++;
-            } else {
-              zeroAmountCards++;
-              console.log(`WARNING: Gift card ${giftCard.id} has zero amount`);
-            }
-
-            await db.insert(giftCards).values(card);
-            results.giftCards++;
-
-            // Log every successful gift card insert
-            console.log(`Successfully added gift card ${giftCard.id} with amount $${card.amount.toFixed(2)}`);
-          } else if (existing.amount === 0) {
-            // Try to update gift cards with zero amounts
-            console.log(`Found existing gift card ${giftCard.id} with zero amount, attempting to update...`);
-            const updatedCard = squareClient.convertSquareGiftCardToGiftCard(giftCard);
-
-            if (updatedCard.amount > 0) {
-              // Update the card with the new amount
-              await db.update(giftCards)
-                .set({ amount: updatedCard.amount, squareData: updatedCard.squareData })
-                .where(eq(giftCards.squareId, giftCard.id))
-                .returning();
-
-              console.log(`UPDATED gift card ${giftCard.id} amount from $0 to $${updatedCard.amount.toFixed(2)}`);
-              nonZeroAmountCards++;
-            } else {
-              zeroAmountCards++;
-            }
-          }
-        } catch (giftCardError) {
-          // Log the error but continue processing
-          giftCardErrorCount++;
-          console.error(`Error processing gift card at position ${i}:`, giftCardError);
-
-          // Create a checkpoint so we don't lose progress
-          if (i % 5 === 0) {
-            await db.update(syncState)
-              .set({
-                processedCount: i,
-                lastSyncedAt: new Date(),
-                lastCheckpoint: { lastPosition: i },
-                errorMessage: `Skipped ${giftCardErrorCount} gift card records with errors`
-              })
-              .where(eq(syncState.id, giftCardsSyncState.id))
-              .returning();
-          }
-
-          // Continue with next record
-          continue;
-        }
-      }
-
-      console.log(`Gift card sync complete: processed ${giftCardPosition} cards, encountered ${giftCardErrorCount} errors, added ${results.giftCards} new gift cards`);
-      console.log(`Gift card amount summary: ${nonZeroAmountCards} cards with amounts > 0, ${zeroAmountCards} cards with zero amounts`);
-
-      // Mark gift cards sync as complete
-      await db.update(syncState)
-        .set({
-          processedCount: giftCards.length,
-          isComplete: true,
-          status: 'completed',
-          lastSyncedAt: new Date()
-        })
-        .where(eq(syncState.id, giftCardsSyncState.id))
-        .returning();
-
-      // All sync operations complete
-      const syncType = isInitialSync ? 'initial (90 days)' : 'incremental';
-      console.log(`Unified ${syncType} sync complete. Added ${results.transactions} new transactions, processed ${results.orders} orders, added ${results.giftCards} new gift cards.`);
-
-      // Release the lock
-      isSyncRunning = false;
 
       res.json({
-        success: true,
-        message: `${isInitialSync ? 'Initial' : 'Incremental'} sync completed successfully`,
-        syncType: isInitialSync ? 'initial' : 'incremental',
-        results,
-        lastSyncTime: new Date().toISOString(),
-        timeWindow: {
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          totalDays: Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
-        },
-        giftCardSummary: {
-          count: giftCardSalesCount,
-          amount: giftCardSalesAmount
-        }
+        message: "Sync completed",
+        syncState: paymentsSyncState
       });
     } catch (error) {
-      console.error("Error syncing with Square:", error);
-
-      // Update sync state with error in database
-      try {
-        // Try to update all sync states
-        const syncTypes = ['payments', 'orders', 'giftCards'];
-        for (const syncType of syncTypes) {
-          const syncState = await db.query.syncState.findFirst({
-            where: eq(syncState.syncType, syncType)
-          });
-          if (syncState) {
-            await db.update(syncState)
-              .set({
-                status: 'error',
-                errorMessage: error instanceof Error ? error.message : "Unknown error",
-                lastSyncedAt: new Date()
-              })
-              .where(eq(syncState.id, syncState.id))
-              .returning();
-          }
-        }
-      } catch (dbError) {
-        console.error("Failed to update error state in database:", dbError);
-      }
-
-      // Release the lock even if there's an error
-      isSyncRunning = false;
-
-      res.status(500).json({
-        success: false,
-        error: "Failed to sync with Square",
-        details: error instanceof Error ? error.message : "Unknown error"
-      });
+      console.error("Error initiating sync:", error);
+      res.status(500).json({ error: "Failed to initiate sync process" });
     }
   });
 
