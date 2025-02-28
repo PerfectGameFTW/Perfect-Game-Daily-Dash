@@ -1,4 +1,13 @@
-import { pgTable, text, serial, integer, boolean, timestamp, real, jsonb } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  boolean,
+  timestamp,
+  real,
+  jsonb,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -10,7 +19,7 @@ export const dateRangeSchema = z.enum([
   "last30days",
   "thisMonth",
   "lastMonth",
-  "custom"
+  "custom",
 ]);
 
 export type DateRange = z.infer<typeof dateRangeSchema>;
@@ -20,7 +29,7 @@ export const transactionStatusSchema = z.enum([
   "completed",
   "refunded",
   "failed",
-  "pending"
+  "pending",
 ]);
 
 export type TransactionStatus = z.infer<typeof transactionStatusSchema>;
@@ -31,7 +40,7 @@ export const categorySchema = z.enum([
   "drinks",
   "retail",
   "services",
-  "giftCard"
+  "giftCard",
 ]);
 
 export type Category = z.infer<typeof categorySchema>;
@@ -44,11 +53,11 @@ export const transactions = pgTable("transactions", {
   categoryId: text("category_id").notNull(),
   status: text("status").notNull(),
   timestamp: timestamp("timestamp").notNull(),
-  squareData: jsonb("square_data")
+  squareData: jsonb("square_data"),
 });
 
 export const insertTransactionSchema = createInsertSchema(transactions).omit({
-  id: true
+  id: true,
 });
 
 export type InsertTransaction = z.infer<typeof insertTransactionSchema>;
@@ -62,11 +71,11 @@ export const giftCards = pgTable("gift_cards", {
   redeemedAmount: real("redeemed_amount").default(0).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   purchaseDate: timestamp("purchase_date").notNull(),
-  squareData: jsonb("square_data")
+  squareData: jsonb("square_data"),
 });
 
 export const insertGiftCardSchema = createInsertSchema(giftCards).omit({
-  id: true
+  id: true,
 });
 
 export type InsertGiftCard = z.infer<typeof insertGiftCardSchema>;
@@ -78,14 +87,18 @@ export const giftCardRedemptions = pgTable("gift_card_redemptions", {
   giftCardId: integer("gift_card_id").notNull(),
   amount: real("amount").notNull(),
   transactionId: integer("transaction_id").notNull(),
-  timestamp: timestamp("timestamp").notNull()
+  timestamp: timestamp("timestamp").notNull(),
 });
 
-export const insertGiftCardRedemptionSchema = createInsertSchema(giftCardRedemptions).omit({
-  id: true
+export const insertGiftCardRedemptionSchema = createInsertSchema(
+  giftCardRedemptions,
+).omit({
+  id: true,
 });
 
-export type InsertGiftCardRedemption = z.infer<typeof insertGiftCardRedemptionSchema>;
+export type InsertGiftCardRedemption = z.infer<
+  typeof insertGiftCardRedemptionSchema
+>;
 export type GiftCardRedemption = typeof giftCardRedemptions.$inferSelect;
 
 // Define additional types for the frontend
@@ -155,15 +168,15 @@ export const syncState = pgTable("sync_state", {
   totalPages: integer("total_pages").default(0),
   processedCount: integer("processed_count").default(0),
   totalCount: integer("total_count").default(0),
-  cursor: text("cursor").default(''),
+  cursor: text("cursor").default(""),
   isComplete: boolean("is_complete").default(false),
-  status: text("status").default('pending'),
+  status: text("status").default("pending"),
   errorMessage: text("error_message"),
   lastCheckpoint: jsonb("last_checkpoint"),
 });
 
 export const insertSyncStateSchema = createInsertSchema(syncState).omit({
-  id: true
+  id: true,
 });
 
 export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
