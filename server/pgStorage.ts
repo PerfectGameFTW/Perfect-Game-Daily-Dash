@@ -63,18 +63,31 @@ export class PgStorage implements IStorage {
       timezone: EASTERN_TIMEZONE
     });
 
-    // Query using the Eastern Time view for consistent business day boundaries
-    const result = await db.execute<Transaction>(sql`
-      SELECT t.*
-      FROM transactions_et te
-      JOIN transactions t ON t.id = te.id
-      WHERE DATE(te.timestamp_et) >= ${startStr}::date
-        AND DATE(te.timestamp_et) <= ${endStr}::date
-        AND t.status = ${status}
-      ORDER BY te.timestamp_et DESC
+    // Query using the Eastern Time view with more detailed SQL 
+    const result = await db.execute(sql`
+      WITH daily_transactions AS (
+        SELECT t.*
+        FROM transactions_et te
+        JOIN transactions t ON t.id = te.id
+        WHERE DATE(te.timestamp_et) >= ${startStr}::date
+          AND DATE(te.timestamp_et) <= ${endStr}::date
+          AND t.status = ${status}
+      )
+      SELECT 
+        dt.*,
+        COUNT(*) OVER() as total_count,
+        SUM(dt.amount) OVER() as total_amount
+      FROM daily_transactions dt
+      ORDER BY dt.timestamp DESC
     `);
 
-    console.log(`DIAGNOSTIC - getTransactions result length: ${result.rows.length}`);
+    console.log(`DIAGNOSTIC - getTransactions result details:`, {
+      rowCount: result.rows.length,
+      sampleTimestamp: result.rows[0]?.timestamp,
+      totalAmount: result.rows[0]?.total_amount,
+      dateRange: { startStr, endStr }
+    });
+
     return result.rows;
   }
 
@@ -147,6 +160,8 @@ export class PgStorage implements IStorage {
 
   // Dashboard summary methods using Eastern Time views
   async getDailySummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<DailySummary> {
+    console.log('DIAGNOSTIC - getDailySummary start', { dateRange, startDate, endDate });
+
     // Convert input dates to Eastern Time for consistent comparison
     const start = startDate ? new Date(startDate) : new Date();
     const end = endDate ? new Date(endDate) : start;
@@ -154,6 +169,42 @@ export class PgStorage implements IStorage {
     // Format dates for the query
     const startStr = format(start, 'yyyy-MM-dd');
     const endStr = format(end, 'yyyy-MM-dd');
+
+    console.log('Using date range for daily summary:', {
+      startStr,
+      endStr,
+      timezone: EASTERN_TIMEZONE
+    });
+
+    // Query using Eastern Time views for current period with more detailed calculations
+    const currentTransactions = await db.execute(sql`
+      WITH daily_metrics AS (
+        SELECT 
+          DATE(te.timestamp_et) as date,
+          COUNT(*) as order_count,
+          SUM(t.amount) as daily_total,
+          SUM(CASE WHEN t.category_id = 'giftCard' THEN t.amount ELSE 0 END) as gift_card_total
+        FROM transactions_et te
+        JOIN transactions t ON t.id = te.id
+        WHERE DATE(te.timestamp_et) >= ${startStr}::date
+          AND DATE(te.timestamp_et) <= ${endStr}::date
+          AND t.status = 'completed'
+        GROUP BY DATE(te.timestamp_et)
+      )
+      SELECT 
+        SUM(daily_total) as total_revenue,
+        SUM(order_count) as total_orders,
+        SUM(gift_card_total) as gift_card_sales,
+        COUNT(DISTINCT date) as days_count
+      FROM daily_metrics
+    `);
+
+    console.log('DIAGNOSTIC - Daily summary query results:', {
+      totalRevenue: currentTransactions.rows[0]?.total_revenue,
+      totalOrders: currentTransactions.rows[0]?.total_orders,
+      giftCardSales: currentTransactions.rows[0]?.gift_card_sales,
+      daysCount: currentTransactions.rows[0]?.days_count
+    });
 
     // Calculate previous period dates
     const prevStart = new Date(start);
@@ -164,39 +215,41 @@ export class PgStorage implements IStorage {
     const prevStartStr = format(prevStart, 'yyyy-MM-dd');
     const prevEndStr = format(prevEnd, 'yyyy-MM-dd');
 
-    // Query using Eastern Time views for current period
-    const currentTransactions = await db.execute(sql`
-      SELECT * FROM transactions_et
-      WHERE DATE(timestamp_et) >= ${startStr}::date
-        AND DATE(timestamp_et) <= ${endStr}::date
-        AND status = 'completed'
-    `);
-
     // Query using Eastern Time views for previous period
     const prevTransactions = await db.execute(sql`
-      SELECT * FROM transactions_et
-      WHERE DATE(timestamp_et) >= ${prevStartStr}::date
-        AND DATE(timestamp_et) <= ${prevEndStr}::date
-        AND status = 'completed'
+      WITH daily_metrics AS (
+        SELECT 
+          DATE(te.timestamp_et) as date,
+          COUNT(*) as order_count,
+          SUM(t.amount) as daily_total,
+          SUM(CASE WHEN t.category_id = 'giftCard' THEN t.amount ELSE 0 END) as gift_card_total
+        FROM transactions_et te
+        JOIN transactions t ON t.id = te.id
+        WHERE DATE(te.timestamp_et) >= ${prevStartStr}::date
+          AND DATE(te.timestamp_et) <= ${prevEndStr}::date
+          AND t.status = 'completed'
+        GROUP BY DATE(te.timestamp_et)
+      )
+      SELECT 
+        SUM(daily_total) as total_revenue,
+        SUM(order_count) as total_orders,
+        SUM(gift_card_total) as gift_card_sales,
+        COUNT(DISTINCT date) as days_count
+      FROM daily_metrics
     `);
 
     // Calculate metrics
-    const totalRevenue = currentTransactions.rows.reduce((sum, t: any) => sum + t.amount, 0);
-    const totalOrders = currentTransactions.rows.length;
+    const totalRevenue = currentTransactions.rows[0]?.total_revenue || 0;
+    const totalOrders = currentTransactions.rows[0]?.total_orders || 0;
     const averageOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-    const prevTotalRevenue = prevTransactions.rows.reduce((sum, t: any) => sum + t.amount, 0);
-    const prevTotalOrders = prevTransactions.rows.length;
+    const prevTotalRevenue = prevTransactions.rows[0]?.total_revenue || 0;
+    const prevTotalOrders = prevTransactions.rows[0]?.total_orders || 0;
     const prevAverageOrder = prevTotalOrders > 0 ? prevTotalRevenue / prevTotalOrders : 0;
 
     // Calculate gift card metrics
-    const giftCardSales = currentTransactions.rows
-      .filter((t: any) => t.category_id === 'giftCard')
-      .reduce((sum, t: any) => sum + t.amount, 0);
-
-    const prevGiftCardSales = prevTransactions.rows
-      .filter((t: any) => t.category_id === 'giftCard')
-      .reduce((sum, t: any) => sum + t.amount, 0);
+    const giftCardSales = currentTransactions.rows[0]?.gift_card_sales || 0;
+    const prevGiftCardSales = prevTransactions.rows[0]?.gift_card_sales || 0;
 
     // Calculate change percentages
     const revenueChange = prevTotalRevenue > 0
