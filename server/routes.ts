@@ -896,31 +896,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let syncStartTime: Date | null = null;
       let isSyncRunning = false;      
       let paymentsSyncState: any = null;
-      let giftCardsSyncState: any = null;
 
-      // Check if sync is already running
-      paymentsSyncState = await db.query.syncState.findFirst({
-        where: eq(syncState.syncType, 'payments')
+      // Check if a sync is already running
+      const existingSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'payments'),
       });
 
-      giftCardsSyncState = await db.query.syncState.findFirst({
-        where: eq(syncState.syncType, 'giftCards')
-      });
-
-      const existingSync = await db.query.syncState.findFirst({
-        where: and(
-          eq(syncState.status, 'in_progress'),
-          or(
-            eq(syncState.syncType, 'payments'),
-            eq(syncState.syncType, 'giftCards')
-          )
-        )
-      });
-
-      if (existingSync) {
+      if (existingSyncState && existingSyncState.status === 'running') {
+        console.log('Sync already in progress:', existingSyncState);
         return res.status(409).json({
-          error: "Sync already in progress",
-          syncState: existingSync
+          error: 'Sync already in progress',
+          lastSyncTime: existingSyncState.lastSyncTime?.toISOString() || new Date().toISOString()
         });
       }
 
@@ -928,146 +914,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
       syncStartTime = new Date();
       isSyncRunning = true;
 
-      // Initialize new sync state
-      const newSyncState = {
-        syncType: 'payments',
-        lastSyncedAt: syncStartTime,
-        currentPage: 1,
-        totalPages: 0,
-        processedCount: 0,
-        totalCount: 0,
-        cursor: '',
-        isComplete: false,
-        status: 'in_progress',
-        errorMessage: null,
-        lastCheckpoint: null
-      };
-
-      // Insert new sync state and update the paymentsSyncState reference
-      const syncResult = await db.insert(syncState)
-        .values(newSyncState)
-        .returning();
-      paymentsSyncState = syncResult[0];
-
-      console.log("Created new sync state:", paymentsSyncState);
-
-      // Determine sync window
-      let startDate: Date;
-      let endDate: Date;
-
-      // Get last successful sync
-      const lastPaymentSync = await db.query.syncState.findFirst({
-        where: and(
-          eq(syncState.syncType, 'payments'),
-          eq(syncState.status, 'completed')
-        ),
-        orderBy: desc(syncState.lastSyncedAt)
-      });
-
-      if (lastPaymentSync) {
-        // Incremental sync from last successful sync
-        startDate = new Date(lastPaymentSync.lastSyncedAt);
-        startDate.setDate(startDate.getDate() - 1); // 1 day overlap for safety
-        endDate = new Date(); // Current time
-        console.log(`Incremental sync from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
-      } else {
-        // First sync - use default 90-day window
-        endDate = new Date();
-        startDate = new Date();
-        startDate.setDate(startDate.getDate() - 90);
-        console.log(`Initial sync from ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
-      }
-
-      // Begin sync process
-      console.log("Starting sync process...");
-      console.log("--- STEP 1: SYNCING PAYMENTS ---");
-
-      let lastCheckpoint: any = null;
-
-      try {
-        // Fetch new payments from Square
-        const payments = await squareClient.fetchPayments(startDate, endDate);
-        console.log(`Fetched ${payments.length} payments from Square`);
-
-        // Process payments
-        let successCount = 0;
-        let errorCount = 0;
-
-        for (const payment of payments) {
-          try {
-            const transaction = squareClient.convertSquarePaymentToTransaction(payment);
-            await db.insert(transactions).values(transaction);
-            successCount++;
-
-            // Update checkpoint every 100 records
-            if (successCount % 100 === 0) {
-              lastCheckpoint = {
-                lastProcessedId: payment.id,
-                processedCount: successCount,
-                timestamp: new Date().toISOString()
-              };
-
-              // Update sync state with progress
-              await db.update(syncState)
-                .set({
-                  processedCount: successCount,
-                  lastCheckpoint,
-                  lastSyncedAt: new Date()
-                })
-                .where(eq(syncState.id, paymentsSyncState.id));
-
-              console.log(`Processed ${successCount} payments...`);
-            }
-          } catch (error) {
-            console.error(`Error processing payment ${payment.id}:`, error);
-            errorCount++;
+      // Update sync state to running
+      await db.insert(syncState)
+        .values({
+          syncType: 'payments',
+          status: 'running',
+          lastSyncTime: syncStartTime,
+          startTime: syncStartTime
+        })
+        .onConflictDoUpdate({
+          target: [syncState.syncType],
+          set: {
+            status: 'running',
+            startTime: syncStartTime,
+            lastSyncTime: syncStartTime
           }
+        });
+
+      // Perform sync operations...
+      const payments = await squareClient.fetchPayments();
+
+      // Process payments and store in database
+      for (const payment of payments) {
+        try {
+          const transaction = squareClient.convertSquarePaymentToTransaction(payment);
+          await db.insert(transactions).values(transaction);
+        } catch (error) {
+          console.error(`Error processing payment ${payment.id}:`, error);
         }
-
-        // Update final sync state for payments
-        await db.update(syncState)
-          .set({
-            isComplete: true,
-            status: errorCount > 0 ? 'completed_with_errors' : 'completed',
-            processedCount: successCount,
-            totalCount: payments.length,
-            errorMessage: errorCount > 0 ? `Failed to process ${errorCount} payments` : null,
-            lastSyncedAt: new Date(),
-            lastCheckpoint: {
-              processedCount: successCount,
-              totalCount: payments.length,
-              timestamp: new Date().toISOString()
-            }
-          })
-          .where(eq(syncState.id, paymentsSyncState.id));
-
-        console.log(`Completed payments sync. Success: ${successCount}, Errors: ${errorCount}`);
-
-        // Rest of the sync endpoint implementation...
-      } catch (error) {
-        console.error("Error during sync:", error);
-
-        // Update sync state with error
-        await db.update(syncState)
-          .set({
-            status: 'error',
-            errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
-            lastSyncedAt: new Date(),
-            lastCheckpoint
-          })
-          .where(eq(syncState.id, paymentsSyncState.id));
-
-        res.status(500).json({ error: "Error during sync process" });
-        return;
       }
+
+      // Update sync state to completed
+      await db.update(syncState)
+        .set({
+          status: 'completed',
+          lastSyncTime: new Date()
+        })
+        .where(eq(syncState.syncType, 'payments'));
 
       res.json({
-        message: "Sync completed",
-        syncState: paymentsSyncState
+        success: true,
+        lastSyncTime: syncStartTime.toISOString()
       });
     } catch (error) {
-      console.error("Error initiating sync:", error);
-      res.status(500).json({ error: "Failed to initiate sync process" });
+      console.error("Sync error:", error);
+
+      // Update sync state to failed
+      await db.update(syncState)
+        .set({
+          status: 'failed',
+          lastSyncTime: new Date()
+        })
+        .where(eq(syncState.syncType, 'payments'));
+
+      res.status(500).json({
+        error: "Failed to sync data",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
     }
   });
 

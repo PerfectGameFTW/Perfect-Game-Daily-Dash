@@ -28,22 +28,18 @@ export default function Dashboard() {
       currentEnd: customEndDate?.toISOString()
     });
     
-    // First, invalidate current queries
     queryClient.invalidateQueries();
     
-    // Then store the new date range and dates
     setDateRange(newRange);
     setCustomStartDate(start);
     setCustomEndDate(end);
     
-    // Log for debugging
     console.log('Date state updated:', {
       newDateRange: newRange,
       newStartDate: start?.toISOString(),
       newEndDate: end?.toISOString()
     });
     
-    // Create an array of query keys to invalidate with the exact new parameters
     const queryKeys = [
       ['/api/summary', newRange, start?.toISOString(), end?.toISOString()],
       ['/api/transactions', newRange, start?.toISOString(), end?.toISOString()],
@@ -52,14 +48,11 @@ export default function Dashboard() {
       ['/api/gift-card-summary', newRange, start?.toISOString(), end?.toISOString()]
     ];
     
-    // Invalidate all relevant queries with the new query keys
     setTimeout(() => {
-      // We use setTimeout to ensure React has updated the state before we refetch
       queryKeys.forEach(key => {
         queryClient.invalidateQueries({ queryKey: key });
       });
       
-      // Log the current query cache state
       console.log('Query cache keys after invalidation:', 
         queryClient.getQueryCache().getAll().map(q => q.queryKey)
       );
@@ -75,35 +68,57 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         }
       });
-      
+
       if (response.status === 409) {
-        // A sync is already in progress
         const result = await response.json();
         console.log('Sync already in progress:', result);
-        
+
+        let lastSyncTimeDisplay = 'unknown time';
+        try {
+          if (result.lastSyncTime) {
+            const lastSyncDate = new Date(result.lastSyncTime);
+            if (!isNaN(lastSyncDate.getTime())) {
+              lastSyncTimeDisplay = lastSyncDate.toLocaleTimeString();
+            }
+          }
+        } catch (error) {
+          console.error('Error parsing lastSyncTime:', error);
+        }
+
         toast({
           title: "Sync In Progress",
-          description: `Another sync is already running. Last sync was at ${new Date(result.lastSyncTime).toLocaleTimeString()}.`,
+          description: `Another sync is already running. Last sync was at ${lastSyncTimeDisplay}.`,
           variant: "default",
         });
-        
+
         return;
       } else if (!response.ok) {
         throw new Error('Sync failed');
       }
-      
+
       const result = await response.json();
 
-      // Invalidate queries to refresh data
+      let lastSyncTimeDisplay = 'unknown time';
+      try {
+        if (result.lastSyncTime) {
+          const lastSyncDate = new Date(result.lastSyncTime);
+          if (!isNaN(lastSyncDate.getTime())) {
+            lastSyncTimeDisplay = lastSyncDate.toLocaleTimeString();
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing lastSyncTime:', error);
+      }
+
       queryClient.invalidateQueries({ queryKey: ['/api/summary'] });
       queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       queryClient.invalidateQueries({ queryKey: ['/api/revenue-by-category'] });
       queryClient.invalidateQueries({ queryKey: ['/api/hourly-revenue'] });
       queryClient.invalidateQueries({ queryKey: ['/api/gift-card-summary'] });
-      
+
       toast({
         title: "Sync Completed",
-        description: `Updated Square data successfully at ${new Date(result.lastSyncTime).toLocaleTimeString()}.`,
+        description: `Updated Square data successfully at ${lastSyncTimeDisplay}.`,
         variant: "default",
       });
     } catch (error) {
@@ -118,19 +133,16 @@ export default function Dashboard() {
     }
   };
 
-  // Initial sync is disabled to prevent automatic data loading
-  // This was previously set to run automatically on dashboard load
-  // useEffect(() => {
-  //   const initialSync = async () => {
-  //     await handleSync();
-  //   };
-  //   
-  //   initialSync();
-  // }, []);
+  useEffect(() => {
+    const initialSync = async () => {
+      await handleSync();
+    };
+
+    initialSync();
+  }, []);
 
   return (
     <div className="flex flex-col min-h-screen w-full bg-background text-foreground pb-16 md:pb-0">
-      {/* Header with manual sync button */}
       <Header 
         dateRange={dateRange}
         customStartDate={customStartDate}
@@ -141,9 +153,7 @@ export default function Dashboard() {
         isSyncing={isSyncing}
       />
 
-      {/* Dashboard Content */}
       <main className="flex-1 w-full overflow-y-auto px-4 py-4 space-y-6">
-        {/* Stats Overview */}
         <div className="w-full max-w-7xl mx-auto">
           <StatsSummary 
             dateRange={dateRange} 
@@ -153,10 +163,8 @@ export default function Dashboard() {
         </div>
       </main>
       
-      {/* Bottom Navigation (only shown on mobile) */}
       {isMobile && <BottomNavigation />}
       
-      {/* Timeframe Modal */}
       <TimeframeModal 
         open={timeframeModalOpen}
         onOpenChange={setTimeframeModalOpen}
