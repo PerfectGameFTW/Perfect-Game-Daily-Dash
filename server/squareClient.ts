@@ -5,6 +5,40 @@ if (typeof BigInt.prototype.toJSON !== 'function') {
   };
 }
 
+// Add testConnection method
+export async function testConnection(): Promise<{ success: boolean, message: string }> {
+  try {
+    if (!process.env.SQUARE_ACCESS_TOKEN) {
+      throw new Error('Square access token is not configured');
+    }
+
+    // Try to list a single location to test the connection
+    const response = await squareClient.locationsApi.listLocations();
+
+    if (!response.result || !response.result.locations) {
+      throw new Error('Invalid response from Square API');
+    }
+
+    console.log('Square API test connection successful:', {
+      locationCount: response.result.locations.length,
+      locationIds: response.result.locations.map(l => l.id)
+    });
+
+    return {
+      success: true,
+      message: 'Successfully connected to Square API'
+    };
+  } catch (error) {
+    console.error('Square API connection test failed:', {
+      error,
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
+
+    throw new Error(`Failed to connect to Square API: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
 import { pgStorage } from './pgStorage';
 import { Client, Environment } from 'square';
 import {
@@ -215,7 +249,7 @@ function isGiftCardRedemption(payment: any): boolean {
   }
 }
 
-// Fetch payments from Square API
+// Update the fetchPayments method
 export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]> {
   try {
     const now = new Date();
@@ -225,6 +259,20 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     // Format dates for Square API
     const beginTime = start.toISOString();
     const endTime = end.toISOString();
+
+    console.log(`Starting payment fetch from Square API:`, {
+      startDate: beginTime,
+      endDate: endTime,
+      locationId: process.env.SQUARE_LOCATION_ID
+    });
+
+    if (!process.env.SQUARE_ACCESS_TOKEN) {
+      throw new Error('Square access token is not configured');
+    }
+
+    if (!process.env.SQUARE_LOCATION_ID) {
+      throw new Error('Square location ID is not configured');
+    }
 
     // Create or get sync state
     let syncState = await pgStorage.getSyncState('payments');
@@ -244,8 +292,6 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       });
     }
 
-    console.log(`Starting payments sync from ${beginTime} to ${endTime}`);
-
     let allPayments: any[] = [];
     let cursor: string | undefined = syncState.cursor || undefined;
     let hasMorePages = true;
@@ -261,40 +307,32 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           endTime,
           'DESC',
           cursor,
-          process.env.SQUARE_LOCATION_ID,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          100
+          process.env.SQUARE_LOCATION_ID
         );
+
+        console.log('Square API Response:', {
+          status: response.statusCode,
+          hasMore: !!response.result.cursor,
+          paymentCount: response.result.payments?.length || 0
+        });
 
         const payments = response.result.payments || [];
 
-        // Process each payment to identify gift card redemptions
-        for (const payment of payments) {
-          if (isGiftCardRedemption(payment)) {
-            console.log(`Processing gift card redemption payment: ${payment.id}`);
-            // Add redemption information to the payment
-            payment.isGiftCardRedemption = true;
-            payment.redemptionAmount = payment.amountMoney
-              ? Number(payment.amountMoney.amount) / 100
-              : 0;
-            payment.sourceId = payment.sourceId || payment.cardDetails?.card?.id;
-
-            console.log(`Gift card redemption details:`, {
-              paymentId: payment.id,
-              amount: payment.redemptionAmount,
-              sourceId: payment.sourceId
-            });
-          }
+        if (!Array.isArray(payments)) {
+          throw new Error(`Invalid response format from Square API: expected array, got ${typeof payments}`);
         }
 
-        allPayments = [...allPayments, ...payments];
+        // Process each payment
+        for (const payment of payments) {
+          try {
+            if (isGiftCardRedemption(payment)) {
+              console.log(`Processing gift card redemption payment: ${payment.id}`);
+            }
+            allPayments.push(payment);
+          } catch (paymentError) {
+            console.error(`Error processing payment ${payment.id}:`, paymentError);
+          }
+        }
 
         // Update sync state
         await pgStorage.updateSyncState(syncState.id, {
@@ -314,51 +352,34 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
         if (hasMorePages) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
-      } catch (error) {
-        console.error('Error fetching payments page:', error);
+      } catch (pageError) {
+        console.error('Error fetching payments page:', {
+          error: pageError,
+          message: pageError instanceof Error ? pageError.message : 'Unknown error',
+          stack: pageError instanceof Error ? pageError.stack : undefined,
+          page: pageCount,
+          cursor
+        });
 
         // Update sync state with error
         await pgStorage.updateSyncState(syncState.id, {
           status: 'error',
-          errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
+          errorMessage: pageError instanceof Error ? pageError.message : 'Unknown error occurred',
           lastSyncedAt: new Date()
         });
 
-        hasMorePages = false;
+        throw pageError;
       }
     }
 
-    // Mark sync as complete
-    await pgStorage.updateSyncState(syncState.id, {
-      isComplete: true,
-      status: 'completed',
-      lastSyncedAt: new Date(),
-      totalCount: allPayments.length
-    });
-
-    console.log(`Completed fetching ${allPayments.length} total payments`);
-
-    const orders = await fetchOrders(startDate, endDate);
-    console.log(`Fetched ${orders.length} orders from Square`);
-
-    const orderMap = new Map();
-    orders.forEach(order => {
-      orderMap.set(order.squareId, order);
-    });
-
-    let paymentsWithOrders = 0;
-    allPayments.forEach(payment => {
-      if (payment.orderId && orderMap.has(payment.orderId)) {
-        payment.orderData = orderMap.get(payment.orderId);
-        paymentsWithOrders++;
-      }
-    });
-
-    console.log(`Successfully linked ${paymentsWithOrders} payments with their orders`);
-
+    console.log(`Successfully fetched ${allPayments.length} payments from Square API`);
     return allPayments;
   } catch (error) {
-    console.error('Error fetching payments from Square:', error);
+    console.error('Error in fetchPayments:', {
+      error,
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
     throw error;
   }
 }
