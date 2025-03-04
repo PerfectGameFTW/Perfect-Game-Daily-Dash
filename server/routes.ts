@@ -779,6 +779,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Add diagnostic endpoint for Square API connection
+  apiRouter.get("/test-square-connection", async (req, res) => {
+    try {
+      console.log("Testing Square API connection...");
+      const result = await squareClient.testConnection();
+      console.log("Square API connection test result:", result);
+      res.json(result);
+    } catch (error) {
+      console.error("Square API connection test failed:", error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to connect to Square API",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
   // Add test endpoint after the fix-gift-cards endpoint
   apiRouter.get("/test-redemption", async (req, res) => {
     try {
@@ -862,14 +879,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .returning()
           .then(res => res[0]);
 
-        console.log("Updated gift card:", updatedGiftCard);
+        console.log("Updated giftcard:", updatedGiftCard);
 
         res.json({
           success: true,
           message: "Test redemption processed successfully",
           details: {
-            giftCard: sampleCard,
-            transaction: createdTransaction,            redemption: createdRedemption,
+            giftCard: sampleGiftCard,
+            transaction: createdTransaction,
+            redemption: createdRedemption,
             updatedGiftCard
           }
         });
@@ -954,7 +972,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         payments = await squareClient.fetchPayments(startDate, endDate);
         console.log(`Successfully fetched ${payments.length} payments from Square`);
       } catch (fetchError) {
-        throw new Error(`Failed to fetch payments: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`);
+        const errorMessage = fetchError instanceof Error ? fetchError.message : 'Unknown error';
+        if (errorMessage.includes('Sync timeout reached')) {
+          return res.status(408).json({
+            error: "Sync timeout",
+            message: "The sync process took too long. Please try again with a smaller date range."
+          });
+        }
+        throw new Error(`Failed to fetch payments: ${errorMessage}`);
       }
 
       // Process payments

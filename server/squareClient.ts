@@ -1,42 +1,42 @@
 // Add BigInt serialization override at the top
 if (typeof BigInt.prototype.toJSON !== 'function') {
-  BigInt.prototype.toJSON = function() {
-    return this.toString();
-  };
+ BigInt.prototype.toJSON = function() {
+   return this.toString();
+ };
 }
 
 // Add testConnection method
 export async function testConnection(): Promise<{ success: boolean, message: string }> {
-  try {
-    if (!process.env.SQUARE_ACCESS_TOKEN) {
-      throw new Error('Square access token is not configured');
-    }
+ try {
+   if (!process.env.SQUARE_ACCESS_TOKEN) {
+     throw new Error('Square access token is not configured');
+   }
 
-    // Try to list a single location to test the connection
-    const response = await squareClient.locationsApi.listLocations();
+   // Try to list a single location to test the connection
+   const response = await squareClient.locationsApi.listLocations();
 
-    if (!response.result || !response.result.locations) {
-      throw new Error('Invalid response from Square API');
-    }
+   if (!response.result || !response.result.locations) {
+     throw new Error('Invalid response from Square API');
+   }
 
-    console.log('Square API test connection successful:', {
-      locationCount: response.result.locations.length,
-      locationIds: response.result.locations.map(l => l.id)
-    });
+   console.log('Square API test connection successful:', {
+     locationCount: response.result.locations.length,
+     locationIds: response.result.locations.map(l => l.id)
+   });
 
-    return {
-      success: true,
-      message: 'Successfully connected to Square API'
-    };
-  } catch (error) {
-    console.error('Square API connection test failed:', {
-      error,
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined
-    });
+   return {
+     success: true,
+     message: 'Successfully connected to Square API'
+   };
+ } catch (error) {
+   console.error('Square API connection test failed:', {
+     error,
+     message: error instanceof Error ? error.message : 'Unknown error',
+     stack: error instanceof Error ? error.stack : undefined
+   });
 
-    throw new Error(`Failed to connect to Square API: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
+   throw new Error(`Failed to connect to Square API: ${error instanceof Error ? error.message : 'Unknown error'}`);
+ }
 }
 
 import { pgStorage } from './pgStorage';
@@ -249,7 +249,7 @@ function isGiftCardRedemption(payment: any): boolean {
   }
 }
 
-// Update the fetchPayments method
+// Update the fetchPayments method with better pagination control and timing logs
 export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]> {
   try {
     const now = new Date();
@@ -274,32 +274,23 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       throw new Error('Square location ID is not configured');
     }
 
-    // Create or get sync state
-    let syncState = await pgStorage.getSyncState('payments');
-    if (!syncState) {
-      syncState = await pgStorage.createSyncState({
-        syncType: 'payments',
-        lastSyncedAt: new Date(),
-        currentPage: 1,
-        totalPages: 0,
-        processedCount: 0,
-        totalCount: 0,
-        cursor: '',
-        isComplete: false,
-        status: 'pending',
-        errorMessage: null,
-        lastCheckpoint: null
-      });
-    }
-
     let allPayments: any[] = [];
-    let cursor: string | undefined = syncState.cursor || undefined;
+    let cursor: string | undefined = undefined;
     let hasMorePages = true;
-    let pageCount = syncState.currentPage;
+    let pageCount = 0;
+    const MAX_PAGES = 10; // Temporarily reduced for testing
+    const START_TIME = Date.now();
+    const TIMEOUT = 5 * 60 * 1000; // 5 minute timeout
 
-    while (hasMorePages) {
+    while (hasMorePages && pageCount < MAX_PAGES) {
       pageCount++;
-      console.log(`Fetching payments page ${pageCount}${cursor ? ' with cursor' : ''}`);
+      const pageStartTime = Date.now();
+      console.log(`Starting to fetch payments page ${pageCount}${cursor ? ' with cursor' : ''} at ${new Date(pageStartTime).toISOString()}`);
+
+      // Check for timeout
+      if (Date.now() - START_TIME > TIMEOUT) {
+        throw new Error('Sync timeout reached after 5 minutes');
+      }
 
       try {
         const response = await squareClient.paymentsApi.listPayments(
@@ -310,10 +301,15 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           process.env.SQUARE_LOCATION_ID
         );
 
+        const pageEndTime = Date.now();
+        const pageProcessingTime = pageEndTime - pageStartTime;
+
         console.log('Square API Response:', {
+          page: pageCount,
           status: response.statusCode,
           hasMore: !!response.result.cursor,
-          paymentCount: response.result.payments?.length || 0
+          paymentCount: response.result.payments?.length || 0,
+          processingTimeMs: pageProcessingTime
         });
 
         const payments = response.result.payments || [];
@@ -334,18 +330,6 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           }
         }
 
-        // Update sync state
-        await pgStorage.updateSyncState(syncState.id, {
-          currentPage: pageCount,
-          processedCount: allPayments.length,
-          cursor: response.result.cursor || '',
-          lastSyncedAt: new Date(),
-          lastCheckpoint: {
-            lastProcessedId: payments[payments.length - 1]?.id,
-            timestamp: new Date().toISOString()
-          }
-        });
-
         cursor = response.result.cursor;
         hasMorePages = !!cursor;
 
@@ -353,32 +337,32 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       } catch (pageError) {
-        console.error('Error fetching payments page:', {
+        const errorDetail = {
           error: pageError,
           message: pageError instanceof Error ? pageError.message : 'Unknown error',
           stack: pageError instanceof Error ? pageError.stack : undefined,
           page: pageCount,
-          cursor
-        });
-
-        // Update sync state with error
-        await pgStorage.updateSyncState(syncState.id, {
-          status: 'error',
-          errorMessage: pageError instanceof Error ? pageError.message : 'Unknown error occurred',
-          lastSyncedAt: new Date()
-        });
-
-        throw pageError;
+          cursor,
+          timeElapsed: Date.now() - START_TIME
+        };
+        console.error('Error fetching payments page:', errorDetail);
+        throw new Error(`Failed to fetch page ${pageCount}: ${errorDetail.message}`);
       }
     }
 
-    console.log(`Successfully fetched ${allPayments.length} payments from Square API`);
+    const totalTime = Date.now() - START_TIME;
+    if (pageCount >= MAX_PAGES) {
+      console.warn(`Reached maximum page limit (${MAX_PAGES}). Some payments may be missing. Total time: ${totalTime}ms`);
+    }
+
+    console.log(`Successfully fetched ${allPayments.length} payments from Square API in ${totalTime}ms`);
     return allPayments;
   } catch (error) {
     console.error('Error in fetchPayments:', {
       error,
       message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
+      totalTimeMs: Date.now() - START_TIME
     });
     throw error;
   }
