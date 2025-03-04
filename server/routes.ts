@@ -868,7 +868,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           success: true,
           message: "Test redemption processed successfully",
           details: {
-            giftCard: sampleGiftCard,
+            giftCard: sampleCard,
             transaction: createdTransaction,            redemption: createdRedemption,
             updatedGiftCard
           }
@@ -894,6 +894,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log("Starting sync process...");
 
+      // Check Square API connection first
+      try {
+        const connectionTest = await squareClient.testConnection();
+        console.log("Square API connection test:", connectionTest);
+      } catch (apiError) {
+        console.error("Square API connection failed:", apiError);
+        return res.status(503).json({
+          error: "Failed to connect to Square API",
+          message: apiError instanceof Error ? apiError.message : "Unknown error"
+        });
+      }
+
       // Check if a sync is already running
       const existingSyncState = await db.query.syncState.findFirst({
         where: and(
@@ -910,117 +922,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Start new sync
+      // Create new sync state
       const syncStartTime = new Date();
-      console.log('Creating new sync state at:', syncStartTime.toISOString());
+      const newSyncState = {
+        syncType: 'payments',
+        status: 'running',
+        lastSyncedAt: syncStartTime,
+        currentPage: 1,
+        processedCount: 0,
+        isComplete: false,
+        errorMessage: null
+      };
 
+      // Insert sync state
+      const syncStateResult = await db.insert(syncState)
+        .values(newSyncState)
+        .returning();
+
+      console.log("Created sync state:", syncStateResult[0]);
+
+      // Calculate sync window
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 90); // Sync last 90 days by default
+
+      console.log(`Fetching payments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
+      // Fetch and process payments
+      let payments = [];
       try {
-        // Create new sync state
-        await db.insert(syncState)
-          .values({
-            syncType: 'payments',
-            status: 'running',
-            lastSyncedAt: syncStartTime,
-            currentPage: 1,
-            processedCount: 0,
-            isComplete: false,
-            errorMessage: null
-          })
-          .onConflictDoUpdate({
-            target: [syncState.syncType],
-            set: {
-              status: 'running',
-              lastSyncedAt: syncStartTime,
-              currentPage: 1,
-              processedCount: 0,
-              isComplete: false,
-              errorMessage: null
-            }
-          });
+        payments = await squareClient.fetchPayments(startDate, endDate);
+        console.log(`Successfully fetched ${payments.length} payments from Square`);
+      } catch (fetchError) {
+        throw new Error(`Failed to fetch payments: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`);
+      }
 
-        console.log("Created sync state, calculating date range...");
+      // Process payments
+      let processedCount = 0;
+      let errorCount = 0;
+      const errors = [];
 
-        // Calculate sync window
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - 90); // Sync last 90 days by default
-
-        console.log(`Fetching payments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
-
-        // Fetch payments from Square
-        let payments;
+      for (const payment of payments) {
         try {
-          payments = await squareClient.fetchPayments(startDate, endDate);
-          console.log(`Successfully fetched ${payments.length} payments from Square`);
-        } catch (squareError) {
-          console.error("Error fetching from Square API:", squareError);
-          throw new Error(`Square API Error: ${squareError instanceof Error ? squareError.message : 'Unknown error'}`);
+          const transaction = squareClient.convertSquarePaymentToTransaction(payment);
+          await db.insert(transactions)
+            .values(transaction)
+            .onConflictDoNothing();
+          processedCount++;
+        } catch (error) {
+          errorCount++;
+          console.error(`Error processing payment ${payment.id}:`, error);
+          errors.push({
+            paymentId: payment.id,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
         }
+      }
 
-        // Process payments and store in database
-        let processedCount = 0;
-        let errorCount = 0;
-        const errors = [];
+      // Update sync state to completed
+      await db.update(syncState)
+        .set({
+          status: 'completed',
+          lastSyncedAt: new Date(),
+          processedCount,
+          isComplete: true,
+          errorMessage: errorCount > 0 ? `Failed to process ${errorCount} payments` : null
+        })
+        .where(eq(syncState.id, syncStateResult[0].id));
 
-        for (const payment of payments) {
-          try {
-            console.log(`Processing payment ${payment.id}...`);
-            const transaction = squareClient.convertSquarePaymentToTransaction(payment);
+      // Return success response
+      res.json({
+        success: true,
+        lastSyncTime: new Date().toISOString(),
+        processed: processedCount,
+        total: payments.length,
+        errors: errorCount > 0 ? errors : undefined
+      });
 
-            await db.insert(transactions)
-              .values(transaction)
-              .onConflictDoNothing();
+    } catch (error) {
+      console.error("Sync process failed:", {
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
 
-            processedCount++;
-            if (processedCount % 10 === 0) {
-              console.log(`Processed ${processedCount}/${payments.length} payments`);
-            }
-          } catch (error) {
-            errorCount++;
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            console.error(`Error processing payment ${payment.id}:`, errorMessage);
-            errors.push({ paymentId: payment.id, error: errorMessage });
-          }
-        }
-
-        console.log(`Finished processing payments. Success: ${processedCount}, Errors: ${errorCount}`);
-
-        // Update sync state to completed
-        await db.update(syncState)
-          .set({
-            status: 'completed',
-            lastSyncedAt: new Date(),
-            processedCount,
-            isComplete: true,
-            errorMessage: errorCount > 0 ? `Failed to process ${errorCount} payments` : null
-          })
-          .where(eq(syncState.syncType, 'payments'));
-
-        console.log("Sync completed successfully");
-
-        res.json({
-          success: true,
-          lastSyncTime: new Date().toISOString(),
-          processed: processedCount,
-          total: payments.length,
-          errors: errorCount > 0 ? errors : undefined
-        });
-      } catch (innerError) {
-        console.error("Error during sync process:", innerError);
-
-        // Update sync state to failed
+      // Update sync state to failed if we have a sync state
+      try {
         await db.update(syncState)
           .set({
             status: 'failed',
             lastSyncedAt: new Date(),
-            errorMessage: innerError instanceof Error ? innerError.message : "Unknown error during sync"
+            errorMessage: error instanceof Error ? error.message : "Unknown error"
           })
           .where(eq(syncState.syncType, 'payments'));
-
-        throw innerError; // Re-throw to be caught by outer catch
+      } catch (updateError) {
+        console.error("Failed to update sync state:", updateError);
       }
-    } catch (error) {
-      console.error("Sync process failed:", error);
+
       res.status(500).json({
         error: "Failed to sync data",
         message: error instanceof Error ? error.message : "Unknown error",
