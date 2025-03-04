@@ -884,50 +884,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error processing test redemption:", error);
       res.status(500).json({
         success: false,
-        error:"Failed to process test redemption",
-          message: error instanceof Error ? error.message : "Unknown error"
-        });
-      }
+        error: "Failed to process test redemption",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
   });
 
   // Update sync endpoint to use db directly for sync operations
   apiRouter.post("/sync", async (req, res) => {
     try {
-      let syncStartTime: Date | null = null;
-      let isSyncRunning = false;      
-      let paymentsSyncState: any = null;
+      console.log("Starting sync process...");
 
       // Check if a sync is already running
       const existingSyncState = await db.query.syncState.findFirst({
-        where: eq(syncState.syncType, 'payments'),
+        where: and(
+          eq(syncState.syncType, 'payments'),
+          eq(syncState.status, 'running')
+        )
       });
 
-      if (existingSyncState && existingSyncState.status === 'running') {
+      if (existingSyncState) {
         console.log('Sync already in progress:', existingSyncState);
         return res.status(409).json({
           error: 'Sync already in progress',
-          lastSyncTime: existingSyncState.lastSyncedAt?.toISOString() || new Date().toISOString()
+          lastSyncTime: existingSyncState.lastSyncedAt?.toISOString()
         });
       }
 
-      // Set sync start time and running flag
-      syncStartTime = new Date();
-      isSyncRunning = true;
+      // Start new sync
+      const syncStartTime = new Date();
 
-      // Update sync state to running
+      // Create new sync state
       await db.insert(syncState)
         .values({
           syncType: 'payments',
           status: 'running',
           lastSyncedAt: syncStartTime,
           currentPage: 1,
-          totalPages: null,
           processedCount: 0,
-          totalCount: null,
-          cursor: null,
           isComplete: false,
-          errorMessage: null,
-          lastCheckpoint: null
+          errorMessage: null
         })
         .onConflictDoUpdate({
           target: [syncState.syncType],
@@ -935,22 +931,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             status: 'running',
             lastSyncedAt: syncStartTime,
             currentPage: 1,
-            totalPages: null,
             processedCount: 0,
-            totalCount: null,
-            cursor: null,
             isComplete: false,
-            errorMessage: null,
-            lastCheckpoint: null
+            errorMessage: null
           }
         });
+
+      console.log("Created sync state, fetching payments...");
 
       // Calculate sync window
       const endDate = new Date();
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - 90); // Sync last 90 days by default
-
-      console.log(`Starting sync from ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
       // Fetch payments from Square
       const payments = await squareClient.fetchPayments(startDate, endDate);
@@ -961,12 +953,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const payment of payments) {
         try {
           const transaction = squareClient.convertSquarePaymentToTransaction(payment);
-          await db.insert(transactions).values(transaction);
+          await db.insert(transactions)
+            .values(transaction)
+            .onConflictDoNothing();
           processedCount++;
         } catch (error) {
           console.error(`Error processing payment ${payment.id}:`, error);
         }
       }
+
+      console.log(`Processed ${processedCount} payments`);
 
       // Update sync state to completed
       await db.update(syncState)
@@ -974,14 +970,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: 'completed',
           lastSyncedAt: new Date(),
           processedCount,
-          totalCount: payments.length,
           isComplete: true
         })
         .where(eq(syncState.syncType, 'payments'));
 
+      console.log("Sync completed successfully");
+
       res.json({
         success: true,
-        lastSyncTime: syncStartTime.toISOString(),
+        lastSyncTime: new Date().toISOString(),
         processed: processedCount,
         total: payments.length
       });
