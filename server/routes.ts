@@ -697,6 +697,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+  // Endpoint to sync orders from Square API
+  apiRouter.get("/sync-orders", async (req, res) => {
+    try {
+      console.log("Starting order sync from Square API...");
+      
+      // Parse start and end dates if provided
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      
+      if (req.query.startDate) {
+        try {
+          startDate = new Date(req.query.startDate as string);
+          console.log(`Using provided start date: ${startDate.toISOString()}`);
+        } catch (error) {
+          return res.status(400).json({ error: "Invalid start date format" });
+        }
+      }
+      
+      if (req.query.endDate) {
+        try {
+          endDate = new Date(req.query.endDate as string);
+          console.log(`Using provided end date: ${endDate.toISOString()}`);
+        } catch (error) {
+          return res.status(400).json({ error: "Invalid end date format" });
+        }
+      }
+      
+      // Default to last 30 days if no startDate specified
+      if (!startDate) {
+        startDate = new Date();
+        startDate.setDate(startDate.getDate() - 30);
+        console.log(`Using default start date (30 days ago): ${startDate.toISOString()}`);
+      }
+      
+      console.log(`Syncing orders from ${startDate.toISOString()} to ${endDate?.toISOString() || 'now'}`);
+      
+      // Call the syncOrders function from squareClient
+      await squareClient.syncOrders(startDate, endDate);
+      
+      // Get counts from database to show success
+      const orderCount = await db
+        .select({ count: count() })
+        .from(orders)
+        .then(result => result[0].count);
+        
+      return res.json({
+        success: true,
+        message: "Order sync completed successfully",
+        orderCount
+      });
+    } catch (error) {
+      console.error("Error syncing orders:", error);
+      return res.status(500).json({
+        error: "Failed to sync orders",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
   
   // New endpoint using Orders API to correctly identify gift card activations
   apiRouter.get("/fix-gift-cards-from-orders", async (req, res) => {
