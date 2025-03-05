@@ -8,6 +8,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db"; // Import db directly
 import { pgStorage } from "./pgStorage"; // Keep this for other storage operations
+import { fixGiftCardActivationAmounts } from "./fixGiftCardActivationAmounts";
 import {
   dateRangeSchema,
   transactions,
@@ -663,10 +664,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Fix gift cards endpoint with improved error handling
+  // Fix gift cards endpoint with comprehensive activation amount fix
   apiRouter.get("/fix-gift-cards", async (req, res) => {
     try {
-      console.log("Starting fix for gift cards with zero amounts...");
+      console.log("Starting comprehensive gift card activation amount fix...");
 
       // Get all gift cards with zero amounts from the database
       const zeroAmountCards = await db.select()
