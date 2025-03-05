@@ -1556,6 +1556,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // NEW ENDPOINT: Direct update of gift card amounts from orders with itemType: "GIFT_CARD"
+  apiRouter.get("/update-gift-card-amounts", async (req, res) => {
+    try {
+      console.log("Starting direct gift card amount update from orders with itemType: GIFT_CARD...");
+      
+      // Import the new function dynamically to avoid circular dependencies
+      const { updateGiftCardAmountsFromOrders } = await import('./updateGiftCardAmountsFromOrders');
+      const result = await updateGiftCardAmountsFromOrders();
+      
+      // Return detailed results of the update operation
+      return res.json({
+        success: true,
+        message: "Gift card amounts updated directly from orders with itemType: GIFT_CARD",
+        result
+      });
+    } catch (error) {
+      console.error("Error updating gift card amounts from orders:", error);
+      res.status(500).json({
+        error: "Failed to update gift card amounts from orders",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
   app.use("/api", apiRouter);
 
   const httpServer = createServer(app);
