@@ -1580,6 +1580,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+  
+  // UNIVERSAL UPDATE ENDPOINT: Force update ALL gift cards with correct amounts from orders
+  apiRouter.get("/force-update-all-gift-cards", async (req, res) => {
+    try {
+      console.log("Starting FORCE UPDATE of ALL gift card activation amounts from transaction-order matching...");
+      
+      // Import the updateGiftCardActivationFromTransactions function dynamically
+      const { updateGiftCardActivationFromTransactions } = await import('./updateGiftCardActivationFromTransactions');
+      
+      // Run the function to process ALL gift cards
+      const result = await updateGiftCardActivationFromTransactions();
+      
+      // Return detailed results of the update operation
+      return res.json({
+        success: true,
+        message: "FORCE UPDATED ALL gift card activation amounts from orders table",
+        result: {
+          updated: result.updated,
+          directlyUpdated: result.directlyUpdated || 0,
+          totalUpdated: (result.updated || 0) + (result.directlyUpdated || 0),
+          skipped: result.skipped
+        }
+      });
+    } catch (error) {
+      console.error("Error during universal gift card update:", error);
+      res.status(500).json({
+        error: "Failed to update all gift cards",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
 
   // NEW ENDPOINT: Update gift card activation amounts by linking transactions and orders
   apiRouter.get("/update-gift-card-activations-from-transactions", async (req, res) => {

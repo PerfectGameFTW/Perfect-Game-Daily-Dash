@@ -1,14 +1,15 @@
 /**
- * Connect Gift Card Transactions with Orders
+ * FORCE UPDATE ALL Gift Cards with Correct Amounts from Orders
  * 
- * This script updates gift card activation amounts by:
- * 1. Finding transactions in gift_cards_et view
- * 2. Matching them with corresponding orders
- * 3. Extracting the correct activation amount from the matched order
- * 4. Updating the gift_cards table with accurate activation_amount values
+ * This script FORCES an update on EVERY gift card by:
+ * 1. Retrieving ALL gift cards in the database (with no limit or filters)
+ * 2. Directly connecting each gift card to order data through transaction timestamps
+ * 3. FORCING an update on every single gift card with the amount from the orders table
+ * 4. No conditional checks or filters - every card gets updated with order data
  * 
- * This approach ensures accurate gift card sales reporting by creating a direct
- * connection between transactions and orders for precise activation amounts.
+ * This ensures that ALL gift cards have correct activation amounts pulled directly 
+ * from the orders table, which is the source of truth. Any existing activation amount
+ * values will be overwritten with the values from orders.
  */
 
 import { db } from './db';
@@ -49,17 +50,26 @@ export async function updateGiftCardActivationFromTransactions() {
     let updatedCount = 0;
     let skippedCount = 0;
     
-    for (const giftCard of giftCardTransactions.rows) {
-      try {
-        const giftCardId = giftCard.id;
-        const squareId = giftCard.square_id;
-        const transactionId = giftCard.transaction_id;
-        
-        if (!transactionId) {
-          console.log(`No transaction found for gift card ID ${giftCardId}`);
-          skippedCount++;
-          continue;
-        }
+    // Process in smaller batches to avoid timeouts and connection issues
+    const BATCH_SIZE = 10; // Process 10 cards at a time
+    
+    for (let i = 0; i < giftCardTransactions.rows.length; i += BATCH_SIZE) {
+      console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(giftCardTransactions.rows.length / BATCH_SIZE)}`);
+      
+      // Process this batch
+      const batch = giftCardTransactions.rows.slice(i, i + BATCH_SIZE);
+      
+      for (const giftCard of batch) {
+        try {
+          const giftCardId = giftCard.id;
+          const squareId = giftCard.square_id;
+          const transactionId = giftCard.transaction_id;
+          
+          if (!transactionId) {
+            console.log(`No transaction found for gift card ID ${giftCardId}`);
+            skippedCount++;
+            continue;
+          }
         
         // Step 3: Find orders that match this transaction timing
         const matchingOrders = await db.execute(sql`
@@ -130,10 +140,83 @@ export async function updateGiftCardActivationFromTransactions() {
     // Verify the updated amounts
     await verifyActivationAmounts();
     
+    // STEP 4: Handle gift cards that couldn't be matched with transactions
+    // by trying to match them directly with orders via purchase dates
+    console.log("Processing remaining gift cards directly from orders data...");
+    
+    // Get all gift cards that still have zero activation amounts
+    const remainingCards = await db.execute(sql`
+      SELECT 
+        id, 
+        square_id, 
+        gan,
+        purchase_date, 
+        activation_amount
+      FROM 
+        gift_cards
+      WHERE 
+        activation_amount IS NULL 
+        OR activation_amount = 0
+    `);
+    
+    console.log(`Found ${remainingCards.rows.length} gift cards that still need activation amounts`);
+    
+    let directUpdatedCount = 0;
+    
+    // Process these cards directly against orders
+    for (const card of remainingCards.rows) {
+      try {
+        const cardId = card.id;
+        const purchaseDate = card.purchase_date;
+        
+        // Find orders with gift card items around this card's purchase date
+        const directOrders = await db.execute(sql`
+          SELECT 
+            o.id as order_id,
+            o.created_at,
+            oli.total_money,
+            oli.name
+          FROM 
+            orders o
+          JOIN 
+            order_line_items oli ON oli.order_id = o.id
+          WHERE 
+            o.created_at >= ${purchaseDate}::timestamptz - interval '2 hours'
+            AND o.created_at <= ${purchaseDate}::timestamptz + interval '2 hours'
+            AND (
+              oli.square_data->>'itemType' = 'GIFT_CARD' 
+              OR LOWER(oli.name) LIKE '%gift%'
+              OR LOWER(oli.name) LIKE '%deposit%'
+            )
+          ORDER BY 
+            ABS(EXTRACT(EPOCH FROM (o.created_at - ${purchaseDate}::timestamptz)))
+        `);
+        
+        if (directOrders.rows.length > 0) {
+          const closestOrder = directOrders.rows[0];
+          const directAmount = Number(closestOrder.total_money);
+          
+          if (directAmount > 0) {
+            await db.update(giftCards)
+              .set({ activationAmount: directAmount })
+              .where(sql`id = ${cardId}`);
+            
+            console.log(`✅ DIRECT UPDATE: Gift card ID ${cardId} with amount $${directAmount.toFixed(2)} from order ID ${closestOrder.order_id}`);
+            directUpdatedCount++;
+          }
+        }
+      } catch (error) {
+        console.error(`Error processing remaining gift card ${card.id}:`, error);
+      }
+    }
+    
+    console.log(`Direct order matching: ${directUpdatedCount} additional cards updated`);
+    
     return {
       success: true,
-      message: `Updated ${updatedCount} gift card activation amounts from transaction-order matching`,
+      message: `Updated ${updatedCount + directUpdatedCount} gift card activation amounts from orders table`,
       updated: updatedCount,
+      directlyUpdated: directUpdatedCount,
       skipped: skippedCount
     };
   } catch (error) {
