@@ -109,7 +109,7 @@ class PgStorage implements IStorage {
   async updateGiftCardRedemption(id: number, amount: number): Promise<GiftCard> {
     const result = await db
       .update(giftCards)
-      .set({ redeemedAmount: sql`redeemed_amount + ${amount}` })
+      .set({ redeemedAmount: sql`"redeemedAmount" + ${amount}` })
       .where(eq(giftCards.id, id))
       .returning();
     return result[0];
@@ -227,8 +227,8 @@ class PgStorage implements IStorage {
         COUNT(*) as sold_count,
         COALESCE(SUM(
           CASE 
-            WHEN activation_amount IS NOT NULL THEN activation_amount 
-            ELSE amount + redeemed_amount 
+            WHEN activationamount IS NOT NULL THEN activationamount 
+            ELSE amount + redeemedamount 
           END
         ), 0) as sold_amount
       FROM 
@@ -383,11 +383,11 @@ class PgStorage implements IStorage {
     // Use TIMESTAMP comparisons instead of DATE to properly handle timezone boundaries
     const result = await db.execute(sql`
       SELECT 
-        -- Use activation_amount if available, fall back to (amount + redeemed_amount) for legacy data
+        -- Use activationamount if available, fall back to (amount + redeemedamount) for legacy data
         COALESCE(SUM(
           CASE 
-            WHEN activation_amount IS NOT NULL THEN activation_amount 
-            ELSE amount + redeemed_amount 
+            WHEN activationamount IS NOT NULL THEN activationamount 
+            ELSE amount + redeemedamount 
           END
         ), 0) as total_activation,
         COUNT(*) as card_count
