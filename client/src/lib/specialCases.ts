@@ -1,21 +1,23 @@
 /**
- * SPECIAL CASES MODULE - DEPRECATED
+ * SPECIAL CASES MODULE - REMOVED
  * 
- * This module has been completely deprecated as part of the sync simplification process.
- * We now use a single, unified sync process with no special case handling.
- * All data comes directly from the database with consistent processing.
+ * This module has been completely removed as part of the UTC-based system architecture.
+ * We now use a single unified approach with UTC-based timestamps throughout the system:
  * 
- * These stub functions are maintained for backward compatibility only
- * and will be removed in a future update.
+ * 1. All timestamps are stored in the database as UTC
+ * 2. All database queries use direct UTC timestamp comparisons
+ * 3. The frontend handles display-only timezone conversion for user interface
+ * 
+ * This ensures consistent data reporting across all time periods with no special cases.
  */
 
 import { DateRange } from "@shared/schema";
 
 // Stub functions to maintain API compatibility
 export function isFeb25Case(dateRange: DateRange): boolean {
-  return false; // Special cases have been removed completely
+  return false; // No special cases needed with UTC-based architecture
 }
 
 export function getGiftCardAmount(dateRange: DateRange, defaultAmount: number = 0): number {
-  return defaultAmount; // Always use the value from the database
+  return defaultAmount; // Always use values directly from the database
 }

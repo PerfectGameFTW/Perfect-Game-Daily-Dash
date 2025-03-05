@@ -88,7 +88,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           </div>
         </div>
 
-        {/* Gift Card Sales */}
+        {/* Gift Card Sales (Using UTC-based calculations) */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Gift Card Sales</span>
           <div className="flex items-center">
