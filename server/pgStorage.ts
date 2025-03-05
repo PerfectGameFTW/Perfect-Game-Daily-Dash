@@ -453,6 +453,57 @@ class PgStorage implements IStorage {
       // This implements a database-first approach
       console.log('Retrieving gift card sales from database ET views');
       
+      // First, get a count of gift cards for this date range to debug
+      const countResult = await db.execute(sql`
+        SELECT 
+          COUNT(*) as card_count
+        FROM 
+          gift_cards
+        WHERE 
+          DATE(purchase_date) >= ${startStr}::date
+          AND DATE(purchase_date) <= ${endStr}::date
+      `);
+      
+      const cardCount = Number(countResult.rows[0]?.card_count) || 0;
+      console.log(`Found ${cardCount} gift cards in date range ${startStr} to ${endStr}`);
+      
+      // Get detailed information about each card in this date range
+      const detailedResult = await db.execute(sql`
+        SELECT 
+          id,
+          gan,
+          squareId,
+          amount,
+          redeemed_amount,
+          amount + redeemed_amount as original_value,
+          purchase_date
+        FROM 
+          gift_cards
+        WHERE 
+          DATE(purchase_date) >= ${startStr}::date
+          AND DATE(purchase_date) <= ${endStr}::date
+        ORDER BY 
+          purchase_date ASC
+      `);
+      
+      // Log each card's details for debugging
+      console.log(`===== GIFT CARD DETAILS FOR ${startStr} to ${endStr} =====`);
+      let totalOriginalValue = 0;
+      for (const card of detailedResult.rows) {
+        const originalValue = Number(card.original_value) || 0;
+        totalOriginalValue += originalValue;
+        
+        console.log(`Card ID: ${card.id}, GAN: ${card.gan}, Square ID: ${card.squareId}`);
+        console.log(`  Current Amount: $${Number(card.amount).toFixed(2)}`);
+        console.log(`  Redeemed Amount: $${Number(card.redeemed_amount).toFixed(2)}`);
+        console.log(`  Original Value: $${originalValue.toFixed(2)}`);
+        console.log(`  Purchase Date: ${new Date(card.purchase_date).toISOString()}`);
+        console.log(`--------------------`);
+      }
+      console.log(`Total Original Value: $${totalOriginalValue.toFixed(2)}`);
+      console.log(`======================================================`);
+      
+      // Now get the actual sum as we did before
       const result = await db.execute(sql`
         SELECT 
           -- Calculate total activation amount (original value)
