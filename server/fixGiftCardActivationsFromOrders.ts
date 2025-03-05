@@ -305,8 +305,10 @@ async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: 
               let giftCardGan = '';
               
               // In Square's API, the GAN might be in various places
-              if (order.note && typeof order.note === 'string') {
-                const ganMatch = order.note.match(/GAN:\s*(\d+)/i);
+              // The 'note' might be present in the Square API response but not in TypeScript types
+              const orderNote = (order as any).note;
+              if (orderNote && typeof orderNote === 'string') {
+                const ganMatch = orderNote.match(/GAN:\s*(\d+)/i);
                 if (ganMatch && ganMatch[1]) {
                   giftCardGan = ganMatch[1];
                 }
@@ -388,8 +390,10 @@ async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: 
               let giftCardGan = '';
               
               // In Square's API, the GAN might be in various places
-              if (order.note && typeof order.note === 'string') {
-                const ganMatch = order.note.match(/GAN:\s*(\d+)/i);
+              // The 'note' might be present in the Square API response but not in TypeScript types
+              const orderNote = (order as any).note;
+              if (orderNote && typeof orderNote === 'string') {
+                const ganMatch = orderNote.match(/GAN:\s*(\d+)/i);
                 if (ganMatch && ganMatch[1]) {
                   giftCardGan = ganMatch[1];
                 }
