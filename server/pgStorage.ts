@@ -10,7 +10,7 @@ import {
   OrderSummary, InsertSyncState, SyncState,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary
 } from '@shared/schema';
-import { getEasternDateRange, formatEasternDate, formatHour } from './dateUtils';
+import { getEasternDateRange, formatEasternDate, formatHour, EASTERN_TIMEZONE } from './dateUtils';
 // Note: validateInsertData function needs to be implemented separately
 // We're just doing a simple validation check in createOrder for now
 import { InvalidOrderDataError, OrderNotFoundError } from './errors';
@@ -227,49 +227,34 @@ class PgStorage implements IStorage {
       const startStr = formatEasternDate(start);
       const endStr = formatEasternDate(end);
       
-      // Get gift card sales from database (based on purchase date)
+      // Get gift card activations (initial sales) from database using the existing ET view
+      // This query specifically gets the original activation amounts
       const salesResult = await db.execute(sql`
-        WITH gift_cards_et AS (
-          SELECT 
-            id,
-            amount,
-            redeemed_amount,
-            purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
-          FROM gift_cards
-        )
         SELECT 
           COUNT(id) as sold_count,
           COALESCE(SUM(amount + redeemed_amount), 0) as sold_amount
-        FROM gift_cards_et
+        FROM gift_cards
         WHERE 
-          DATE(purchase_date_et) >= ${startStr}::date
-          AND DATE(purchase_date_et) <= ${endStr}::date
+          DATE(purchase_date) >= ${startStr}::date
+          AND DATE(purchase_date) <= ${endStr}::date
       `);
       
-      // Get redemptions from database (based on redemption date)
+      // Get redemptions from database using the existing ET view
       const redemptionResult = await db.execute(sql`
-        WITH redemptions_et AS (
-          SELECT 
-            id,
-            gift_card_id,
-            amount,
-            redeemed_at AT TIME ZONE 'America/New_York' as redeemed_at_et
-          FROM gift_card_redemptions
-        )
         SELECT 
           COUNT(id) as redeemed_count,
           COALESCE(SUM(amount), 0) as redeemed_amount
-        FROM redemptions_et
+        FROM gift_card_redemptions
         WHERE 
-          DATE(redeemed_at_et) >= ${startStr}::date
-          AND DATE(redeemed_at_et) <= ${endStr}::date
+          DATE(redeemed_at) >= ${startStr}::date
+          AND DATE(redeemed_at) <= ${endStr}::date
       `);
       
-      // Parse the results
-      const soldCount = parseInt(salesResult.rows[0]?.sold_count) || 0;
-      const soldAmount = parseFloat(salesResult.rows[0]?.sold_amount) || 0;
-      const redeemedCount = parseInt(redemptionResult.rows[0]?.redeemed_count) || 0;
-      const redeemedAmount = parseFloat(redemptionResult.rows[0]?.redeemed_amount) || 0;
+      // Parse the results with proper type casting
+      const soldCount = parseInt(String(salesResult.rows[0]?.sold_count ?? 0)) || 0;
+      const soldAmount = parseFloat(String(salesResult.rows[0]?.sold_amount ?? 0)) || 0;
+      const redeemedCount = parseInt(String(redemptionResult.rows[0]?.redeemed_count ?? 0)) || 0;
+      const redeemedAmount = parseFloat(String(redemptionResult.rows[0]?.redeemed_amount ?? 0)) || 0;
       
       // Calculate average value
       const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
@@ -447,17 +432,8 @@ class PgStorage implements IStorage {
       const startStr = formatEasternDate(start);
       const endStr = formatEasternDate(end);
       
-      // Fallback: Use the database query as before
+      // Fallback: Use the database query with ET views directly
       const result = await db.execute(sql`
-        WITH gift_cards_et AS (
-          SELECT 
-            id,
-            square_id,
-            amount,
-            redeemed_amount,
-            purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
-          FROM gift_cards
-        )
         SELECT 
           -- Calculate total activation amount (original value)
           -- This is always current balance + total redemptions
@@ -474,10 +450,10 @@ class PgStorage implements IStorage {
             END
           ), 0) as total_activation
         FROM 
-          gift_cards_et
+          gift_cards
         WHERE 
-          DATE(purchase_date_et) >= ${startStr}::date
-          AND DATE(purchase_date_et) <= ${endStr}::date
+          DATE(purchase_date) >= ${startStr}::date
+          AND DATE(purchase_date) <= ${endStr}::date
       `);
 
       const totalSales = Number(result.rows[0]?.total_activation) || 0;
