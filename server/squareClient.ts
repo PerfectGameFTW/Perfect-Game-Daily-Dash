@@ -153,9 +153,9 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     
     console.log('Orders search request:', JSON.stringify(searchRequest, null, 2));
 
-    // Make API request to Square Orders API
+    // Make API request to Square Orders API using our explicit instance
     try {
-      const response = await squareClient.ordersApi.searchOrders(searchRequest);
+      const response = await ordersApi.searchOrders(searchRequest);
       console.log('Square Orders API response status:', response.statusCode);
       
       if (response.result && response.result.orders) {
@@ -341,7 +341,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     let hasMorePages = true;
     let pageCount = 0;
     const MAX_PAGES = 10; // Temporarily reduced for testing
-    const START_TIME = Date.now();
+    const startTime = Date.now(); // Changed variable name from START_TIME to startTime
     const TIMEOUT = 5 * 60 * 1000; // 5 minute timeout
 
     while (hasMorePages && pageCount < MAX_PAGES) {
@@ -350,12 +350,12 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       console.log(`Starting to fetch payments page ${pageCount}${cursor ? ' with cursor' : ''} at ${new Date(pageStartTime).toISOString()}`);
 
       // Check for timeout
-      if (Date.now() - START_TIME > TIMEOUT) {
+      if (Date.now() - startTime > TIMEOUT) {
         throw new Error('Sync timeout reached after 5 minutes');
       }
 
       try {
-        const response = await squareClient.paymentsApi.listPayments(
+        const response = await paymentsApi.listPayments(
           beginTime,
           endTime,
           'DESC',
@@ -405,14 +405,14 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           stack: pageError instanceof Error ? pageError.stack : undefined,
           page: pageCount,
           cursor,
-          timeElapsed: Date.now() - START_TIME
+          timeElapsed: Date.now() - startTime
         };
         console.error('Error fetching payments page:', errorDetail);
         throw new Error(`Failed to fetch page ${pageCount}: ${errorDetail.message}`);
       }
     }
 
-    const totalTime = Date.now() - START_TIME;
+    const totalTime = Date.now() - startTime;
     if (pageCount >= MAX_PAGES) {
       console.warn(`Reached maximum page limit (${MAX_PAGES}). Some payments may be missing. Total time: ${totalTime}ms`);
     }
@@ -424,7 +424,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       error,
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
-      totalTimeMs: Date.now() - START_TIME
+      totalTimeMs: Date.now() - startTime
     });
     throw error;
   }
@@ -663,7 +663,7 @@ export async function fetchGiftCards(): Promise<any[]> {
       console.log(`Fetching gift cards page ${pageCount}${cursor ? ' with cursor' : ''}`);
 
       try {
-        const response = await squareClient.giftCardsApi.listGiftCards(
+        const response = await giftCardsApi.listGiftCards(
           undefined,  // type
           undefined,  // state
           100,        // limit
@@ -761,7 +761,7 @@ function mapSquareCategory(itemName: string, itemType?: string): Category {
 export async function searchCatalogForGiftCards(): Promise<any[]> {
   try {
     // Call Square Catalog API to find gift card items
-    const response = await squareClient.catalogApi.listCatalog(
+    const response = await catalogApi.listCatalog(
       undefined, // cursor
       "ITEM" // object_types - specifically looking for catalog items
     );
