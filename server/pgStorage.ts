@@ -234,8 +234,8 @@ class PgStorage implements IStorage {
       FROM 
         gift_cards_et
       WHERE 
-        DATE(purchase_date_et) >= ${startStr}::date
-        AND DATE(purchase_date_et) <= ${endStr}::date
+        date_et >= ${startStr}::date
+        AND date_et <= ${endStr}::date
     `);
     
     // Query to get gift card redemptions in the date range using Eastern Time
@@ -246,8 +246,8 @@ class PgStorage implements IStorage {
       FROM 
         gift_card_redemptions_et
       WHERE 
-        DATE(timestamp_et) >= ${startStr}::date
-        AND DATE(timestamp_et) <= ${endStr}::date
+        date_et >= ${startStr}::date
+        AND date_et <= ${endStr}::date
     `);
     
     // Extract the results
@@ -394,8 +394,8 @@ class PgStorage implements IStorage {
       FROM 
         gift_cards_et
       WHERE 
-        purchase_date_et >= ${start}::timestamptz
-        AND purchase_date_et <= ${end}::timestamptz
+        date_et >= ${startStr}::date
+        AND date_et <= ${endStr}::date
     `);
 
     const totalSales = Number(result.rows[0]?.total_activation) || 0;
