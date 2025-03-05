@@ -49,7 +49,7 @@ export async function linkGiftCardsToPayments() {
       FROM 
         transactions
       WHERE 
-        category_id = 'gift_card'
+        category = 'giftCard'
         AND amount > 0
       ORDER BY 
         timestamp DESC
