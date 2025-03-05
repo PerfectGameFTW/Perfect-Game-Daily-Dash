@@ -281,9 +281,22 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
 export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: number): InsertOrderLineItem {
   const safeLineItem = processSafeSquareData(lineItem);
 
+  // Special handling for Tripleseat or other payments that might not have a name
+  let itemName = safeLineItem.name;
+  if (!itemName) {
+    // Check if it's a Tripleseat payment
+    if (safeLineItem.note && safeLineItem.note.includes('Tripleseat')) {
+      itemName = 'Tripleseat Payment';
+    } else {
+      // Fallback name for any unnamed item
+      itemName = 'Unnamed Item';
+    }
+    console.log(`Found line item with missing name, using fallback: ${itemName}`, safeLineItem);
+  }
+
   return {
     orderId,
-    name: safeLineItem.name,
+    name: itemName,
     quantity: safeLineItem.quantity || 1,
     basePriceMoney: safeLineItem.basePriceMoney ? Number(safeLineItem.basePriceMoney.amount) / 100 : 0,
     totalMoney: safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0,
