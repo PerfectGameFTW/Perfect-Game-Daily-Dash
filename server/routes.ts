@@ -1597,10 +1597,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true,
         message: "FORCE UPDATED ALL gift card activation amounts from orders table",
         result: {
-          updated: result.updated,
-          directlyUpdated: result.directlyUpdated || 0,
-          totalUpdated: (result.updated || 0) + (result.directlyUpdated || 0),
-          skipped: result.skipped
+          updated: result?.updated || 0,
+          directlyUpdated: result?.directlyUpdated || 0,
+          totalUpdated: (result?.updated || 0) + (result?.directlyUpdated || 0),
+          skipped: result?.skipped || 0
         }
       });
     } catch (error) {

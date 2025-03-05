@@ -16,7 +16,16 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { giftCards } from '../shared/schema';
 
-export async function updateGiftCardActivationFromTransactions() {
+// Return type definition for improved type safety
+interface UpdateResult {
+  success: boolean;
+  message: string;
+  updated: number;
+  directlyUpdated: number;
+  skipped: number;
+}
+
+export async function updateGiftCardActivationFromTransactions(): Promise<UpdateResult> {
   console.log('Starting gift card activation update from transactions...');
   
   try {
@@ -70,9 +79,9 @@ export async function updateGiftCardActivationFromTransactions() {
             skippedCount++;
             continue;
           }
-        
-        // Step 3: Find orders that match this transaction timing
-        const matchingOrders = await db.execute(sql`
+          
+          // Step 3: Find orders that match this transaction timing
+          const matchingOrders = await db.execute(sql`
           SELECT 
             o.id as order_id,
             o.square_id as order_square_id,
@@ -226,7 +235,7 @@ export async function updateGiftCardActivationFromTransactions() {
 }
 
 // Verify activation amounts for debugging
-async function verifyActivationAmounts() {
+async function verifyActivationAmounts(): Promise<void> {
   try {
     const result = await db.execute(sql`
       SELECT 
