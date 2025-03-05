@@ -957,9 +957,14 @@ export async function getGiftCardActivations(startDate?: Date, endDate?: Date): 
     if (giftCardTotal === 0) {
       console.log('No gift cards found in orders, trying Payments API...');
       
-      // Use only the limit parameter with the correct typing
-      const listPaymentsParams = { limit: 100 };
-      const paymentsResponse = await squareClient.paymentsApi.listPayments(listPaymentsParams);
+      // Call listPayments with begin/end times
+      const paymentsResponse = await squareClient.paymentsApi.listPayments(
+        beginTime,
+        endTime,
+        'DESC',
+        undefined,
+        process.env.SQUARE_LOCATION_ID
+      );
       
       const payments = paymentsResponse.result.payments;
       

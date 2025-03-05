@@ -214,14 +214,119 @@ class PgStorage implements IStorage {
   }
 
   async getGiftCardSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<GiftCardSummary> {
-    // Simplified implementation for now
-    return {
-      soldCount: 0,
-      soldAmount: 0,
-      redeemedCount: 0,
-      redeemedAmount: 0,
-      averageValue: 0
-    };
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    
+    console.log('Getting gift card summary for range:', { 
+      dateRange, 
+      startDate: start.toISOString(),
+      endDate: end.toISOString() 
+    });
+
+    try {
+      // Query the database for all the gift card data in the date range
+      const startStr = formatEasternDate(start);
+      const endStr = formatEasternDate(end);
+      
+      // Get gift card sales from database (based on purchase date)
+      const salesResult = await db.execute(sql`
+        WITH gift_cards_et AS (
+          SELECT 
+            id,
+            amount,
+            redeemed_amount,
+            purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
+          FROM gift_cards
+        )
+        SELECT 
+          COUNT(id) as sold_count,
+          COALESCE(SUM(amount + redeemed_amount), 0) as sold_amount
+        FROM gift_cards_et
+        WHERE 
+          DATE(purchase_date_et) >= ${startStr}::date
+          AND DATE(purchase_date_et) <= ${endStr}::date
+      `);
+      
+      // Get redemptions from database (based on redemption date)
+      const redemptionResult = await db.execute(sql`
+        WITH redemptions_et AS (
+          SELECT 
+            id,
+            gift_card_id,
+            amount,
+            redeemed_at AT TIME ZONE 'America/New_York' as redeemed_at_et
+          FROM gift_card_redemptions
+        )
+        SELECT 
+          COUNT(id) as redeemed_count,
+          COALESCE(SUM(amount), 0) as redeemed_amount
+        FROM redemptions_et
+        WHERE 
+          DATE(redeemed_at_et) >= ${startStr}::date
+          AND DATE(redeemed_at_et) <= ${endStr}::date
+      `);
+      
+      // Parse the results
+      const soldCount = parseInt(salesResult.rows[0]?.sold_count) || 0;
+      const soldAmount = parseFloat(salesResult.rows[0]?.sold_amount) || 0;
+      const redeemedCount = parseInt(redemptionResult.rows[0]?.redeemed_count) || 0;
+      const redeemedAmount = parseFloat(redemptionResult.rows[0]?.redeemed_amount) || 0;
+      
+      // Calculate average value
+      const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
+      
+      // If this is today or yesterday and sold amount is 0, try Square API as a backup
+      if ((dateRange === 'today' || dateRange === 'yesterday') && soldAmount === 0) {
+        console.log('No gift card sales found in database for recent date, trying Square API as backup...');
+        try {
+          // Import getGiftCardActivations dynamically to avoid circular dependencies
+          const { getGiftCardActivations } = await import('./squareClient');
+          const squareApiAmount = await getGiftCardActivations(start, end);
+          
+          if (squareApiAmount > 0) {
+            console.log(`Found ${squareApiAmount} in gift card sales from Square API, using this value`);
+            
+            // For real-time data, we'll use the Square API value but still keep the redemption data
+            return {
+              soldCount: soldCount || 1, // Assume at least 1 if we got a positive amount
+              soldAmount: squareApiAmount,
+              redeemedCount,
+              redeemedAmount,
+              averageValue: squareApiAmount // If count is 0, just use the amount as average
+            };
+          }
+        } catch (apiError) {
+          console.error('Error getting live data from Square API:', apiError);
+          // Continue with database values if API fails
+        }
+      }
+      
+      console.log('Gift Card Summary Results from Database:', {
+        soldCount,
+        soldAmount,
+        redeemedCount,
+        redeemedAmount,
+        averageValue
+      });
+      
+      return {
+        soldCount,
+        soldAmount,
+        redeemedCount,
+        redeemedAmount,
+        averageValue
+      };
+    } catch (error) {
+      console.error('Error getting gift card summary:', error);
+      
+      // Fallback to zero values if there's an error
+      return {
+        soldCount: 0,
+        soldAmount: 0,
+        redeemedCount: 0,
+        redeemedAmount: 0,
+        averageValue: 0
+      };
+    }
   }
 
   // Sync state management methods
