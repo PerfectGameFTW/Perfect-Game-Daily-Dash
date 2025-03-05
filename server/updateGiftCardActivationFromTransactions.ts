@@ -38,10 +38,9 @@ export async function updateGiftCardActivationFromTransactions() {
       LEFT JOIN 
         transactions t ON t.timestamp >= gc.purchase_date - interval '1 hour'
                     AND t.timestamp <= gc.purchase_date + interval '1 hour'
-      -- Removed the WHERE clause to check ALL gift cards
+      -- Process ALL gift cards in the database, no limits, no conditions
       ORDER BY 
         gc.purchase_date DESC
-      LIMIT 100 -- Limit to 100 recent cards for testing
     `);
 
     console.log(`Found ${giftCardTransactions.rows.length} gift cards with potential transaction matches`);
@@ -107,26 +106,19 @@ export async function updateGiftCardActivationFromTransactions() {
           continue;
         }
         
-        // Only update if the found amount is significantly different from current activation amount
+        // FORCE UPDATE ALL gift cards with the amount from orders
         const currentActivationAmount = Number(giftCard.activation_amount || 0);
         const newActivationAmount = Number(giftCardAmount);
-        const difference = Math.abs(currentActivationAmount - newActivationAmount);
-        const percentDifference = currentActivationAmount > 0 ? (difference / currentActivationAmount) * 100 : 100;
         
-        console.log(`Gift card ID ${giftCardId}: Current activation amount: $${currentActivationAmount.toFixed(2)}, New amount: $${newActivationAmount.toFixed(2)}, Difference: ${percentDifference.toFixed(2)}%`);
+        console.log(`Gift card ID ${giftCardId}: Current activation amount: $${currentActivationAmount.toFixed(2)}, New amount from order: $${newActivationAmount.toFixed(2)}`);
         
-        // Only update if difference is more than 10% and at least $5
-        if (percentDifference > 10 && difference > 5) {
-          await db.update(giftCards)
-            .set({ activationAmount: newActivationAmount })
-            .where(sql`id = ${giftCardId}`);
-          
-          console.log(`✅ Updated gift card ID ${giftCardId} with activation amount $${newActivationAmount.toFixed(2)} from order ID ${closestOrder.order_id} (was $${currentActivationAmount.toFixed(2)})`);
-          updatedCount++;
-        } else {
-          console.log(`⏭️ Skipped update for gift card ID ${giftCardId} - difference too small (${percentDifference.toFixed(2)}%)`);
-          skippedCount++;
-        }
+        // ALWAYS update with the order amount - no tolerance check
+        await db.update(giftCards)
+          .set({ activationAmount: newActivationAmount })
+          .where(sql`id = ${giftCardId}`);
+        
+        console.log(`✅ FORCE UPDATED gift card ID ${giftCardId} with amount $${newActivationAmount.toFixed(2)} from order ID ${closestOrder.order_id} (was $${currentActivationAmount.toFixed(2)})`);
+        updatedCount++;
       } catch (error) {
         console.error(`Error processing gift card ${giftCard.id}:`, error);
         skippedCount++;
