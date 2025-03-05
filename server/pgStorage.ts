@@ -10,7 +10,8 @@ import {
   OrderSummary, InsertSyncState, SyncState,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary
 } from '@shared/schema';
-import { getEasternDateRange, formatEasternDate, formatHour } from './dateUtils';
+import { getEasternDateRange, formatEasternDate, formatHour, EASTERN_TIMEZONE } from './dateUtils';
+import { formatInTimeZone } from 'date-fns-tz';
 // Note: validateInsertData function needs to be implemented separately
 // We're just doing a simple validation check in createOrder for now
 import { InvalidOrderDataError, OrderNotFoundError } from './errors';
@@ -224,7 +225,12 @@ class PgStorage implements IStorage {
     const soldResult = await db.execute(sql`
       SELECT 
         COUNT(*) as sold_count,
-        COALESCE(SUM(amount + redeemed_amount), 0) as sold_amount
+        COALESCE(SUM(
+          CASE 
+            WHEN activation_amount IS NOT NULL THEN activation_amount 
+            ELSE amount + redeemed_amount 
+          END
+        ), 0) as sold_amount
       FROM 
         gift_cards_et
       WHERE 
@@ -377,9 +383,13 @@ class PgStorage implements IStorage {
     // Use TIMESTAMP comparisons instead of DATE to properly handle timezone boundaries
     const result = await db.execute(sql`
       SELECT 
-        -- Calculate total activation amount (original value)
-        -- This is always current balance + redeemed_amount (activation value)
-        COALESCE(SUM(amount + redeemed_amount), 0) as total_activation,
+        -- Use activation_amount if available, fall back to (amount + redeemed_amount) for legacy data
+        COALESCE(SUM(
+          CASE 
+            WHEN activation_amount IS NOT NULL THEN activation_amount 
+            ELSE amount + redeemed_amount 
+          END
+        ), 0) as total_activation,
         COUNT(*) as card_count
       FROM 
         gift_cards_et
