@@ -13,7 +13,7 @@ export async function testConnection(): Promise<{ success: boolean, message: str
    }
 
    // Try to list a single location to test the connection
-   const response = await squareClient.locationsApi.listLocations();
+   const response = await locationsApi.listLocations();
 
    if (!response.result || !response.result.locations) {
      throw new Error('Invalid response from Square API');
@@ -40,7 +40,16 @@ export async function testConnection(): Promise<{ success: boolean, message: str
 }
 
 import { pgStorage } from './pgStorage';
-import { Client, Environment } from 'square';
+import { 
+  Client, 
+  Environment,
+  OrdersApi,
+  LocationsApi,
+  PaymentsApi,
+  GiftCardsApi,
+  CatalogApi,
+  ApiError
+} from 'square';
 import {
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
@@ -86,6 +95,13 @@ const squareClient = new Client({
   accessToken: process.env.SQUARE_ACCESS_TOKEN || '',
   environment: Environment.Production
 });
+
+// Create API instance explicitly 
+const ordersApi = new OrdersApi(squareClient);
+const locationsApi = new LocationsApi(squareClient);
+const paymentsApi = new PaymentsApi(squareClient);
+const giftCardsApi = new GiftCardsApi(squareClient);
+const catalogApi = new CatalogApi(squareClient);
 
 // Update the fetchOrders method to better handle order data
 export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any[]> {

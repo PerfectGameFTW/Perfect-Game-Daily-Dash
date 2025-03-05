@@ -848,6 +848,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+  
+  // Test Orders API directly (debugging endpoint)
+  apiRouter.get("/test-orders-api", async (req, res) => {
+    try {
+      console.log("Testing Square Orders API directly...");
+      
+      // Get the location ID from environment
+      const locationId = process.env.SQUARE_LOCATION_ID;
+      if (!locationId) {
+        return res.status(500).json({
+          success: false, 
+          message: "Square location ID is not configured"
+        });
+      }
+      
+      // Create a simpler search request
+      const searchRequest = {
+        locationIds: [locationId],
+        query: {
+          filter: {
+            stateFilter: {
+              states: ['COMPLETED']
+            }
+          },
+          sort: {
+            sortField: 'CREATED_AT',
+            sortOrder: 'DESC'
+          }
+        },
+        limit: 3 // Just get a few to test
+      };
+      
+      console.log("Sending Orders search request:", JSON.stringify(searchRequest, null, 2));
+      
+      // Make the API call directly
+      const response = await squareClient.ordersApi.searchOrders(searchRequest);
+      
+      // Process the response
+      console.log("Orders API response status:", response.statusCode);
+      
+      const orderCount = response.result.orders?.length || 0;
+      console.log(`Found ${orderCount} orders in test call`);
+      
+      // Prepare safe response data
+      const safeResponse = {
+        success: true,
+        statusCode: response.statusCode,
+        orderCount: orderCount,
+        hasOrders: orderCount > 0,
+        sampleData: orderCount > 0 ? {
+          orderId: response.result.orders?.[0].id,
+          state: response.result.orders?.[0].state,
+          createdAt: response.result.orders?.[0].createdAt,
+          lineItemCount: response.result.orders?.[0].lineItems?.length || 0
+        } : null
+      };
+      
+      res.json(safeResponse);
+    } catch (error) {
+      console.error("Error testing Square Orders API:", error);
+      res.status(500).json({
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error",
+        errorDetails: error instanceof Error ? error.stack : undefined
+      });
+    }
+  });
 
   // Add a simple sync endpoint
   apiRouter.post("/simple-sync", async (req, res) => {
