@@ -11,6 +11,7 @@ import { pgStorage } from "./pgStorage"; // Keep this for other storage operatio
 import { fixGiftCardActivationAmounts } from "./fixGiftCardActivationAmounts";
 import { updateGiftCardActivationFromOrders } from "./updateGiftCardActivationFromOrders";
 import { updateGiftCardAmountsFromOrders } from "./updateGiftCardAmountsFromOrders";
+import { updateGiftCardActivationFromTransactions } from "./updateGiftCardActivationFromTransactions";
 import {
   dateRangeSchema,
   transactions,
