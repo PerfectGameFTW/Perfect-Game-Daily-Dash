@@ -1298,6 +1298,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Link gift cards to payment transactions for more accurate activation amounts
+  apiRouter.get("/link-gift-card-payments", async (req, res) => {
+    try {
+      console.log("Starting gift card payment linking process...");
+      
+      // Import the linkGiftCardsToPayments function
+      const { linkGiftCardsToPayments } = await import('./fixGiftCardPaymentLink');
+      
+      // Run the function to link gift cards with their payment transactions
+      const result = await linkGiftCardsToPayments();
+      
+      // Process the result to make it safe for JSON response
+      const response = processSafeSquareData({
+        success: true,
+        message: "Gift card payment linking completed successfully",
+        result: {
+          totalCards: result.total,
+          linkedCards: result.linked,
+          exactMatches: result.exactMatches,
+          cardsWithNoChange: result.noChange,
+          errors: result.errors
+        }
+      });
+      
+      return res.json(response);
+    } catch (error) {
+      console.error("Error linking gift cards to payments:", error);
+      res.status(500).json({
+        error: "Failed to link gift cards to payments",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
   app.use("/api", apiRouter);
 
   const httpServer = createServer(app);

@@ -69,7 +69,8 @@ export async function linkGiftCardsToPayments() {
         const squareId = card.square_id;
         const currentActivationAmount = Number(card.activation_amount) || 0;
         const squareData = card.square_data;
-        const purchaseDate = new Date(card.purchase_date);
+        // Handle date safely
+        const purchaseDate = card.purchase_date ? new Date(card.purchase_date as string) : new Date();
         
         console.log(`\nProcessing gift card ${squareId}...`);
         
@@ -104,8 +105,13 @@ export async function linkGiftCardsToPayments() {
         
         // Find temporal matches
         const potentialMatches = giftCardPayments.rows.filter(payment => {
-          const paymentDate = new Date(payment.timestamp);
-          return paymentDate >= purchaseDateStart && paymentDate <= purchaseDateEnd;
+          try {
+            const paymentDate = payment.timestamp ? new Date(payment.timestamp as string) : new Date();
+            return paymentDate >= purchaseDateStart && paymentDate <= purchaseDateEnd;
+          } catch (e) {
+            console.warn(`Invalid timestamp for payment:`, payment.square_id);
+            return false;
+          }
         });
         
         console.log(`Found ${potentialMatches.length} potential payment matches by time range`);
