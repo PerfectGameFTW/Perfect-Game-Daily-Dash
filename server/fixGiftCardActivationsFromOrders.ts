@@ -61,12 +61,13 @@ export async function fixGiftCardActivationsFromOrders(dateRange: ExtendedDateRa
         const gan = card.gan || '';
         const currentActivationAmount = Number(card.activation_amount) || 0;
         
-        // Skip cards that already have a valid activation amount
-        if (currentActivationAmount > 0) {
-          console.log(`Card ${squareId} already has valid activation amount: $${currentActivationAmount.toFixed(2)}`);
-          noChangeCount++;
-          continue;
-        }
+        // Process all cards because the activation_amount is likely incorrect
+    // This allows us to fix all cards, not just those with 0 activation_amount
+    if (currentActivationAmount === 25) {
+      console.log(`Card ${squareId} has default $25 activation amount, which needs to be fixed`);
+    } else if (currentActivationAmount > 0) {
+      console.log(`Card ${squareId} has activation amount: $${currentActivationAmount.toFixed(2)}, will check if accurate`);
+    }
         
         // Find matching activation by GAN or other identifiers
         const matchingActivation = findMatchingActivation(giftCardActivations, card);
@@ -273,8 +274,6 @@ async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: 
               (item.name && item.name.toLowerCase().includes("gift card")) ||
               (item.catalogObjectId && item.catalogObjectId.startsWith("gift_card")) ||
               (item.variationName && item.variationName.toLowerCase().includes("gift card"))
-            );
-              (item.variationName && item.variationName.toLowerCase().includes('gift card'))
             );
             
             // Extract activation details for each gift card in this order
