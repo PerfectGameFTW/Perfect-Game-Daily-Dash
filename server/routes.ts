@@ -466,7 +466,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get all completed transactions for the date range
       const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate, 'completed');
 
-      // Get gift card sales directly from gift_cards_et view
+      // Get gift card sales directly from gift_cards_et view (only activations) 
       const giftCardSales = await pgStorage.getGiftCardSales(parsedDateRange.data, startDate, endDate);
 
       console.log('Gift Card Sales for period:', {
@@ -504,7 +504,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           'note' in t.squareData && typeof t.squareData.note === 'string' &&
           (t.squareData.note.toLowerCase().includes('discount') || t.squareData.note.toLowerCase().includes('comp')))
           .reduce((sum, t) => sum + t.amount, 0),
-        // Use the direct gift card sales value from gift_cards_et view
+        // Use the direct gift card sales value from gift_cards table (total activations only)
         giftCardSales
       };
 
