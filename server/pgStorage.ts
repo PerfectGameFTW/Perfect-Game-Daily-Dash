@@ -322,45 +322,43 @@ class PgStorage implements IStorage {
 
     console.log('Getting gift card sales for range:', { startStr, endStr });
 
-    // For all dates, use the activation amount (current balance + redeemed amount)
-    // This ensures we're always showing the full amount activated, not just current balance
-    // For March 4, 2025, this will correctly return $2,261.00 instead of $2,046.50
-    
-    // First, check if we have specific redemption data for this date range
-    // by adding a manual adjustment for dates we know have missing redemption data
-    
-    // Store known adjustments for days with missing redemption data
-    const knownRedemptionAdjustments: Record<string, number> = {
-      '2025-03-04': 214.50, // $214.50 of redemptions missing from the database
-    };
-    
-    // Check if the current date range is single-day and has a known adjustment
-    const isSingleDayWithAdjustment = 
-      startStr === endStr && knownRedemptionAdjustments[startStr];
-    
-    // Get the base calculation from the database (current balance + recorded redemptions)
+    // Calculate gift card activation amount (total sales) from the database using both
+    // the current balance and all redemptions
+    // This query joins gift_cards with gift_card_redemptions to get the total activation amount
     const result = await db.execute(sql`
-      WITH gift_cards_et AS (
-        SELECT *, purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
+      WITH 
+      -- Get gift cards in Eastern Time
+      gift_cards_et AS (
+        SELECT 
+          id,
+          amount,
+          redeemed_amount,
+          purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
         FROM gift_cards
+      ),
+      -- Get all redemptions by gift card
+      all_redemptions AS (
+        SELECT
+          gift_card_id,
+          COALESCE(SUM(amount), 0) as total_redemptions
+        FROM gift_card_redemptions
+        GROUP BY gift_card_id
       )
-      SELECT COALESCE(SUM(amount + redeemed_amount), 0) as total_sales
-      FROM gift_cards_et
-      WHERE DATE(purchase_date_et) >= ${startStr}::date
-        AND DATE(purchase_date_et) <= ${endStr}::date
+      -- Calculate total activation amount as current balance + all redemptions
+      SELECT 
+        COALESCE(SUM(gc.amount + COALESCE(r.total_redemptions, 0)), 0) as total_activation
+      FROM 
+        gift_cards_et gc
+      LEFT JOIN
+        all_redemptions r ON gc.id = r.gift_card_id
+      WHERE 
+        DATE(gc.purchase_date_et) >= ${startStr}::date
+        AND DATE(gc.purchase_date_et) <= ${endStr}::date
     `);
 
-    // Get the base total from database
-    let totalSales = Number(result.rows[0]?.total_sales) || 0;
+    const totalSales = Number(result.rows[0]?.total_activation) || 0;
     
-    // Apply adjustment if needed
-    if (isSingleDayWithAdjustment) {
-      const adjustment = knownRedemptionAdjustments[startStr];
-      console.log(`Adding known redemption adjustment of $${adjustment} for ${startStr}`);
-      totalSales += adjustment;
-    }
-    
-    console.log('Gift card sales calculated:', totalSales);
+    console.log('Gift card sales calculated from database:', totalSales);
     return totalSales;
   }
 }
