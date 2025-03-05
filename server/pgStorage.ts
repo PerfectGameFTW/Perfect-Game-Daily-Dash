@@ -219,7 +219,13 @@ class PgStorage implements IStorage {
     const startStr = formatEasternDate(start);
     const endStr = formatEasternDate(end);
     
-    console.log('Getting gift card summary for range:', { startStr, endStr });
+    console.log('Getting gift card summary for date range:', { 
+      dateRange,
+      startStr, 
+      endStr,
+      startDate: startDate?.toISOString(),
+      endDate: endDate?.toISOString()
+    });
     
     // Query to get gift cards sold in the date range using Eastern Time
     const soldResult = await db.execute(sql`
@@ -260,11 +266,13 @@ class PgStorage implements IStorage {
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
     
     console.log('Gift card summary calculated from database:', {
+      dateRange,
       soldCount,
       soldAmount,
       redeemedCount,
       redeemedAmount,
-      averageValue
+      averageValue,
+      dateRangeStr: `${startStr} to ${endStr}`
     });
     
     return {
@@ -369,18 +377,22 @@ class PgStorage implements IStorage {
 
   async getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<number> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    const startStr = formatInTimeZone(start, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
-    const endStr = formatInTimeZone(end, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+    
+    // Format dates as simple date strings (YYYY-MM-DD) for DATE comparison
+    // This is more reliable than using timestamp precision for daily boundaries
+    const startDateStr = formatEasternDate(start);
+    const endDateStr = formatEasternDate(end);
 
-    console.log('Getting gift card sales for range (with timestamp precision):', { 
-      startStr, 
-      endStr,
-      startDate: start.toISOString(),
-      endDate: end.toISOString()
+    console.log('Getting gift card sales for date range:', { 
+      dateRange,
+      startDateStr, 
+      endDateStr,
+      startDate: startDate?.toISOString(),
+      endDate: endDate?.toISOString()
     });
 
-    // Use the gift_cards_et view which already has the Eastern Time purchase_date_et field
-    // Use TIMESTAMP comparisons instead of DATE to properly handle timezone boundaries
+    // Use the gift_cards_et view with date_et field for proper timezone alignment
+    // Use DATE comparisons which align perfectly with the business day in Eastern Time
     const result = await db.execute(sql`
       SELECT 
         -- Use activationamount if available, fall back to (amount + redeemedamount) for legacy data
@@ -394,17 +406,18 @@ class PgStorage implements IStorage {
       FROM 
         gift_cards_et
       WHERE 
-        date_et >= ${startStr}::date
-        AND date_et <= ${endStr}::date
+        date_et >= ${startDateStr}::date
+        AND date_et <= ${endDateStr}::date
     `);
 
     const totalSales = Number(result.rows[0]?.total_activation) || 0;
     const cardCount = Number(result.rows[0]?.card_count) || 0;
     
-    console.log('Gift card sales (activations only) calculated from database:', {
+    console.log('Gift card sales calculated from database:', {
+      dateRange,
       totalSales,
       cardCount,
-      timeRange: `${startStr} to ${endStr}`
+      dateRangeStr: `${startDateStr} to ${endDateStr}`
     });
     return totalSales;
   }
