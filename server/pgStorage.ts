@@ -227,9 +227,9 @@ class PgStorage implements IStorage {
       const startStr = formatEasternDate(start);
       const endStr = formatEasternDate(end);
       
-      console.log('Retrieving gift card summary from database ET views');
+      console.log('Retrieving gift card summary with proper timezone conversion');
       
-      // PRIMARY SOURCE: Get gift card activations from database using the existing ET view
+      // PRIMARY SOURCE: Get gift card activations from database with proper timezone handling
       // This query specifically gets the original activation amounts (current balance + already redeemed)
       const salesResult = await db.execute(sql`
         SELECT 
@@ -237,20 +237,54 @@ class PgStorage implements IStorage {
           COALESCE(SUM(amount + redeemed_amount), 0) as sold_amount
         FROM gift_cards
         WHERE 
-          DATE(purchase_date) >= ${startStr}::date
-          AND DATE(purchase_date) <= ${endStr}::date
+          DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') >= ${startStr}::date
+          AND DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') <= ${endStr}::date
       `);
       
-      // Get redemptions from database using the existing ET view
+      // Get redemptions from database using proper timezone conversion
       const redemptionResult = await db.execute(sql`
         SELECT 
           COUNT(id) as redeemed_count,
           COALESCE(SUM(amount), 0) as redeemed_amount
         FROM gift_card_redemptions
         WHERE 
-          DATE(redeemed_at) >= ${startStr}::date
-          AND DATE(redeemed_at) <= ${endStr}::date
+          DATE(redeemed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') >= ${startStr}::date
+          AND DATE(redeemed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') <= ${endStr}::date
       `);
+      
+      // Get detailed gift card information for debugging
+      const detailedResult = await db.execute(sql`
+        SELECT 
+          id,
+          gan,
+          squareId,
+          amount,
+          redeemed_amount,
+          purchase_date,
+          purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York' as purchase_date_et
+        FROM 
+          gift_cards
+        WHERE 
+          DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') >= ${startStr}::date
+          AND DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') <= ${endStr}::date
+        ORDER BY 
+          purchase_date ASC
+      `);
+      
+      console.log(`===== GIFT CARD SUMMARY DETAILS FOR ${startStr} to ${endStr} (ET) =====`);
+      console.log(`Found ${detailedResult.rows.length} gift cards in this date range`);
+      
+      for (const card of detailedResult.rows.slice(0, 5)) { // Show first 5 for brevity
+        console.log(`Card: ${card.gan}, SquareID: ${card.squareId}`);
+        console.log(`  Current Amount: $${Number(card.amount).toFixed(2)}, Redeemed: $${Number(card.redeemed_amount).toFixed(2)}`);
+        console.log(`  Purchase Date UTC: ${new Date(card.purchase_date).toISOString()}`);
+        console.log(`  Purchase Date ET: ${new Date(card.purchase_date_et).toISOString()}`);
+      }
+      
+      if (detailedResult.rows.length > 5) {
+        console.log(`... and ${detailedResult.rows.length - 5} more cards`);
+      }
+      console.log(`=======================================================`);
       
       // Parse the results with proper type casting
       const soldCount = parseInt(String(salesResult.rows[0]?.sold_count ?? 0)) || 0;
@@ -289,7 +323,7 @@ class PgStorage implements IStorage {
       }
       
       // Log the database results we're returning
-      console.log('Gift Card Summary Results from Database:', {
+      console.log('Gift Card Summary Results from Database (with ET conversion):', {
         dateRange,
         startDate: startStr,
         endDate: endStr,
@@ -449,23 +483,23 @@ class PgStorage implements IStorage {
     const endStr = formatEasternDate(end);
     
     try {
-      // PRIMARY SOURCE: Query the database using ET views
-      // This implements a database-first approach
-      console.log('Retrieving gift card sales from database ET views');
+      // We need to convert UTC timestamps to Eastern Time in the database query
+      // The purchase_date field is stored in UTC but needs to be interpreted in ET
+      console.log('Retrieving gift card sales with proper timezone conversion');
       
-      // First, get a count of gift cards for this date range to debug
+      // First, get a count of gift cards for this date range using proper timezone conversion
       const countResult = await db.execute(sql`
         SELECT 
           COUNT(*) as card_count
         FROM 
           gift_cards
         WHERE 
-          DATE(purchase_date) >= ${startStr}::date
-          AND DATE(purchase_date) <= ${endStr}::date
+          DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') >= ${startStr}::date
+          AND DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') <= ${endStr}::date
       `);
       
       const cardCount = Number(countResult.rows[0]?.card_count) || 0;
-      console.log(`Found ${cardCount} gift cards in date range ${startStr} to ${endStr}`);
+      console.log(`Found ${cardCount} gift cards in date range ${startStr} to ${endStr} (with proper ET conversion)`);
       
       // Get detailed information about each card in this date range
       const detailedResult = await db.execute(sql`
@@ -476,18 +510,19 @@ class PgStorage implements IStorage {
           amount,
           redeemed_amount,
           amount + redeemed_amount as original_value,
-          purchase_date
+          purchase_date,
+          purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York' as purchase_date_et
         FROM 
           gift_cards
         WHERE 
-          DATE(purchase_date) >= ${startStr}::date
-          AND DATE(purchase_date) <= ${endStr}::date
+          DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') >= ${startStr}::date
+          AND DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') <= ${endStr}::date
         ORDER BY 
           purchase_date ASC
       `);
       
       // Log each card's details for debugging
-      console.log(`===== GIFT CARD DETAILS FOR ${startStr} to ${endStr} =====`);
+      console.log(`===== GIFT CARD DETAILS FOR ${startStr} to ${endStr} (ET) =====`);
       let totalOriginalValue = 0;
       for (const card of detailedResult.rows) {
         const originalValue = Number(card.original_value) || 0;
@@ -497,13 +532,14 @@ class PgStorage implements IStorage {
         console.log(`  Current Amount: $${Number(card.amount).toFixed(2)}`);
         console.log(`  Redeemed Amount: $${Number(card.redeemed_amount).toFixed(2)}`);
         console.log(`  Original Value: $${originalValue.toFixed(2)}`);
-        console.log(`  Purchase Date: ${new Date(card.purchase_date).toISOString()}`);
+        console.log(`  Purchase Date UTC: ${new Date(card.purchase_date).toISOString()}`);
+        console.log(`  Purchase Date ET: ${new Date(card.purchase_date_et).toISOString()}`);
         console.log(`--------------------`);
       }
       console.log(`Total Original Value: $${totalOriginalValue.toFixed(2)}`);
       console.log(`======================================================`);
       
-      // Now get the actual sum as we did before
+      // Now get the actual sum with proper timezone conversion
       const result = await db.execute(sql`
         SELECT 
           -- Calculate total activation amount (original value)
@@ -523,13 +559,13 @@ class PgStorage implements IStorage {
         FROM 
           gift_cards
         WHERE 
-          DATE(purchase_date) >= ${startStr}::date
-          AND DATE(purchase_date) <= ${endStr}::date
+          DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') >= ${startStr}::date
+          AND DATE(purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') <= ${endStr}::date
       `);
 
       const totalSales = Number(result.rows[0]?.total_activation) || 0;
       
-      console.log('Gift card sales calculated from database:', totalSales);
+      console.log('Gift card sales calculated from database (with ET conversion):', totalSales);
       
       // For recent time periods (today, yesterday) with no data, try Square API as fallback
       if ((dateRange === 'today' || dateRange === 'yesterday') && totalSales === 0) {
