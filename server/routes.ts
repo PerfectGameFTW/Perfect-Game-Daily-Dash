@@ -799,53 +799,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Add test endpoint after the fix-gift-cards endpoint
   apiRouter.get("/test-redemption", async (req, res) => {
     try {
-      console.log("Testing gift card redemption processing...");
+      console.log("Creating test gift card redemption...");
 
-      // Create a test payment that simulates a gift card redemption
-      const testPayment = {
-        id: 'test_payment_' + Date.now(),
-        sourceType: 'GIFT_CARD',
-        amountMoney: {
-          amount: 2500, // $25.00
-          currency: 'USD'
-        },
-        status: 'COMPLETED',
-        createdAt: new Date().toISOString(),
-        orderId: 'test_order_' + Date.now(),
-        sourceId: null // We'll set this to a real gift card ID
+      // Create a sample gift card (for testing only)
+      const sampleGiftCard = {
+        squareId: "gftc:test-gift-card-id",
+        gan: "1234567890",
+        amount: 50.0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        status: 'ACTIVE'
       };
 
-      // Get a real gift card from our database to use in the test
-      const sampleGiftCard = await db.query.giftCards.findFirst({
-        where: eq(giftCards.amount, gt(0))
-      });
+      // Create sample payment with gift card redemption details
+      const samplePayment = {
+        id: "test-payment-id",
+        orderId: "test-order-id",
+        amountMoney: { amount: 2500, currency: "USD" },
+        status: "COMPLETED",
+        sourceType: "CARD",
+        cardDetails: {
+          card: {
+            cardBrand: "GIFT_CARD",
+            id: sampleGiftCard.squareId
+          },
+          entryMethod: "MANUAL",
+          status: "CAPTURED",
+        },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        note: "Test gift card redemption"
+      };
 
-      if (!sampleGiftCard) {
-        return res.status(404).json({ error: "No gift cards found for testing" });
-      }
+      // Check if the payment is a gift card redemption
+      const isGiftCardRedemption = squareClient.isGiftCardRedemption(samplePayment);
 
-      // Set the source ID to the real gift card's Square ID
-      testPayment.sourceId = sampleGiftCard.squareId;
+      if (isGiftCardRedemption) {
+        console.log("Test payment is a gift card redemption");
 
-      console.log("Using gift card for test:", {
-        squareId: sampleGiftCard.squareId,
-        amount: sampleGiftCard.amount,
-        redeemedAmount: sampleGiftCard.redeemedAmount
-      });
+        // Convert the payment to a transaction for storage
+        const transaction = squareClient.convertSquarePaymentToTransaction(samplePayment);
 
-      // Process the test payment through our regular flow
-      const isRedemption = squareClient.isGiftCardRedemption(testPayment);
-      console.log("Redemption detection result:", {
-        isRedemption,
-        testPayment
-      });
-
-      if (isRedemption) {
-        // Convert the payment to our transaction model
-        const transaction = squareClient.convertSquarePaymentToTransaction(testPayment);
-        console.log("Converted transaction:", transaction);
-
-        // Insert the transaction
+        // Create the transaction
         const createdTransaction = await db.insert(transactions)
           .values(transaction)
           .returning()
@@ -853,33 +848,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         console.log("Created transaction:", createdTransaction);
 
-        // Create the redemption record
+        // Create a gift card redemption record
         const redemption = {
-          giftCardId: sampleGiftCard.id,
-          amount: Number(testPayment.amountMoney.amount) / 100,
+          giftCardId: sampleGiftCard.squareId,
           transactionId: createdTransaction.id,
-          timestamp: new Date()
+          amount: transaction.amount,
+          timestamp: new Date(),
+          status: 'completed',
+          squarePaymentId: samplePayment.id
         };
-
-        console.log("Creating redemption record:", redemption);
 
         const createdRedemption = await db.insert(giftCardRedemptions)
           .values(redemption)
           .returning()
           .then(res => res[0]);
 
-        console.log("Created redemption record:", createdRedemption);
+        console.log("Created gift card redemption:", createdRedemption);
 
-        // Update the gift card's redeemed amount
+        // Update the gift card amount
         const updatedGiftCard = await db.update(giftCards)
           .set({
-            redeemedAmount: sql`COALESCE(${giftCards.redeemedAmount}, 0) + ${redemption.amount}`
+            amount: sampleGiftCard.amount - transaction.amount,
+            updatedAt: new Date()
           })
-          .where(eq(giftCards.id, sampleGiftCard.id))
+          .where(eq(giftCards.squareId, sampleGiftCard.squareId))
           .returning()
-          .then(res => res[0]);
-
-        console.log("Updated giftcard:", updatedGiftCard);
+          .then(res => res[0]);console.log("Updated giftcard:", updatedGiftCard);
 
         res.json({
           success: true,
@@ -907,10 +901,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Add sync status endpoint right before the sync endpoint
+  apiRouter.get("/sync-status", async (req, res) => {
+    try {
+      // Get the current sync state
+      const paymentsSyncState = await db.query.syncState.findFirst({
+        where: eq(syncState.syncType, 'payments')
+      });
+
+      if (!paymentsSyncState) {
+        return res.json({
+          status: 'none',
+          message: 'No sync has been attempted yet'
+        });
+      }
+
+      // Calculate elapsed time if sync is running
+      let elapsedTime = null;
+      if (paymentsSyncState.status === 'running' && paymentsSyncState.lastSyncedAt) {
+        const elapsedMs = Date.now() - paymentsSyncState.lastSyncedAt.getTime();
+        elapsedTime = {
+          ms: elapsedMs,
+          seconds: Math.floor(elapsedMs / 1000),
+          minutes: Math.floor(elapsedMs / (1000 * 60))
+        };
+      }
+
+      // Check if sync is likely stuck (running for more than 5 minutes)
+      const isLikelyStuck = paymentsSyncState.status === 'running' &&
+                           paymentsSyncState.lastSyncedAt &&
+                           (Date.now() - paymentsSyncState.lastSyncedAt.getTime() > 5 * 60 * 1000);
+
+      res.json({
+        syncState: paymentsSyncState,
+        elapsedTime,
+        isLikelyStuck
+      });
+    } catch (error) {
+      console.error("Error getting sync status:", error);
+      res.status(500).json({
+        error: "Failed to get sync status",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
+  // Add reset sync endpoint
+  apiRouter.post("/reset-sync", async (req, res) => {
+    try {
+      // Update sync state to reset it
+      await db.update(syncState)
+        .set({
+          status: 'reset',
+          lastSyncedAt: new Date(),
+          isComplete: true,
+          errorMessage: 'Reset by user'
+        })
+        .where(eq(syncState.syncType, 'payments'));
+
+      res.json({
+        success: true,
+        message: 'Sync state has been reset'
+      });
+    } catch (error) {
+      console.error("Error resetting sync state:", error);
+      res.status(500).json({
+        error: "Failed to reset sync state",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
   // Update sync endpoint to use db directly for sync operations
   apiRouter.post("/sync", async (req, res) => {
     try {
       console.log("Starting sync process...");
+
+      // Allow force sync option
+      const forceSync = req.query.force === 'true';
 
       // Check Square API connection first
       try {
@@ -932,11 +1000,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         )
       });
 
-      if (existingSyncState) {
+      if (existingSyncState && !forceSync) {
+        // Check if sync is likely stuck (running for more than 5 minutes)
+        const isLikelyStuck = existingSyncState.lastSyncedAt &&
+                             (Date.now() - existingSyncState.lastSyncedAt.getTime() > 5 * 60 * 1000);
+
         console.log('Sync already in progress:', existingSyncState);
         return res.status(409).json({
           error: 'Sync already in progress',
-          lastSyncTime: existingSyncState.lastSyncedAt?.toISOString()
+          lastSyncTime: existingSyncState.lastSyncedAt?.toISOString(),
+          isLikelyStuck,
+          message: isLikelyStuck ? 'The previous sync may be stuck. You can force a new sync with ?force=true' : undefined
         });
       }
 
@@ -955,6 +1029,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Insert sync state
       const syncStateResult = await db.insert(syncState)
         .values(newSyncState)
+        .onConflictDoUpdate({
+          target: [syncState.syncType],
+          set: newSyncState
+        })
         .returning();
 
       console.log("Created sync state:", syncStateResult[0]);
@@ -962,7 +1040,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Calculate sync window
       const endDate = new Date();
       const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 90); // Sync last 90 days by default
+      startDate.setDate(startDate.getDate() - 30); // Reduced to 30 days for faster sync
 
       console.log(`Fetching payments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
@@ -987,6 +1065,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let errorCount = 0;
       const errors = [];
 
+      // Update sync state with progress info
+      await db.update(syncState)
+        .set({
+          totalCount: payments.length,
+          status: 'processing',
+          lastSyncedAt: new Date()
+        })
+        .where(eq(syncState.id, syncStateResult[0].id));
+
       for (const payment of payments) {
         try {
           const transaction = squareClient.convertSquarePaymentToTransaction(payment);
@@ -994,6 +1081,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .values(transaction)
             .onConflictDoNothing();
           processedCount++;
+
+          // Update progress every 10 transactions
+          if (processedCount % 10 === 0) {
+            await db.update(syncState)
+              .set({
+                processedCount,
+                lastSyncedAt: new Date()
+              })
+              .where(eq(syncState.id, syncStateResult[0].id));
+          }
         } catch (error) {
           errorCount++;
           console.error(`Error processing payment ${payment.id}:`, error);
@@ -1052,174 +1149,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Add Order-related routes after existing routes
-  apiRouter.get("/order-summary", async (req, res) => {
-    try {
-      // Parse date range from query (default to today if not provided)
-      const dateRange = req.query.dateRange as string || "today";
-
-      // Validate date range
-      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
-      if (!parsedDateRange.success) {
-        return res.status(400).json({ error: "Invalid date range" });
-      }
-
-      // Parse custom date range if provided
-      let startDate: Date | undefined;
-      let endDate: Date | undefined;
-
-      if (req.query.startDate && req.query.endDate) {
-        try {
-          const startDateStr = req.query.startDate as string;
-          const endDateStr = req.query.endDate as string;
-
-          startDate = startDateStr.includes('T') ? new Date(startDateStr) :
-            parse(startDateStr, "yyyy-MM-dd", new Date());
-          endDate = endDateStr.includes('T') ? new Date(endDateStr) :
-            parse(endDateStr, "yyyy-MM-dd", new Date());
-
-        } catch (err) {
-          console.error('Error parsing order summary dates:', err);
-          return res.status(400).json({ error: "Invalid date format" });
-        }
-      }
-
-      const orderSummary = await pgStorage.getOrderSummary(parsedDateRange.data, startDate, endDate);
-      res.json(orderSummary);
-    } catch (error) {
-      console.error("Error getting order summary:", error);
-      const errorResponse = toErrorResponse(error);
-      res.status(500).json(errorResponse);
-    }
-  });
-
-  // Get detailed order information
-  apiRouter.get("/orders/:orderId", async (req, res) => {
-    try {
-      const orderId = parseInt(req.params.orderId);
-      if (isNaN(orderId)) {
-        return res.status(400).json({ error: "Invalid order ID" });
-      }
-
-      try {
-        // Get order details
-        const order = await pgStorage.getOrder(orderId);
-
-        // Get line items with modifiers
-        const lineItems = await pgStorage.getOrderItems(orderId);
-        const lineItemsWithModifiers = await Promise.all(
-          lineItems.map(async (item) => {
-            const modifiers = await pgStorage.getOrderModifiers(item.id);
-            return { ...item, modifiers };
-          })
-        );
-
-        // Get discounts
-        const discounts = await pgStorage.getOrderDiscounts(orderId);
-
-        res.json({
-          order,
-          lineItems: lineItemsWithModifiers,
-          discounts
-        });
-      } catch (error) {
-        if (error instanceof OrderNotFoundError) {
-          return res.status(404).json(toErrorResponse(error));
-        }
-        throw error;
-      }
-    } catch (error) {
-      console.error("Error getting order details:", error);
-      const errorResponse = toErrorResponse(error);
-      res.status(500).json(errorResponse);
-    }
-  });
-
-  // Sync orders with Square
-  apiRouter.post("/sync/orders", async (req, res) => {
-    try {
-      let startDate: Date | undefined;
-      let endDate: Date | undefined;
-
-      if (req.body.startDate || req.body.endDate) {
-        try {
-          if (req.body.startDate) {
-            startDate = new Date(req.body.startDate);
-            if (isNaN(startDate.getTime())) {
-              throw new Error('Invalid start date');
-            }
-          }
-          if (req.body.endDate) {
-            endDate = new Date(req.body.endDate);
-            if (isNaN(endDate.getTime())) {
-              throw new Error('Invalid end date');
-            }
-          }
-        } catch (err) {
-          return res.status(400).json({ error: "Invalid date format in request" });
-        }
-      }
-
-      await squareClient.syncOrders(pgStorage, startDate, endDate);
-      res.json({ success: true, message: "Order sync initiated successfully" });
-    } catch (error) {
-      console.error("Error syncing orders:", error);
-      const errorResponse = toErrorResponse(error);
-      res.status(500).json(errorResponse);
-    }
-  });
-
-  // Get orders by date range
-  apiRouter.get("/orders", async (req, res) => {
-    try {
-      const dateRange = req.query.dateRange as string || "today";
-      const parsedDateRange = dateRangeSchema.safeParse(dateRange);
-      if (!parsedDateRange.success) {
-        return res.status(400).json({ error: "Invalid date range" });
-      }
-
-      let startDate: Date | undefined;
-      let endDate: Date | undefined;
-
-      if (req.query.startDate && req.query.endDate) {
-        try {
-          const startDateStr = req.query.startDate as string;
-          const endDateStr = req.query.endDate as string;
-
-          startDate = startDateStr.includes('T') ? new Date(startDateStr) :
-            parse(startDateStr, "yyyy-MM-dd", new Date());
-          endDate = endDateStr.includes('T') ? new Date(endDateStr) :
-            parse(endDateStr, "yyyy-MM-dd", new Date());
-
-          if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-            throw new Error('Invalid date');
-          }
-        } catch (err) {
-          console.error('Error parsing order dates:', err);
-          return res.status(400).json({ error: "Invalid date format" });
-        }
-      }
-
-      try {
-        const orders = await squareClient.fetchOrders(startDate, endDate);
-        res.json(orders);
-      } catch (error) {
-        if (error instanceof OrderError) {
-          return res.status(400).json(toErrorResponse(error));
-        }
-        throw error;
-      }
-    } catch (error) {
-      console.error("Error getting orders:", error);
-      const errorResponse = toErrorResponse(error);
-      res.status(500).json(errorResponse);
-    }
-  });
-
-  // Mount the API router
   app.use("/api", apiRouter);
 
-  // Create and return HTTP server
   const httpServer = createServer(app);
   return httpServer;
 }
