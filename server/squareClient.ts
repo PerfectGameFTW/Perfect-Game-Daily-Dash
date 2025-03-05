@@ -148,47 +148,46 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
           sortOrder: 'DESC'
         }
       },
-      limit: 100  // Reduced for testing
+      // Increase limit to fetch more orders at once
+      limit: 200
     };
     
     console.log('Orders search request:', JSON.stringify(searchRequest, null, 2));
 
-    // Make API request to Square Orders API using our explicit instance
+    // Make API request to Square Orders API
     try {
       const response = await ordersApi.searchOrders(searchRequest);
       console.log('Square Orders API response status:', response.statusCode);
       
-      if (response.result && response.result.orders) {
+      if (response.result && response.result.orders && Array.isArray(response.result.orders)) {
         console.log(`Found ${response.result.orders.length} orders from Square API`);
         
         // Additional logging of first order for debugging
         if (response.result.orders.length > 0) {
           const firstOrder = response.result.orders[0];
-          console.log('Sample order data:', {
-            id: firstOrder.id,
-            state: firstOrder.state,
-            createdAt: firstOrder.createdAt,
+          console.log('Sample order data structure:', JSON.stringify({
+            id: firstOrder.id || 'missing',
+            state: firstOrder.state || 'missing',
+            createdAt: firstOrder.createdAt || 'missing',
             lineItemCount: firstOrder.lineItems?.length || 0
-          });
+          }, null, 2));
         }
         
-        // Convert Square orders to our schema format
-        const processedOrders = response.result.orders.map(order => ({
-          squareId: order.id,
-          status: order.state,
-          totalMoney: order.totalMoney ? Number(order.totalMoney.amount) / 100 : 0,
-          totalTax: order.totalTaxMoney ? Number(order.totalTaxMoney.amount) / 100 : 0,
-          totalDiscount: order.totalDiscountMoney ? Number(order.totalDiscountMoney.amount) / 100 : 0,
-          createdAt: new Date(order.createdAt || new Date()),
-          closedAt: order.closedAt ? new Date(order.closedAt) : null,
-          source: order.source?.name || 'unknown',
-          squareData: processSafeSquareData(order)
-        }));
-
-        console.log(`Processed ${processedOrders.length} orders from Square API`);
-        return processedOrders;
+        // Filter out any potentially invalid orders and convert to our schema format
+        const validOrders = response.result.orders.filter(order => {
+          if (!order || !order.id) {
+            console.warn('Skipping order with missing ID');
+            return false;
+          }
+          return true;
+        });
+        
+        console.log(`Found ${validOrders.length} valid orders out of ${response.result.orders.length} total`);
+        
+        // Return the raw valid orders for processing
+        return validOrders;
       } else {
-        console.warn('No orders found in Square API response:', response.result);
+        console.warn('No orders found in Square API response:', JSON.stringify(response.result, null, 2));
         return [];
       }
     } catch (apiError) {
@@ -212,26 +211,70 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
 
 // Add a new function to convert Square order to our format
 export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
-  const safeOrder = processSafeSquareData(squareOrder);
-  
-  // Ensure all required fields are present and handle nulls properly
-  if (!safeOrder.id) {
-    console.error("Square order missing required field: id");
-    throw new Error("Invalid Square order data: missing id");
+  try {
+    // Create a safe copy of the order data
+    const safeOrder = processSafeSquareData(squareOrder);
+    
+    // Enhanced validation with detailed logging
+    if (!safeOrder || typeof safeOrder !== 'object') {
+      console.error("Invalid Square order data: not an object", {
+        type: typeof squareOrder,
+        value: squareOrder
+      });
+      throw new Error("Invalid Square order data: not an object");
+    }
+    
+    // Ensure all required fields are present
+    if (!safeOrder.id) {
+      console.error("Square order missing required field: id", {
+        orderData: JSON.stringify(safeOrder).substring(0, 500) // Log a portion of the data for debugging
+      });
+      throw new Error("Invalid Square order data: missing id");
+    }
+    
+    // Check for gift card items in the order
+    let hasGiftCardItems = false;
+    if (safeOrder.lineItems && Array.isArray(safeOrder.lineItems)) {
+      const giftCardItems = safeOrder.lineItems.filter((item: any) => 
+        item.itemType === 'GIFT_CARD' || 
+        (item.name && typeof item.name === 'string' && item.name.toLowerCase().includes('gift card'))
+      );
+      
+      if (giftCardItems.length > 0) {
+        console.log(`Found gift card purchase in order ${safeOrder.id}`);
+        hasGiftCardItems = true;
+        
+        // Log the gift card items for verification
+        giftCardItems.forEach((item: any, index: number) => {
+          console.log(`Gift card item ${index + 1}:`, {
+            name: item.name,
+            quantity: item.quantity,
+            totalMoney: item.totalMoney ? Number(item.totalMoney.amount) / 100 : 0
+          });
+        });
+      }
+    }
+    
+    // Create order object with safe defaults for all fields
+    return {
+      squareId: safeOrder.id,
+      status: safeOrder.state || "COMPLETED", // Default to COMPLETED if no state provided
+      totalMoney: safeOrder.totalMoney ? Number(safeOrder.totalMoney.amount) / 100 : 0,
+      totalTax: safeOrder.totalTaxMoney ? Number(safeOrder.totalTaxMoney.amount) / 100 : 0,
+      totalDiscount: safeOrder.totalDiscountMoney ? Number(safeOrder.totalDiscountMoney.amount) / 100 : 0,
+      createdAt: safeOrder.createdAt ? new Date(safeOrder.createdAt) : new Date(), // Default to current date if missing
+      closedAt: safeOrder.closedAt ? new Date(safeOrder.closedAt) : null,
+      source: safeOrder.source?.name || 'unknown',
+      // Add a marker for gift card purchases in the squareData
+      squareData: {
+        ...safeOrder,
+        hasGiftCardItems, // Flag to indicate this order contains gift card items
+      }
+    };
+  } catch (error) {
+    console.error("Error in convertSquareOrderToOrder:", error);
+    throw error;
   }
-  
-  // Ensure all required fields are set properly and provide defaults for missing values
-  return {
-    squareId: safeOrder.id,
-    status: safeOrder.state || "COMPLETED", // Default to COMPLETED if no state provided
-    totalMoney: safeOrder.totalMoney ? Number(safeOrder.totalMoney.amount) / 100 : 0,
-    totalTax: safeOrder.totalTaxMoney ? Number(safeOrder.totalTaxMoney.amount) / 100 : 0,
-    totalDiscount: safeOrder.totalDiscountMoney ? Number(safeOrder.totalDiscountMoney.amount) / 100 : 0,
-    createdAt: safeOrder.createdAt ? new Date(safeOrder.createdAt) : new Date(), // Default to current date if missing
-    closedAt: safeOrder.closedAt ? new Date(safeOrder.closedAt) : null,
-    source: safeOrder.source?.name || 'unknown',
-    squareData: safeOrder
-  };
 }
 
 // Add a function to process line items
