@@ -165,6 +165,7 @@ export const giftCards = pgTable("gift_cards", {
   squareId: text("square_id").notNull().unique(),
   amount: real("amount").notNull(),
   redeemedAmount: real("redeemed_amount").default(0).notNull(),
+  activationAmount: real("activation_amount"), // Original amount when activated
   isActive: boolean("is_active").default(true).notNull(),
   purchaseDate: timestamp("purchase_date", { withTimezone: true }).notNull(),
   squareData: jsonb("square_data"),

@@ -363,28 +363,39 @@ class PgStorage implements IStorage {
 
   async getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<number> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    const startStr = formatEasternDate(start);
-    const endStr = formatEasternDate(end);
+    const startStr = formatInTimeZone(start, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+    const endStr = formatInTimeZone(end, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
 
-    console.log('Getting gift card sales for range:', { startStr, endStr });
+    console.log('Getting gift card sales for range (with timestamp precision):', { 
+      startStr, 
+      endStr,
+      startDate: start.toISOString(),
+      endDate: end.toISOString()
+    });
 
     // Use the gift_cards_et view which already has the Eastern Time purchase_date_et field
-    // This ensures consistency with how we handle transactions
+    // Use TIMESTAMP comparisons instead of DATE to properly handle timezone boundaries
     const result = await db.execute(sql`
       SELECT 
         -- Calculate total activation amount (original value)
         -- This is always current balance + redeemed_amount (activation value)
-        COALESCE(SUM(amount + redeemed_amount), 0) as total_activation
+        COALESCE(SUM(amount + redeemed_amount), 0) as total_activation,
+        COUNT(*) as card_count
       FROM 
         gift_cards_et
       WHERE 
-        DATE(purchase_date_et) >= ${startStr}::date
-        AND DATE(purchase_date_et) <= ${endStr}::date
+        purchase_date_et >= ${start}::timestamptz
+        AND purchase_date_et <= ${end}::timestamptz
     `);
 
     const totalSales = Number(result.rows[0]?.total_activation) || 0;
+    const cardCount = Number(result.rows[0]?.card_count) || 0;
     
-    console.log('Gift card sales (activations only) calculated from database:', totalSales);
+    console.log('Gift card sales (activations only) calculated from database:', {
+      totalSales,
+      cardCount,
+      timeRange: `${startStr} to ${endStr}`
+    });
     return totalSales;
   }
 }
