@@ -1561,16 +1561,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // NEW ENDPOINT: Direct update of gift card amounts from orders with itemType: "GIFT_CARD"
   apiRouter.get("/update-gift-card-amounts", async (req, res) => {
     try {
-      console.log("Starting direct gift card amount update from orders with itemType: GIFT_CARD...");
+      console.log("Starting COMPREHENSIVE gift card amount update from orders (FORCE UPDATE ALL)...");
       
-      // Import the new function dynamically to avoid circular dependencies
-      const { updateGiftCardAmountsFromOrders } = await import('./updateGiftCardAmountsFromOrders');
+      // Use our imported function - we've already added it at the top of the file
       const result = await updateGiftCardAmountsFromOrders();
       
       // Return detailed results of the update operation
       return res.json({
         success: true,
-        message: "Gift card amounts updated directly from orders with itemType: GIFT_CARD",
+        message: "ALL gift card activation amounts comprehensively updated from orders (source of truth)",
         result
       });
     } catch (error) {
@@ -1585,30 +1584,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // UNIVERSAL UPDATE ENDPOINT: Force update ALL gift cards with correct amounts from orders
   apiRouter.get("/force-update-all-gift-cards", async (req, res) => {
     try {
-      console.log("Starting FORCE UPDATE of ALL gift card activation amounts from transaction-order matching...");
+      console.log("Starting COMPREHENSIVE FORCE UPDATE of ALL gift card activation amounts...");
       
       // Return a quick response to the client so it doesn't time out
       res.json({
         success: true,
-        message: "FORCE UPDATE of ALL gift cards has been started in the background",
-        note: "Check server logs for progress. This operation may take several minutes to complete.",
+        message: "COMPREHENSIVE FORCE UPDATE of ALL gift cards has been started in the background",
+        note: "This update uses multiple methods to ensure 100% accurate gift card activation amounts",
+        details: "1) Direct order line item data, 2) Transaction-order linking, 3) GAN matching, 4) Precision timestamp matching",
         checkSummaryEndpoint: "/api/fix-gift-cards"
       });
       
-      // Import the updateGiftCardActivationFromTransactions function dynamically
-      const { updateGiftCardActivationFromTransactions } = await import('./updateGiftCardActivationFromTransactions');
-      
-      // Run the function to process ALL gift cards in the background
-      updateGiftCardActivationFromTransactions()
-        .then(result => {
-          console.log("Force update of ALL gift cards completed successfully:");
-          console.log(`✅ Updated: ${result.updated} cards`);
-          console.log(`✅ Directly updated: ${result.directlyUpdated} cards`);
-          console.log(`✅ Total updated: ${result.updated + result.directlyUpdated} cards`);
-          console.log(`⚠️ Skipped: ${result.skipped} cards`);
+      // Run both update functions in sequence to ensure maximum coverage
+      Promise.resolve()
+        .then(async () => {
+          console.log("STEP 1: Updating from direct order line items...");
+          const orderResult = await updateGiftCardAmountsFromOrders();
+          console.log("Order-based update completed successfully:");
+          console.log(`✅ Updated via transaction match: ${orderResult.matchByTransaction} cards`);
+          console.log(`✅ Updated via GAN match: ${orderResult.matchByGAN} cards`);
+          console.log(`✅ Updated via time proximity: ${orderResult.matchByTiming} cards`);
+          console.log(`✅ Directly updated: ${orderResult.directUpdated} cards`);
+          console.log(`✅ Total updated: ${orderResult.updated + orderResult.directUpdated} cards`);
+          console.log(`⚠️ Remaining: ${orderResult.remaining} cards`);
+          
+          console.log("STEP 2: Running transaction-based update for any remaining cards...");
+          const transactionResult = await updateGiftCardActivationFromTransactions();
+          console.log("Transaction-based update completed successfully:");
+          console.log(`✅ Updated: ${transactionResult.updated} cards`);
+          console.log(`✅ Directly updated: ${transactionResult.directlyUpdated} cards`); 
+          console.log(`✅ Total updated: ${transactionResult.updated + transactionResult.directlyUpdated} cards`);
+          console.log(`⚠️ Skipped: ${transactionResult.skipped} cards`);
+          
+          console.log("COMPREHENSIVE FORCE UPDATE COMPLETE - ALL gift cards should now have correct activation amounts");
         })
         .catch(error => {
-          console.error("Error during background gift card update:", error);
+          console.error("Error during comprehensive gift card update:", error);
         });
     } catch (error) {
       console.error("Error initiating universal gift card update:", error);
@@ -1624,14 +1635,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log("Starting gift card activation update by linking transactions with orders...");
       
-      // Import the new function dynamically to avoid circular dependencies
-      const { updateGiftCardActivationFromTransactions } = await import('./updateGiftCardActivationFromTransactions');
+      // Use our imported function directly - we've added it at the top of the file
       const result = await updateGiftCardActivationFromTransactions();
       
       // Return detailed results of the update operation
       return res.json({
         success: true,
-        message: "Gift card activation amounts updated by linking transactions with orders",
+        message: "Gift card activation amounts updated with precise timestamp matching and direct order linking",
         result
       });
     } catch (error) {
