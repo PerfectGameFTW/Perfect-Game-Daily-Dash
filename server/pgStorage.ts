@@ -414,7 +414,8 @@ class PgStorage implements IStorage {
       endDate: endDate?.toISOString()
     });
 
-    // First, query gift_cards table for direct gift card activations
+    // Query gift_cards table using activation_amount as the source of truth
+    // This is the most accurate representation of gift card sales
     const giftCardsResult = await db.execute(sql`
       SELECT 
         SUM(activation_amount) as total_activation,
@@ -429,88 +430,17 @@ class PgStorage implements IStorage {
     const giftCardSales = Number(giftCardsResult.rows[0]?.total_activation) || 0;
     const giftCardCount = Number(giftCardsResult.rows[0]?.card_count) || 0;
     
-    // Query orders for gift card purchases using two different methods:
-    // 1. First, check for orders that have the hasGiftCardItems flag set to true
-    const orderGiftCardResult = await db.execute(sql`
-      SELECT 
-        SUM(CASE 
-          WHEN (o.square_data->'giftCardTotal') IS NOT NULL AND (o.square_data->'giftCardTotal')::text != 'null' 
-          THEN (o.square_data->'giftCardTotal')::numeric 
-          ELSE o.total_money 
-        END) as order_gift_card_total,
-        COUNT(*) as order_gift_card_count
-      FROM 
-        orders o
-      WHERE 
-        o.created_at >= ${startUTC}::timestamp
-        AND o.created_at <= ${endUTC}::timestamp
-        AND (
-          (o.square_data->'hasGiftCardItems')::text = 'true'
-          OR (o.square_data->'isGiftCardPurchase')::text = 'true'
-        )
-    `);
-    
-    // 2. As a backup, query order_line_items for individual gift card items
-    const orderLineItemsResult = await db.execute(sql`
-      SELECT 
-        SUM(oli.total_money) as order_gift_card_total,
-        COUNT(*) as order_gift_card_count
-      FROM 
-        order_line_items oli
-      JOIN
-        orders o ON oli.order_id = o.id
-      WHERE 
-        o.created_at >= ${startUTC}::timestamp
-        AND o.created_at <= ${endUTC}::timestamp
-        AND (
-          (oli.square_data->'isGiftCard')::text = 'true'
-          OR (oli.square_data->'giftCardAmount') IS NOT NULL
-          OR (oli.square_data->'itemType')::text = '"GIFT_CARD"'
-          OR LOWER(oli.name) LIKE '%gift card%'
-          OR LOWER(oli.name) LIKE '%giftcard%'
-        )
-        AND NOT (
-          (o.square_data->'hasGiftCardItems')::text = 'true'
-          OR (o.square_data->'isGiftCardPurchase')::text = 'true'
-        )
-    `);
-
-    // Extract sales from orders marked as gift card orders
-    const orderSales = Number(orderGiftCardResult.rows[0]?.order_gift_card_total) || 0;
-    const orderCount = Number(orderGiftCardResult.rows[0]?.order_gift_card_count) || 0;
-    
-    // Extract sales from line items marked as gift cards
-    const lineItemSales = Number(orderLineItemsResult.rows[0]?.order_gift_card_total) || 0;
-    const lineItemCount = Number(orderLineItemsResult.rows[0]?.order_gift_card_count) || 0;
-    
-    // Combine for order-based gift card sales
-    const orderGiftCardSales = orderSales + lineItemSales;
-    const orderGiftCardCount = orderCount + lineItemCount;
-    
-    // Combine both sources (gift card activations + order data) for total gift card sales
-    const totalSales = giftCardSales + orderGiftCardSales;
-    const totalCount = giftCardCount + orderGiftCardCount;
-    
     console.log('Gift card sales calculated from database using UTC:', {
       dateRange,
-      // Gift card activations from gift_cards table
+      // Gift card activations from gift_cards table - this is our source of truth
       giftCardSales,
       giftCardCount,
-      // Order-based gift card sales, broken down by source
-      orderSales,
-      orderCount,
-      lineItemSales,
-      lineItemCount,
-      // Combined order-based gift card sales
-      orderGiftCardSales,
-      orderGiftCardCount,
-      // Total from all sources
-      totalSales,
-      totalCount,
       dateRangeStr: `${startUTC} to ${endUTC}`
     });
     
-    return totalSales;
+    // Return just the gift card sales from activation_amount
+    // This eliminates potential double-counting issues
+    return giftCardSales;
   }
 }
 
