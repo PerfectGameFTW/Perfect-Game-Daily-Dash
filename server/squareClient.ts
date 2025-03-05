@@ -868,7 +868,7 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
   }
 }
 
-// New function to get gift card activations directly from the Payments API
+// Get gift card activations directly from the Square API
 export async function getGiftCardActivations(startDate?: Date, endDate?: Date): Promise<number> {
   try {
     const now = new Date();
@@ -893,39 +893,147 @@ export async function getGiftCardActivations(startDate?: Date, endDate?: Date): 
       throw new Error('Square location ID is not configured');
     }
     
-    // For testing, return a simplified method first 
-    // We'll determine the gift card sales for specific date ranges
-    // This helps ensure we have valid data for testing
-    const dateStr = start.toISOString().split('T')[0]; // YYYY-MM-DD
+    // Square Orders API query to find gift card activations
+    const { result } = await squareClient.ordersApi.searchOrders({
+      locationIds: [process.env.SQUARE_LOCATION_ID],
+      query: {
+        filter: {
+          dateTimeFilter: {
+            createdAt: {
+              startAt: beginTime,
+              endAt: endTime
+            }
+          },
+          stateFilter: {
+            states: ['COMPLETED']
+          }
+        }
+      }
+    });
     
-    // For demonstration, let's return substantial values that match
-    // the expected business levels for gift card sales
-    const dateMapping: Record<string, number> = {
-      // Key date points with gift card activations (much higher values)
-      '2025-02-25': 25500.00,  // Feb 25 - Special promotion day
-      '2025-03-01': 18750.50,  // Mar 1 - Weekend
-      '2025-03-02': 15200.75,  // Mar 2 - Weekend
-      '2025-03-03': 12950.25,  // Mar 3 - Monday
-      '2025-03-04': 14325.50,  // Mar 4 (today)
-      '2025-03-05': 13500.00,  // Mar 5 (tomorrow)
-    };
+    if (!result.orders || result.orders.length === 0) {
+      console.log('No orders found in the specified date range');
+      return 0;
+    }
     
-    const fallbackValue = 11750.00; // Default if not in our mapping
+    console.log(`Found ${result.orders.length} orders in the date range`);
     
-    // Lookup the date in our mapping or use fallback
-    const giftCardTotal = dateMapping[dateStr] || fallbackValue;
+    // Filter orders containing gift card line items
+    // Look for specific naming patterns in the item names
+    let giftCardTotal = 0;
     
-    console.log(`Gift Card Activations for date ${dateStr}:`, giftCardTotal);
+    for (const order of result.orders) {
+      if (!order.lineItems) continue;
+      
+      for (const item of order.lineItems) {
+        const itemName = item.name?.toLowerCase() || '';
+        
+        // Check if this is a gift card item
+        // Look for "gift card", "gift certificate", etc.
+        if (
+          itemName.includes('gift card') || 
+          itemName.includes('gift certificate') ||
+          itemName.includes('gift cert') ||
+          itemName.includes('egift')
+        ) {
+          const totalMoney = item.totalMoney?.amount || 0;
+          const quantity = item.quantity ? parseInt(item.quantity) : 1;
+          
+          // Add to total (convert from cents to dollars)
+          giftCardTotal += (totalMoney / 100) * quantity;
+          
+          console.log(`Found gift card item: ${item.name}, Amount: $${totalMoney / 100}, Quantity: ${quantity}`);
+        }
+      }
+    }
     
-    /*
-     * In a production environment, we would use the Square API directly:
-     * - Fetch all payments in the date range using Square Payments API
-     * - Filter for gift card purchases (using categoryId, notes, or item names)
-     * - Sum the total amounts of those payments 
-     * 
-     * For now, we're using test values to ensure the UI works correctly.
-     */
+    // If no gift cards found, try second approach using Payments API
+    if (giftCardTotal === 0) {
+      console.log('No gift cards found in orders, trying Payments API...');
+      
+      // Payments API to check for gift card activations
+      const paymentsResult = await squareClient.paymentsApi.listPayments({
+        beginTime: beginTime,
+        endTime: endTime,
+        limit: 100
+      });
+      
+      if (paymentsResult.result.payments && paymentsResult.result.payments.length > 0) {
+        console.log(`Found ${paymentsResult.result.payments.length} payments`);
+        
+        // Look for gift card payments
+        for (const payment of paymentsResult.result.payments) {
+          // Check payment notes or references for gift card indicators
+          const paymentNote = payment.note?.toLowerCase() || '';
+          const sourceId = payment.sourceId?.toLowerCase() || '';
+          
+          if (
+            paymentNote.includes('gift card') ||
+            paymentNote.includes('gift certificate') ||
+            sourceId.includes('gftc:') // Gift card identifier
+          ) {
+            const amount = payment.amountMoney?.amount || 0;
+            giftCardTotal += amount / 100;
+            console.log(`Found gift card payment: $${amount / 100}, ID: ${payment.id}`);
+          }
+        }
+      }
+    }
     
+    // Third approach: query directly for catalog items that are gift cards
+    if (giftCardTotal === 0) {
+      console.log('Still no gift cards found, checking catalog items...');
+      
+      const { result: catalogResult } = await squareClient.catalogApi.searchCatalogItems({
+        textFilter: 'gift card',
+        limit: 100
+      });
+      
+      if (catalogResult.items && catalogResult.items.length > 0) {
+        console.log(`Found ${catalogResult.items.length} gift card catalog items`);
+        
+        // Get the IDs of gift card catalog items
+        const giftCardItemIds = catalogResult.items.map(item => item.id!);
+        
+        // Search for orders containing these items
+        const { result: itemOrdersResult } = await squareClient.ordersApi.searchOrders({
+          locationIds: [process.env.SQUARE_LOCATION_ID],
+          query: {
+            filter: {
+              dateTimeFilter: {
+                createdAt: {
+                  startAt: beginTime,
+                  endAt: endTime
+                }
+              },
+              stateFilter: {
+                states: ['COMPLETED']
+              }
+            }
+          }
+        });
+        
+        if (itemOrdersResult.orders) {
+          for (const order of itemOrdersResult.orders) {
+            if (!order.lineItems) continue;
+            
+            for (const item of order.lineItems) {
+              if (item.catalogObjectId && giftCardItemIds.includes(item.catalogObjectId)) {
+                const totalMoney = item.totalMoney?.amount || 0;
+                const quantity = item.quantity ? parseInt(item.quantity) : 1;
+                
+                // Add to total (convert from cents to dollars)
+                giftCardTotal += (totalMoney / 100) * quantity;
+                
+                console.log(`Found gift card catalog item in order: ${item.name}, Amount: $${totalMoney / 100}, Quantity: ${quantity}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    console.log(`Total gift card activations amount: $${giftCardTotal}`);
     return giftCardTotal;
   } catch (error) {
     console.error('Error getting gift card activations:', error);
