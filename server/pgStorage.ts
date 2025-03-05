@@ -1,4 +1,248 @@
-async getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<number> {
+import { db } from './db';
+import { sql, eq, and, desc } from 'drizzle-orm';
+import { 
+  users, transactions, giftCards, giftCardRedemptions, 
+  orders, orderLineItems, orderModifiers, orderDiscounts, syncState,
+  DateRange, TransactionStatus, Order, OrderLineItem, OrderModifier, OrderDiscount,
+  InsertUser, User, InsertTransaction, Transaction,
+  InsertGiftCard, GiftCard, InsertGiftCardRedemption, GiftCardRedemption,
+  InsertOrder, InsertOrderLineItem, InsertOrderModifier, InsertOrderDiscount,
+  OrderSummary, InsertSyncState, SyncState,
+  DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary
+} from '@shared/schema';
+import { getEasternDateRange, formatEasternDate, formatHour } from './dateUtils';
+// Note: validateInsertData function needs to be implemented separately
+// We're just doing a simple validation check in createOrder for now
+import { InvalidOrderDataError, OrderNotFoundError } from './errors';
+
+// Import IStorage interface from './storage'
+import { IStorage } from './storage';
+
+class PgStorage implements IStorage {
+  // User methods
+  async getUser(id: number): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.id, id));
+    return result[0];
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.username, username));
+    return result[0];
+  }
+
+  async createUser(user: InsertUser): Promise<User> {
+    const result = await db.insert(users).values(user).returning();
+    return result[0];
+  }
+
+  // Transaction methods
+  async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status?: TransactionStatus): Promise<Transaction[]> {
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    
+    let query = db.select().from(transactions);
+    
+    query = query.where(
+      and(
+        sql`DATE(timestamp AT TIME ZONE 'America/New_York') >= ${formatEasternDate(start)}::date`,
+        sql`DATE(timestamp AT TIME ZONE 'America/New_York') <= ${formatEasternDate(end)}::date`
+      )
+    );
+    
+    if (status) {
+      query = query.where(eq(transactions.status, status));
+    }
+    
+    query = query.orderBy(desc(transactions.timestamp));
+    
+    return await query;
+  }
+
+  async getTransactionById(id: number): Promise<Transaction | undefined> {
+    const result = await db.select().from(transactions).where(eq(transactions.id, id));
+    return result[0];
+  }
+
+  async getTransactionBySquareId(squareId: string): Promise<Transaction | undefined> {
+    const result = await db.select().from(transactions).where(eq(transactions.squareId, squareId));
+    return result[0];
+  }
+
+  async createTransaction(transaction: InsertTransaction): Promise<Transaction> {
+    const result = await db.insert(transactions).values(transaction).returning();
+    return result[0];
+  }
+
+  // Gift card methods
+  async getGiftCards(): Promise<GiftCard[]> {
+    return await db.select().from(giftCards).orderBy(desc(giftCards.purchaseDate));
+  }
+
+  async getGiftCardById(id: number): Promise<GiftCard | undefined> {
+    const result = await db.select().from(giftCards).where(eq(giftCards.id, id));
+    return result[0];
+  }
+
+  async getGiftCardBySquareId(squareId: string): Promise<GiftCard | undefined> {
+    const result = await db.select().from(giftCards).where(eq(giftCards.squareId, squareId));
+    return result[0];
+  }
+
+  async createGiftCard(giftCard: InsertGiftCard): Promise<GiftCard> {
+    const result = await db.insert(giftCards).values(giftCard).returning();
+    return result[0];
+  }
+
+  async updateGiftCardRedemption(id: number, amount: number): Promise<GiftCard> {
+    const result = await db
+      .update(giftCards)
+      .set({ redeemedAmount: sql`redeemed_amount + ${amount}` })
+      .where(eq(giftCards.id, id))
+      .returning();
+    return result[0];
+  }
+
+  // Gift card redemption methods
+  async createGiftCardRedemption(redemption: InsertGiftCardRedemption): Promise<GiftCardRedemption> {
+    const result = await db.insert(giftCardRedemptions).values(redemption).returning();
+    return result[0];
+  }
+
+  async getGiftCardRedemptions(giftCardId: number): Promise<GiftCardRedemption[]> {
+    return await db.select().from(giftCardRedemptions).where(eq(giftCardRedemptions.giftCardId, giftCardId));
+  }
+
+  // Dashboard summary methods
+  async getDailySummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<DailySummary> {
+    // Simplified implementation for now
+    return {
+      totalRevenue: 0,
+      revenueChange: 0,
+      totalOrders: 0,
+      ordersChange: 0,
+      averageOrder: 0,
+      averageOrderChange: 0,
+      giftCardSales: 0,
+      giftCardSalesChange: 0,
+      date: new Date().toLocaleDateString()
+    };
+  }
+
+  async getCategoryRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<CategoryRevenue[]> {
+    // Simplified implementation for now
+    return [];
+  }
+
+  async getHourlyRevenue(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<HourlyRevenue[]> {
+    // Simplified implementation for now
+    return Array.from({ length: 24 }, (_, i) => ({
+      hour: formatHour(i),
+      amount: 0
+    }));
+  }
+
+  async getGiftCardSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<GiftCardSummary> {
+    // Simplified implementation for now
+    return {
+      soldCount: 0,
+      soldAmount: 0,
+      redeemedCount: 0,
+      redeemedAmount: 0,
+      averageValue: 0
+    };
+  }
+
+  // Sync state management methods
+  async getSyncState(syncType: string): Promise<SyncState | undefined> {
+    const result = await db.select().from(syncState).where(eq(syncState.syncType, syncType));
+    return result[0];
+  }
+
+  async createSyncState(state: InsertSyncState): Promise<SyncState> {
+    const result = await db.insert(syncState).values(state).returning();
+    return result[0];
+  }
+
+  async updateSyncState(id: number, updates: Partial<InsertSyncState>): Promise<SyncState> {
+    const result = await db.update(syncState).set(updates).where(eq(syncState.id, id)).returning();
+    return result[0];
+  }
+
+  async getSyncProgress(): Promise<{ payments: number; giftCards: number }> {
+    const paymentsState = await this.getSyncState('payments');
+    const giftCardsState = await this.getSyncState('gift_cards');
+
+    // Use processedCount as progress indicator
+    return {
+      payments: paymentsState?.processedCount || 0,
+      giftCards: giftCardsState?.processedCount || 0
+    };
+  }
+
+  // Order methods
+  async getOrder(id: number): Promise<Order | undefined> {
+    const result = await db.select().from(orders).where(eq(orders.id, id));
+    if (result.length === 0) {
+      throw new OrderNotFoundError(id);
+    }
+    return result[0];
+  }
+
+  async getOrderBySquareId(squareId: string): Promise<Order | undefined> {
+    const result = await db.select().from(orders).where(eq(orders.squareId, squareId));
+    return result[0];
+  }
+
+  async createOrder(order: InsertOrder): Promise<Order> {
+    // Simplified validation - just check that required fields are present
+    if (!order.squareId || !order.status || !order.createdAt) {
+      throw new InvalidOrderDataError(`Invalid order data: Missing required fields`);
+    }
+
+    const result = await db.insert(orders).values(order).returning();
+    return result[0];
+  }
+
+  async getOrderItems(orderId: number): Promise<OrderLineItem[]> {
+    return await db.select().from(orderLineItems).where(eq(orderLineItems.orderId, orderId));
+  }
+
+  async createOrderItem(item: InsertOrderLineItem): Promise<OrderLineItem> {
+    const result = await db.insert(orderLineItems).values(item).returning();
+    return result[0];
+  }
+
+  async getOrderModifiers(lineItemId: number): Promise<OrderModifier[]> {
+    return await db.select().from(orderModifiers).where(eq(orderModifiers.lineItemId, lineItemId));
+  }
+
+  async createOrderModifier(modifier: InsertOrderModifier): Promise<OrderModifier> {
+    const result = await db.insert(orderModifiers).values(modifier).returning();
+    return result[0];
+  }
+
+  async getOrderDiscounts(orderId: number): Promise<OrderDiscount[]> {
+    return await db.select().from(orderDiscounts).where(eq(orderDiscounts.orderId, orderId));
+  }
+
+  async createOrderDiscount(discount: InsertOrderDiscount): Promise<OrderDiscount> {
+    const result = await db.insert(orderDiscounts).values(discount).returning();
+    return result[0];
+  }
+
+  async getOrderSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<OrderSummary> {
+    // Simplified implementation for now
+    return {
+      totalOrders: 0,
+      totalRevenue: 0,
+      averageOrderValue: 0,
+      itemsSold: 0,
+      topSellingItems: [],
+      discountTotal: 0,
+      taxTotal: 0
+    };
+  }
+
+  async getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<number> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     const startStr = formatEasternDate(start);
     const endStr = formatEasternDate(end);
@@ -7,6 +251,10 @@ async getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): 
 
     // Query total gift card sales using Eastern Time view
     const result = await db.execute(sql`
+      WITH gift_cards_et AS (
+        SELECT *, purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
+        FROM gift_cards
+      )
       SELECT COALESCE(SUM(amount), 0) as total_sales
       FROM gift_cards_et
       WHERE DATE(purchase_date_et) >= ${startStr}::date
@@ -17,4 +265,7 @@ async getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): 
     console.log('Gift card sales calculated:', totalSales);
 
     return totalSales;
+  }
 }
+
+export const pgStorage = new PgStorage();

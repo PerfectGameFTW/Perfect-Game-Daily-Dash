@@ -88,28 +88,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           </div>
         </div>
 
-        {/* Transactions Item */}
-        <div className="flex justify-between py-3 border-b border-zinc-800">
-          <span className="text-white">Transactions</span>
-          <div className="flex items-center">
-            <span className="text-white mr-3">{data?.totalOrders || 0}</span>
-            <div
-              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
-                isPositiveChange(data?.ordersChange || 0)
-                  ? "bg-green-900/30 text-green-400"
-                  : "bg-red-900/30 text-red-400"
-              }`}
-            >
-              {isPositiveChange(data?.ordersChange || 0) ? (
-                <ChevronUp className="mr-0.5 h-3 w-3" />
-              ) : (
-                <ChevronDown className="mr-0.5 h-3 w-3" />
-              )}
-              {formatPercentage(Math.abs(data?.ordersChange || 0))}
-            </div>
-          </div>
-        </div>
-
         {/* Gift Card Sales */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Gift Card Sales</span>
