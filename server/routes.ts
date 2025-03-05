@@ -469,6 +469,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get gift card sales directly from gift_cards_et view
       const giftCardSales = await pgStorage.getGiftCardSales(parsedDateRange.data, startDate, endDate);
 
+      console.log('Gift Card Sales for period:', {
+        dateRange: parsedDateRange.data,
+        startDate: startDate?.toISOString(),
+        endDate: endDate?.toISOString(),
+        giftCardSales
+      });
+
       // Calculate transaction breakdowns
       const detailedBreakdown = {
         partywirks: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
@@ -867,7 +874,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
             // Determine the current balance (convert from cents to dollars)
             let amount = 0;
-            if (safeCard.balanceMoney && safeCard.balanceMoney.amount) {
+            if(safeCard.balanceMoney && safeCard.balanceMoney.amount) {
               amount = Number(safeCard.balanceMoney.amount) / 100;
             } else if (safeCard.balance_money && safeCard.balance_money.amount) {
               amount = Number(safeCard.balance_money.amount) / 100;
