@@ -697,6 +697,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+  
+  // New endpoint using Orders API to correctly identify gift card activations
+  apiRouter.get("/fix-gift-cards-from-orders", async (req, res) => {
+    try {
+      console.log("Starting gift card activation fix using Orders API...");
+      
+      // Get date range from query parameters if provided
+      const dateRange = (req.query.dateRange as DateRange) || 'all_time';
+      console.log(`Using date range: ${dateRange}`);
+      
+      // Import the new Orders-based fix function
+      const { fixGiftCardActivationsFromOrders } = await import('./fixGiftCardActivationsFromOrders');
+      
+      // Run the new fix function that uses Orders API to find activations
+      const result = await fixGiftCardActivationsFromOrders(dateRange);
+      
+      // Process the result to make it safe for JSON response
+      const response = processSafeSquareData({
+        success: true,
+        message: "Gift card activation amounts have been fixed using Order data",
+        result: {
+          totalCards: result.total,
+          updatedCards: result.updated,
+          cardsWithNoChange: result.noChange,
+          noMatchFound: result.noMatch,
+          zeroAmountIssues: result.zeroAmount,
+          errors: result.errors
+        }
+      });
+      
+      return res.json(response);
+    } catch (error) {
+      console.error("Error fixing gift cards from orders:", error);
+      res.status(500).json({
+        error: "Failed to fix gift cards using Orders API",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
 
   // Add diagnostic endpoint for Square API connection
   apiRouter.get("/test-square-connection", async (req, res) => {
