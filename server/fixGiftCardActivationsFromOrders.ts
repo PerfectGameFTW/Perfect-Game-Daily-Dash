@@ -143,11 +143,19 @@ export async function fixGiftCardActivationsFromOrders(dateRange: ExtendedDateRa
 }
 
 // Helper function to get gift card activations from Orders API
-async function getGiftCardActivations(dateRange: DateRange = 'all_time', startDate?: Date, endDate?: Date) {
+async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: Date, endDate?: Date) {
   // For all_time, use a very old start date
-  let { start, end } = dateRange === 'all_time' 
-    ? { start: new Date('2020-01-01'), end: new Date() }
-    : getEasternDateRange(dateRange, startDate, endDate);
+  let start: Date;
+  let end: Date;
+  
+  if (dateRange === 'all_time') {
+    start = new Date('2020-01-01');
+    end = new Date();
+  } else {
+    const dateRangeResult = getEasternDateRange(dateRange as DateRange, startDate, endDate);
+    start = dateRangeResult.start;
+    end = dateRangeResult.end;
+  }
   
   console.log(`Searching for gift card activations between ${start.toISOString()} and ${end.toISOString()}`);
   
@@ -173,89 +181,160 @@ async function getGiftCardActivations(dateRange: DateRange = 'all_time', startDa
       
       // Make the actual API request for this batch
       try {
-        const { result } = await squareClient.ordersApi.searchOrders({
-          locationIds: [locationId],
-          query: {
-            filter: {
-              dateTimeFilter: {
-                createdAt: {
-                  startAt: currentStart.toISOString(),
-                  endAt: queryEndDate.toISOString(),
+        // Check if we have direct access to the Orders API through squareClient
+        if (!squareClient.ordersApi) {
+          console.log("Direct access to Orders API not available, using fetchOrders method instead");
+          const orders = await squareClient.fetchOrders(currentStart, queryEndDate);
+          
+          // Process the orders from fetchOrders
+          for (const order of orders) {
+            // Skip orders without line items
+            if (!order.lineItems || order.lineItems.length === 0) continue;
+            
+            // Find gift card line items in this order
+            const giftCardItems = order.lineItems.filter((item: any) => 
+              // Look for multiple indicators that this item is a gift card
+              (item.name && item.name.toLowerCase().includes('gift card')) ||
+              (item.catalogObjectId && item.catalogObjectId.startsWith('gift_card')) ||
+              (item.variationName && item.variationName.toLowerCase().includes('gift card'))
+            );
+            
+            // Extract activation details for each gift card in this order
+            for (const item of giftCardItems) {
+              // Get the price from various possible locations
+              const basePriceAmount = item.basePriceMoney?.amount 
+                ? Number(item.basePriceMoney.amount) / 100 
+                : 0;
+              
+              const grossPriceAmount = item.grossSalesMoney?.amount
+                ? Number(item.grossSalesMoney.amount) / 100
+                : 0;
+                
+              // Use the most appropriate price (prefer base price over gross)
+              const activationAmount = basePriceAmount || grossPriceAmount;
+              
+              // Extract order and payment info
+              const orderId = order.id;
+              const timestamp = order.createdAt ? new Date(order.createdAt) : new Date();
+              
+              // Try to find any GANs in the order data
+              let giftCardGan = '';
+              
+              // In Square's API, the GAN might be in various places
+              if (order.note && typeof order.note === 'string') {
+                const ganMatch = order.note.match(/GAN:\s*(\d+)/i);
+                if (ganMatch && ganMatch[1]) {
+                  giftCardGan = ganMatch[1];
+                }
+              }
+              
+              // Add this activation to our results
+              allActivations.push({
+                orderId,
+                timestamp,
+                activationAmount,
+                giftCardGan,
+                itemName: item.name,
+                catalogObjectId: item.catalogObjectId,
+                variationName: item.variationName,
+                orderData: order
+              });
+            }
+          }
+        } else {
+          // Use direct ordersApi if available
+          const { result } = await squareClient.ordersApi.searchOrders({
+            locationIds: [locationId],
+            query: {
+              filter: {
+                dateTimeFilter: {
+                  createdAt: {
+                    startAt: currentStart.toISOString(),
+                    endAt: queryEndDate.toISOString(),
+                  },
                 },
               },
             },
-          },
-        });
-        
-        // Process orders in this batch to extract gift card information
-        const batchOrders = result?.orders || [];
-        console.log(`Found ${batchOrders.length} total orders in batch`);
-        
-        for (const order of batchOrders) {
-          // Skip orders without line items
-          if (!order.lineItems || order.lineItems.length === 0) continue;
+          });
           
-          // Find gift card line items in this order
-          const giftCardItems = order.lineItems.filter(item => 
-            // Look for multiple indicators that this item is a gift card
-            item.name?.toLowerCase().includes('gift card') ||
-            (item.catalogObjectType === 'ITEM_VARIATION' && 
-             (item.catalogObjectId?.startsWith('gift_card') || 
-              item.variationName?.toLowerCase().includes('gift card')))
-          );
+          // Process orders in this batch to extract gift card information
+          const batchOrders = result?.orders || [];
+          console.log(`Found ${batchOrders.length} total orders in batch`);
           
-          // Extract activation details for each gift card in this order
-          for (const item of giftCardItems) {
-            // Get the price from various possible locations
-            const basePriceAmount = item.basePriceMoney?.amount 
-              ? Number(item.basePriceMoney.amount) / 100 
-              : 0;
+          for (const order of batchOrders) {
+            // Skip orders without line items
+            if (!order.lineItems || order.lineItems.length === 0) continue;
             
-            const grossPriceAmount = item.grossSalesMoney?.amount
-              ? Number(item.grossSalesMoney.amount) / 100
-              : 0;
+            // Find gift card line items in this order
+            const giftCardItems = order.lineItems.filter((item: any) => 
+              // Look for multiple indicators that this item is a gift card
+              (item.name && item.name.toLowerCase().includes('gift card')) ||
+              (item.catalogObjectId && item.catalogObjectId.startsWith('gift_card')) ||
+              (item.variationName && item.variationName.toLowerCase().includes('gift card'))
+            );
+            
+            // Extract activation details for each gift card in this order
+            for (const item of giftCardItems) {
+              // Get the price from various possible locations
+              const basePriceAmount = item.basePriceMoney?.amount 
+                ? Number(item.basePriceMoney.amount) / 100 
+                : 0;
               
-            // Use the most appropriate price (prefer base price over gross)
-            const activationAmount = basePriceAmount || grossPriceAmount;
-            
-            // Extract order and payment info
-            const orderId = order.id;
-            const createdAt = order.createdAt;
-            const timestamp = new Date(createdAt);
-            
-            // Try to find any GANs in the order data
-            let giftCardGan = '';
-            
-            // In Square's API, the GAN might be in various places including:
-            // - Payment notes
-            // - Order notes
-            // - Line item notes
-            // - Custom attributes
-            
-            if (order.payments) {
-              // Look for gift card information in payment notes
-              for (const payment of order.payments) {
-                const note = payment.note || '';
-                // GAN is often included in notes in formats like "GAN: 1234567890"
-                const ganMatch = note.match(/GAN:\s*(\d+)/i);
+              const grossPriceAmount = item.grossSalesMoney?.amount
+                ? Number(item.grossSalesMoney.amount) / 100
+                : 0;
+                
+              // Use the most appropriate price (prefer base price over gross)
+              const activationAmount = basePriceAmount || grossPriceAmount;
+              
+              // Extract order and payment info
+              const orderId = order.id;
+              
+              // Handle createdAt safely
+              let timestamp: Date;
+              if (order.createdAt) {
+                timestamp = new Date(order.createdAt);
+              } else {
+                timestamp = new Date();
+              }
+              
+              // Try to find any GANs in the order data
+              let giftCardGan = '';
+              
+              // In Square's API, the GAN might be in various places
+              if (order.note && typeof order.note === 'string') {
+                const ganMatch = order.note.match(/GAN:\s*(\d+)/i);
                 if (ganMatch && ganMatch[1]) {
                   giftCardGan = ganMatch[1];
-                  break;
                 }
               }
+              
+              // Check for payments array if it exists (it may not in some API versions)
+              if (order.tenders) {
+                for (const tender of order.tenders) {
+                  const note = tender.note || '';
+                  if (note && typeof note === 'string') {
+                    const ganMatch = note.match(/GAN:\s*(\d+)/i);
+                    if (ganMatch && ganMatch[1]) {
+                      giftCardGan = ganMatch[1];
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              // Add this activation to our results
+              allActivations.push({
+                orderId,
+                timestamp,
+                activationAmount,
+                giftCardGan,
+                itemName: item.name,
+                catalogObjectId: item.catalogObjectId,
+                variationName: item.variationName,
+                orderData: order
+              });
             }
-            
-            // Add this activation to our results
-            allActivations.push({
-              orderId,
-              timestamp,
-              activationAmount,
-              giftCardGan,
-              itemName: item.name,
-              catalogObjectId: item.catalogObjectId,
-              variationName: item.variationName,
-              orderData: order
-            });
           }
         }
         

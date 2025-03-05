@@ -704,14 +704,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Starting gift card activation fix using Orders API...");
       
       // Get date range from query parameters if provided
-      const dateRange = (req.query.dateRange as DateRange) || 'all_time';
-      console.log(`Using date range: ${dateRange}`);
+      const dateRangeParam = req.query.dateRange as string || 'all_time';
+      console.log(`Using date range: ${dateRangeParam}`);
       
       // Import the new Orders-based fix function
       const { fixGiftCardActivationsFromOrders } = await import('./fixGiftCardActivationsFromOrders');
       
       // Run the new fix function that uses Orders API to find activations
-      const result = await fixGiftCardActivationsFromOrders(dateRange);
+      const result = await fixGiftCardActivationsFromOrders(dateRangeParam as any);
       
       // Process the result to make it safe for JSON response
       const response = processSafeSquareData({

@@ -548,6 +548,32 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
 
   console.log(`Processing gift card ${safeGiftCard.id} with current balance: $${amount}, activation amount: $${activationAmount}`);
 
+  // Extract GAN (Gift Card Account Number) if available
+  let gan = '';
+  
+  // The GAN is often in the ganData property or reference
+  if (safeGiftCard.gan) {
+    gan = safeGiftCard.gan;
+  } else if (typeof safeGiftCard.ganData === 'object' && safeGiftCard.ganData?.gan) {
+    gan = safeGiftCard.ganData.gan;
+  } else if (safeGiftCard.reference_id) {
+    // Sometimes the reference ID is the GAN
+    gan = safeGiftCard.reference_id;
+  }
+  
+  // Check in the Square data JSON for a GAN
+  if (!gan && typeof safeGiftCard === 'object') {
+    // Deep search for GAN pattern in the object
+    const ganMatch = JSON.stringify(safeGiftCard).match(/["']gan["']\s*:\s*["'](\d+)["']/i);
+    if (ganMatch && ganMatch[1]) {
+      gan = ganMatch[1];
+    }
+  }
+  
+  if (gan) {
+    console.log(`Found GAN ${gan} for gift card ${safeGiftCard.id}`);
+  }
+
   const card: InsertGiftCard = {
     squareId: safeGiftCard.id,
     amount: amount,
@@ -555,7 +581,8 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     activationAmount: activationAmount, // Store the original activation amount
     isActive: safeGiftCard.state === 'ACTIVE',
     purchaseDate,
-    squareData: safeGiftCard
+    squareData: safeGiftCard,
+    gan: gan // Add the GAN to the card record
   };
 
   return card;

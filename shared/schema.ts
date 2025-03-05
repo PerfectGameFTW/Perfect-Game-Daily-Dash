@@ -169,6 +169,7 @@ export const giftCards = pgTable("gift_cards", {
   isActive: boolean("is_active").default(true).notNull(),
   purchaseDate: timestamp("purchase_date", { withTimezone: true }).notNull(),
   squareData: jsonb("square_data"),
+  gan: text("gan"), // Gift Card Account Number for matching with orders
 });
 
 export const insertGiftCardSchema = createInsertSchema(giftCards).omit({
