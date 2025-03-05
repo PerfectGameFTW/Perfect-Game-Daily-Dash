@@ -228,15 +228,11 @@ class PgStorage implements IStorage {
     });
     
     // Query to get gift cards sold in the date range using Eastern Time
+    // Always use activation_amount as the source of truth for gift card sales
     const soldResult = await db.execute(sql`
       SELECT 
         COUNT(*) as sold_count,
-        COALESCE(SUM(
-          CASE 
-            WHEN activationamount IS NOT NULL THEN activationamount 
-            ELSE amount + redeemedamount 
-          END
-        ), 0) as sold_amount
+        SUM(activationamount) as sold_amount
       FROM 
         gift_cards_et
       WHERE 
@@ -392,16 +388,10 @@ class PgStorage implements IStorage {
     });
 
     // Use the gift_cards_et view with date_et field for proper timezone alignment
-    // Use DATE comparisons which align perfectly with the business day in Eastern Time
+    // Always use activation_amount as the source of truth for gift card sales
     const result = await db.execute(sql`
       SELECT 
-        -- Use activationamount if available, fall back to (amount + redeemedamount) for legacy data
-        COALESCE(SUM(
-          CASE 
-            WHEN activationamount IS NOT NULL THEN activationamount 
-            ELSE amount + redeemedamount 
-          END
-        ), 0) as total_activation,
+        SUM(activationamount) as total_activation,
         COUNT(*) as card_count
       FROM 
         gift_cards_et
