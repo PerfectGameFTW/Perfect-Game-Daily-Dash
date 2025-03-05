@@ -33,9 +33,8 @@ export async function updateGiftCardAmountsFromOrders() {
       JOIN
         order_line_items oli ON o.id = oli.order_id
       WHERE 
-        (oli.square_data->>'itemType') = '"GIFT_CARD"'
-        OR (oli.square_data->'itemType')::text = '"GIFT_CARD"'
-        OR (oli.square_data->'itemType') = 'GIFT_CARD'
+        LOWER(oli.name) LIKE '%gift card%'
+        OR LOWER(oli.name) LIKE '%giftcard%'
     `);
     
     console.log(`Found ${giftCardOrders.rows.length} order line items with itemType: "GIFT_CARD"`);
@@ -53,7 +52,7 @@ export async function updateGiftCardAmountsFromOrders() {
     for (const order of giftCardOrders.rows) {
       try {
         const orderId = order.order_square_id;
-        const orderDate = new Date(order.order_date);
+        const orderDate = new Date(String(order.order_date));
         const itemAmount = Number(order.item_amount) || 0;
         
         if (itemAmount <= 0) {
@@ -116,7 +115,7 @@ export async function updateGiftCardAmountsFromOrders() {
         let smallestTimeDiff = Infinity;
         
         for (const card of potentialGiftCards.rows) {
-          const cardDate = new Date(card.purchase_date);
+          const cardDate = new Date(String(card.purchase_date));
           const timeDiff = Math.abs(cardDate.getTime() - orderDate.getTime());
           
           if (timeDiff < smallestTimeDiff) {
