@@ -179,9 +179,12 @@ export async function updateGiftCardActivationFromTransactions(): Promise<Update
           console.log(`Gift card ID ${giftCardId}: Current activation amount: $${currentActivationAmount.toFixed(2)}, New amount from order: $${newActivationAmount.toFixed(2)}`);
           
           // ALWAYS update with the order amount - no tolerance check
-          await db.update(giftCards)
-            .set({ activationAmount: newActivationAmount })
-            .where(sql`id = ${giftCardId}`);
+          // Using the exact column name to ensure the update works
+          await db.execute(sql`
+            UPDATE gift_cards
+            SET activation_amount = ${newActivationAmount}
+            WHERE id = ${giftCardId}
+          `);
           
           console.log(`✅ FORCE UPDATED gift card ID ${giftCardId} with amount $${newActivationAmount.toFixed(2)} from order ID ${closestOrder.order_id} (was $${currentActivationAmount.toFixed(2)})`);
           updatedCount++;
