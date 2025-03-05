@@ -1581,6 +1581,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // NEW ENDPOINT: Update gift card activation amounts by linking transactions and orders
+  apiRouter.get("/update-gift-card-activations-from-transactions", async (req, res) => {
+    try {
+      console.log("Starting gift card activation update by linking transactions with orders...");
+      
+      // Import the new function dynamically to avoid circular dependencies
+      const { updateGiftCardActivationFromTransactions } = await import('./updateGiftCardActivationFromTransactions');
+      const result = await updateGiftCardActivationFromTransactions();
+      
+      // Return detailed results of the update operation
+      return res.json({
+        success: true,
+        message: "Gift card activation amounts updated by linking transactions with orders",
+        result
+      });
+    } catch (error) {
+      console.error("Error updating gift card activation amounts from transactions:", error);
+      res.status(500).json({
+        error: "Failed to update gift card activation amounts from transactions",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
   app.use("/api", apiRouter);
 
   const httpServer = createServer(app);

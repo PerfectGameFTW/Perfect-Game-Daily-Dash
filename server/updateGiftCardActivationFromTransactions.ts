@@ -184,12 +184,18 @@ async function verifyActivationAmounts() {
   }
 }
 
-// Allow direct execution of this script
-if (require.main === module) {
+// Allow this file to be run directly with 'node --loader tsx <file>'
+// but avoid execution when it's imported as a module
+import { fileURLToPath } from 'url';
+
+// ES module equivalent of 'if this file is run directly'
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+
+if (isMainModule) {
   updateGiftCardActivationFromTransactions()
     .then(() => process.exit(0))
     .catch(error => {
-      console.error('Error:', error);
+      console.error('Error in main execution:', error);
       process.exit(1);
     });
 }
