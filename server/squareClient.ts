@@ -99,9 +99,22 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     const endTime = end.toISOString();
 
     console.log(`Fetching orders from ${startTime} to ${endTime}`);
+    
+    if (!process.env.SQUARE_ACCESS_TOKEN) {
+      console.error('Square access token is not configured');
+      throw new Error('Square access token is not configured');
+    }
 
+    if (!process.env.SQUARE_LOCATION_ID) {
+      console.error('Square location ID is not configured');
+      throw new Error('Square location ID is not configured');
+    }
+    
+    console.log(`Using Square location ID: ${process.env.SQUARE_LOCATION_ID}`);
+
+    // Create a search request for orders
     const searchRequest = {
-      locationIds: [process.env.SQUARE_LOCATION_ID!],
+      locationIds: [process.env.SQUARE_LOCATION_ID],
       query: {
         filter: {
           dateTimeFilter: {
@@ -111,7 +124,7 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
             }
           },
           stateFilter: {
-            states: ['COMPLETED', 'CANCELED']
+            states: ['COMPLETED', 'OPEN']  // Include both COMPLETED and OPEN orders
           }
         },
         sort: {
@@ -119,31 +132,64 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
           sortOrder: 'DESC'
         }
       },
-      returnEntries: true,
-      limit: 500
+      limit: 100  // Reduced for testing
     };
+    
+    console.log('Orders search request:', JSON.stringify(searchRequest, null, 2));
 
     // Make API request to Square Orders API
-    const response = await squareClient.ordersApi.searchOrders(searchRequest);
-    const orders = response.result.orders || [];
+    try {
+      const response = await squareClient.ordersApi.searchOrders(searchRequest);
+      console.log('Square Orders API response status:', response.statusCode);
+      
+      if (response.result && response.result.orders) {
+        console.log(`Found ${response.result.orders.length} orders from Square API`);
+        
+        // Additional logging of first order for debugging
+        if (response.result.orders.length > 0) {
+          const firstOrder = response.result.orders[0];
+          console.log('Sample order data:', {
+            id: firstOrder.id,
+            state: firstOrder.state,
+            createdAt: firstOrder.createdAt,
+            lineItemCount: firstOrder.lineItems?.length || 0
+          });
+        }
+        
+        // Convert Square orders to our schema format
+        const processedOrders = response.result.orders.map(order => ({
+          squareId: order.id,
+          status: order.state,
+          totalMoney: order.totalMoney ? Number(order.totalMoney.amount) / 100 : 0,
+          totalTax: order.totalTaxMoney ? Number(order.totalTaxMoney.amount) / 100 : 0,
+          totalDiscount: order.totalDiscountMoney ? Number(order.totalDiscountMoney.amount) / 100 : 0,
+          createdAt: new Date(order.createdAt || new Date()),
+          closedAt: order.closedAt ? new Date(order.closedAt) : null,
+          source: order.source?.name || 'unknown',
+          squareData: processSafeSquareData(order)
+        }));
 
-    // Convert Square orders to our schema format
-    const processedOrders = orders.map(order => ({
-      squareId: order.id,
-      status: order.state,
-      totalMoney: order.totalMoney ? Number(order.totalMoney.amount) / 100 : 0,
-      totalTax: order.totalTaxMoney ? Number(order.totalTaxMoney.amount) / 100 : 0,
-      totalDiscount: order.totalDiscountMoney ? Number(order.totalDiscountMoney.amount) / 100 : 0,
-      createdAt: new Date(order.createdAt || new Date()),
-      closedAt: order.closedAt ? new Date(order.closedAt) : null,
-      source: order.source?.name || 'unknown',
-      squareData: processSafeSquareData(order)
-    }));
-
-    console.log(`Processed ${processedOrders.length} orders from Square API`);
-    return processedOrders;
+        console.log(`Processed ${processedOrders.length} orders from Square API`);
+        return processedOrders;
+      } else {
+        console.warn('No orders found in Square API response:', response.result);
+        return [];
+      }
+    } catch (apiError) {
+      console.error('Square Orders API error:', {
+        error: apiError,
+        message: apiError instanceof Error ? apiError.message : 'Unknown error',
+        stack: apiError instanceof Error ? apiError.stack : undefined
+      });
+      
+      throw new Error(`Square Orders API error: ${apiError instanceof Error ? apiError.message : 'Unknown error'}`);
+    }
   } catch (error) {
-    console.error('Error fetching orders from Square:', error);
+    console.error('Error in fetchOrders:', {
+      error,
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
     throw error;
   }
 }

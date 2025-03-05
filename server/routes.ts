@@ -15,11 +15,15 @@ import {
   giftCards,
   giftCardRedemptions,
   syncState,
+  orders,
+  orderLineItems,
+  orderModifiers,
+  orderDiscounts,
   type InsertSyncState
 } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
-import { and, gte, lte, sql, eq, gt, or, desc } from "drizzle-orm";
+import { and, gte, lte, sql, eq, gt, or, desc, count } from "drizzle-orm";
 
 // Helper function to safely process Square API response data
 function processSafeSquareData(data: any): any {
