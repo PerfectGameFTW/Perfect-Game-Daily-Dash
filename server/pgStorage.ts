@@ -38,23 +38,36 @@ class PgStorage implements IStorage {
   // Transaction methods
   async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status?: TransactionStatus): Promise<Transaction[]> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
     
-    let query = db.select().from(transactions);
+    console.log(`Filtering transactions for date range: ${startStr} to ${endStr}`);
     
-    query = query.where(
-      and(
-        sql`DATE(timestamp AT TIME ZONE 'America/New_York') >= ${formatEasternDate(start)}::date`,
-        sql`DATE(timestamp AT TIME ZONE 'America/New_York') <= ${formatEasternDate(end)}::date`
+    // Use a SQL query to properly filter by Eastern timezone dates
+    const filteredTransactions = await db.execute(sql`
+      WITH transactions_et AS (
+        SELECT *, timestamp AT TIME ZONE 'America/New_York' as timestamp_et
+        FROM transactions
       )
-    );
+      SELECT * 
+      FROM transactions_et
+      WHERE DATE(timestamp_et) >= ${startStr}::date
+        AND DATE(timestamp_et) <= ${endStr}::date
+        ${status ? sql` AND status = ${status}` : sql``}
+      ORDER BY timestamp DESC
+    `);
     
-    if (status) {
-      query = query.where(eq(transactions.status, status));
-    }
-    
-    query = query.orderBy(desc(transactions.timestamp));
-    
-    return await query;
+    // Map the raw results to Transaction objects
+    return filteredTransactions.rows.map(row => ({
+      id: Number(row.id),
+      amount: Number(row.amount),
+      status: row.status as TransactionStatus,
+      category: row.category,
+      timestamp: new Date(row.timestamp),
+      squareId: row.square_id,
+      orderId: row.order_id ? Number(row.order_id) : null,
+      squareData: row.square_data
+    }));
   }
 
   async getTransactionById(id: number): Promise<Transaction | undefined> {
