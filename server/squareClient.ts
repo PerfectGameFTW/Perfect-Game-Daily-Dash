@@ -288,7 +288,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       console.log(`Starting to fetch payments page ${pageCount}${cursor ? ' with cursor' : ''} at ${new Date(pageStartTime).toISOString()}`);
 
       // Check for timeout
-      if (Date.now() - START_TIME > TIMEOUT) {
+      if (Date.now() - fetchStartTime > TIMEOUT) {
         throw new Error('Sync timeout reached after 5 minutes');
       }
 
@@ -343,14 +343,14 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           stack: pageError instanceof Error ? pageError.stack : undefined,
           page: pageCount,
           cursor,
-          timeElapsed: Date.now() - START_TIME
+          timeElapsed: Date.now() - fetchStartTime
         };
         console.error('Error fetching payments page:', errorDetail);
         throw new Error(`Failed to fetch page ${pageCount}: ${errorDetail.message}`);
       }
     }
 
-    const totalTime = Date.now() - START_TIME;
+    const totalTime = Date.now() - fetchStartTime;
     if (pageCount >= MAX_PAGES) {
       console.warn(`Reached maximum page limit (${MAX_PAGES}). Some payments may be missing. Total time: ${totalTime}ms`);
     }
@@ -362,7 +362,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       error,
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
-      totalTimeMs: Date.now() - START_TIME
+      totalTimeMs: Date.now() - fetchStartTime
     });
     throw error;
   }
