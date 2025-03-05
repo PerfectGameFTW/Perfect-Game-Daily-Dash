@@ -1636,36 +1636,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error updating gift card activation amounts from transactions:", error);
-    }
-  });
-  
-  // Comprehensive endpoint that updates ALL gift cards using multiple approaches
-  apiRouter.get("/update-all-gift-card-amounts", async (req, res) => {
-    try {
-      console.log("Starting COMPREHENSIVE gift card amount update from orders...");
-      
-      // Use our improved direct order-based approach
-      const result = await updateGiftCardAmountsFromOrders();
-      
-      // Run verification to confirm all cards have been updated
-      await fixGiftCardActivationAmounts();
-      
-      // Return detailed results with breakdown by matching method
-      return res.json({
-        success: true,
-        message: "COMPREHENSIVE gift card amount update completed successfully",
-        details: {
-          updated: result.updated,
-          directUpdated: result.directUpdated,
-          matchByTransaction: result.matchByTransaction,
-          matchByGAN: result.matchByGAN,
-          matchByTiming: result.matchByTiming,
-          remaining: result.remaining,
-          summaryMessage: `Updated ${result.updated + result.directUpdated} gift cards with correct activation amounts from orders table`
-        }
-      });
-    } catch (error) {
-      console.error("Error in comprehensive gift card update:", error);
       res.status(500).json({
         error: "Failed to update gift card activation amounts from transactions",
         message: error instanceof Error ? error.message : "Unknown error"
