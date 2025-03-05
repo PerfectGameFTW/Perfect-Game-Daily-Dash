@@ -60,6 +60,9 @@ export interface IStorage {
   getOrderDiscounts(orderId: number): Promise<OrderDiscount[]>;
   createOrderDiscount(discount: InsertOrderDiscount): Promise<OrderDiscount>;
   getOrderSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<OrderSummary>;
+
+  // Add new method for gift card sales
+  getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<number>;
 }
 
 // No MemStorage implementation - we now exclusively use PgStorage for all data storage

@@ -466,6 +466,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get all completed transactions for the date range
       const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate, 'completed');
 
+      // Get gift card sales directly from gift_cards_et view
+      const giftCardSales = await pgStorage.getGiftCardSales(parsedDateRange.data, startDate, endDate);
+
       // Calculate transaction breakdowns
       const detailedBreakdown = {
         partywirks: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
@@ -494,30 +497,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           'note' in t.squareData && typeof t.squareData.note === 'string' &&
           (t.squareData.note.toLowerCase().includes('discount') || t.squareData.note.toLowerCase().includes('comp')))
           .reduce((sum, t) => sum + t.amount, 0),
-        // Enhanced gift card detection logic
-        giftCardSales: allTransactions.filter(t => {
-          if (!t.squareData || typeof t.squareData !== 'object') return false;
-
-          // Check if it's explicitly marked as a gift card transaction
-          if (t.categoryId === 'giftCard') return true;
-
-          // Check transaction notes for gift card mentions
-          if ('note' in t.squareData && typeof t.squareData.note === 'string' &&
-            t.squareData.note.toLowerCase().includes('gift card')) return true;
-
-          // Check order data for gift card items
-          if ('orderData' in t.squareData && t.squareData.orderData) {
-            const order = t.squareData.orderData;
-            if (order.lineItems) {
-              return order.lineItems.some((item: any) =>
-                item.itemType === 'GIFT_CARD' ||
-                (item.name && item.name.toLowerCase().includes('gift card'))
-              );
-            }
-          }
-
-          return false;
-        }).reduce((sum, t) => sum + t.amount, 0)
+        // Use the direct gift card sales value from gift_cards_et view
+        giftCardSales
       };
 
       res.json(detailedBreakdown);
@@ -902,8 +883,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "CAPTURED",
         },
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        note: "Test gift card redemption"
+        updatedAt: new Date().toISOString(),        note: "Test gift card redemption"
       };
 
       // Check if the payment is a gift card redemption
