@@ -327,15 +327,5 @@ async function verifyResults() {
 // Export the function for use in routes
 export { fixGiftCardActivationAmounts };
 
-// If this script is run directly
-if (require.main === module) {
-  fixGiftCardActivationAmounts()
-    .then(() => {
-      console.log('Gift card activation amount fix completed');
-      process.exit(0);
-    })
-    .catch(error => {
-      console.error('Error during gift card activation amount fix:', error);
-      process.exit(1);
-    });
-}
+// Script can be called from routes.ts or directly using:
+// npx tsx server/fixGiftCardActivationAmounts.ts

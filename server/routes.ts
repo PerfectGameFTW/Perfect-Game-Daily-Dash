@@ -668,97 +668,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   apiRouter.get("/fix-gift-cards", async (req, res) => {
     try {
       console.log("Starting comprehensive gift card activation amount fix...");
-
-      // Get all gift cards with zero amounts from the database
-      const zeroAmountCards = await db.select()
-        .from(giftCards)
-        .where(eq(giftCards.amount, 0));
-
-      console.log(`Found ${zeroAmountCards.length} gift cards with zero amounts`);
-
-      // Fetch all gift cards from Square
-      const squareGiftCards = await squareClient.fetchGiftCards();
-      console.log(`Fetched ${squareGiftCards.length} gift cards from Square`);
-
-      // Create a map for quick lookup with safe data processing
-      const squareGiftCardMap = new Map();
-      for (const card of squareGiftCards) {
-        try {
-          const safeCard = processSafeSquareData(card);
-          squareGiftCardMap.set(safeCard.id, safeCard);
-        } catch (error) {
-          console.error(`Error processing Square card for map:`, error);
-        }
-      }
-
-      let updatedCount = 0;
-      let stillZeroCount = 0;
-
-      for (const card of zeroAmountCards) {
-        try {
-          const squareCard = squareGiftCardMap.get(card.squareId);
-          if (!squareCard) {
-            console.log(`Card ${card.squareId} not found in Square data`);
-            continue;
-          }
-
-          // Log the raw card data for debugging
-          console.log(`Processing card ${card.squareId}...`);
-
-          let amount = 0;
-          if (squareCard.balanceMoney && squareCard.balanceMoney.amount) {
-            const rawAmount = squareCard.balanceMoney.amount;
-            amount = parseInt(String(rawAmount), 10) / 100;
-            console.log(`Found amount in balanceMoney for card ${card.squareId}: $${amount} (raw: ${rawAmount})`);
-          } else if (squareCard.balance_money && squareCard.balance_money.amount) {
-            const rawAmount = squareCard.balance_money.amount;
-            amount = parseInt(String(rawAmount), 10) / 100;
-            console.log(`Found amount in balance_money for card ${card.squareId}: $${amount} (raw: ${rawAmount})`);
-          }
-
-          if (amount > 0) {
-            // Prepare safe square data for database storage
-            const safeSquareData = processSafeSquareData(squareCard);
-
-            // Double-check serialization before database update
-            try {
-              // Verify the data is safe to store
-              JSON.stringify(safeSquareData);
-
-              // Update the database
-              await db.update(giftCards)
-                .set({
-                  amount: amount,
-                  squareData: safeSquareData
-                })
-                .where(eq(giftCards.squareId, card.squareId));
-
-              console.log(`✅ Updated gift card ${card.squareId} amount from $0 to $${amount.toFixed(2)}`);
-              updatedCount++;
-            } catch (error) {
-              console.error(`Failed to update gift card ${card.squareId}:`, error);
-              stillZeroCount++;
-            }
-          } else {
-            console.log(`⚠️ Card ${card.squareId} still has zero amount after extraction`);
-            stillZeroCount++;
-          }
-        } catch (error) {
-          console.error(`Error processing card ${card.squareId}:`, error);
-          stillZeroCount++;
-        }
-      }
-
-      // Return safe response
+      
+      // Use our improved fixGiftCardActivationAmounts function
+      const { fixGiftCardActivationAmounts } = await import('./fixGiftCardActivationAmounts');
+      
+      // Run the improved fix function which properly handles activation amounts
+      const result = await fixGiftCardActivationAmounts();
+      
+      // Process the result to make it safe for JSON response
       const response = processSafeSquareData({
         success: true,
-        totalProcessed: zeroAmountCards.length,
-        updatedCount,
-        stillZeroCount,
-        message: `Successfully processed ${zeroAmountCards.length} cards, updated ${updatedCount}, ${stillZeroCount} remained at zero`
+        message: "Gift card activation amounts have been fixed",
+        result: {
+          totalCards: result.total,
+          updatedCards: result.updated,
+          cardsWithNoChange: result.noChange,
+          zeroBalanceCards: result.zeroBalance,
+          errors: result.errors
+        }
       });
-
-      res.json(response);
+      
+      return res.json(response);
     } catch (error) {
       console.error("Error fixing gift cards:", error);
       res.status(500).json({
