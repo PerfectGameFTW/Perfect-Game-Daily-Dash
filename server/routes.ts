@@ -467,10 +467,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get all completed transactions for the date range
       const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate, 'completed');
 
-      // Get gift card sales directly from gift_cards_et view (only activations) 
+      // Get gift card sales directly from database using activation_amount with UTC dates
       const giftCardSales = await pgStorage.getGiftCardSales(parsedDateRange.data, startDate, endDate);
 
-      console.log('Gift Card Sales for period:', {
+      console.log('Gift Card Sales for period using UTC dates:', {
         dateRange: parsedDateRange.data,
         startDate: startDate?.toISOString(),
         endDate: endDate?.toISOString(),

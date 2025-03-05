@@ -38,22 +38,21 @@ class PgStorage implements IStorage {
 
   // Transaction methods
   async getTransactions(dateRange: DateRange, startDate?: Date, endDate?: Date, status?: TransactionStatus): Promise<Transaction[]> {
+    // Get UTC date range for the requested period
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    const startStr = formatEasternDate(start);
-    const endStr = formatEasternDate(end);
     
-    console.log(`Filtering transactions for date range: ${startStr} to ${endStr}`);
+    // Format UTC dates correctly for database query
+    const startUTC = start.toISOString();
+    const endUTC = end.toISOString();
     
-    // Use a SQL query to properly filter by Eastern timezone dates
+    console.log(`Filtering transactions with UTC range: ${startUTC} to ${endUTC}`);
+    
+    // Query directly using UTC timestamps
     const filteredTransactions = await db.execute(sql`
-      WITH transactions_et AS (
-        SELECT *, timestamp AT TIME ZONE 'America/New_York' as timestamp_et
-        FROM transactions
-      )
       SELECT * 
-      FROM transactions_et
-      WHERE DATE(timestamp_et) >= ${startStr}::date
-        AND DATE(timestamp_et) <= ${endStr}::date
+      FROM transactions
+      WHERE timestamp >= ${startUTC}::timestamp
+        AND timestamp <= ${endUTC}::timestamp
         ${status ? sql` AND status = ${status}` : sql``}
       ORDER BY timestamp DESC
     `);
@@ -127,9 +126,18 @@ class PgStorage implements IStorage {
 
   // Dashboard summary methods
   async getDailySummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<DailySummary> {
+    // Get UTC date range for the requested period
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    const startStr = formatEasternDate(start);
-    const endStr = formatEasternDate(end);
+    
+    // Format dates for logging but use UTC for queries
+    const startUTC = start.toISOString();
+    const endUTC = end.toISOString();
+    
+    console.log('Getting daily summary with UTC dates:', { 
+      dateRange,
+      startUTC, 
+      endUTC
+    });
     
     // Get completed transactions for the current period
     const currentTransactions = await this.getTransactions(dateRange, startDate, endDate, 'completed');
@@ -140,7 +148,7 @@ class PgStorage implements IStorage {
     // Get gift card sales for the period
     const giftCardSales = await this.getGiftCardSales(dateRange, startDate, endDate);
     
-    // Get previous period for comparison
+    // Get previous period for comparison - keep the same logic but with UTC dates
     let previousStart = new Date(start);
     let previousEnd = new Date(end);
     
@@ -161,7 +169,12 @@ class PgStorage implements IStorage {
       previousEnd = new Date(start.getTime() - 1); // End just before current period starts
     }
     
-    // Get previous period transactions
+    console.log('Previous period UTC dates:', {
+      previousStartUTC: previousStart.toISOString(),
+      previousEndUTC: previousEnd.toISOString()
+    });
+    
+    // Get previous period transactions using UTC timestamps
     const previousTransactions = await this.getTransactions(
       'custom', 
       previousStart, 
@@ -177,8 +190,7 @@ class PgStorage implements IStorage {
     const revenueChange = previousRevenue === 0 ? 0 : (totalRevenue - previousRevenue) / previousRevenue;
     const giftCardSalesChange = previousGiftCardSales === 0 ? 0 : (giftCardSales - previousGiftCardSales) / previousGiftCardSales;
     
-    // Calculate orders metrics (placeholder implementation)
-    // In a real implementation, we would count actual orders
+    // Calculate orders metrics - this stays the same
     const totalOrders = currentTransactions.length;
     const previousOrders = previousTransactions.length;
     const ordersChange = previousOrders === 0 ? 0 : (totalOrders - previousOrders) / previousOrders;
@@ -187,6 +199,17 @@ class PgStorage implements IStorage {
     const averageOrder = totalOrders === 0 ? 0 : totalRevenue / totalOrders;
     const previousAverage = previousOrders === 0 ? 0 : previousRevenue / previousOrders;
     const averageOrderChange = previousAverage === 0 ? 0 : (averageOrder - previousAverage) / previousAverage;
+    
+    // Log the calculation results
+    console.log('Daily summary calculated with UTC:', {
+      dateRange,
+      totalRevenue,
+      giftCardSales,
+      previousRevenue,
+      previousGiftCardSales,
+      totalOrders,
+      previousOrders
+    });
     
     return {
       totalRevenue,
@@ -215,41 +238,44 @@ class PgStorage implements IStorage {
   }
 
   async getGiftCardSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<GiftCardSummary> {
+    // Get UTC date range for the requested period
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    const startStr = formatEasternDate(start);
-    const endStr = formatEasternDate(end);
     
-    console.log('Getting gift card summary for date range:', { 
+    // Format UTC dates for database queries
+    const startUTC = start.toISOString();
+    const endUTC = end.toISOString();
+    
+    console.log('Getting gift card summary with UTC dates:', { 
       dateRange,
-      startStr, 
-      endStr,
+      startUTC, 
+      endUTC,
       startDate: startDate?.toISOString(),
       endDate: endDate?.toISOString()
     });
     
-    // Query to get gift cards sold in the date range using Eastern Time
+    // Query to get gift cards sold directly from gift_cards table using UTC timestamps
     // Always use activation_amount as the source of truth for gift card sales
     const soldResult = await db.execute(sql`
       SELECT 
         COUNT(*) as sold_count,
-        SUM(activationamount) as sold_amount
+        SUM(activation_amount) as sold_amount
       FROM 
-        gift_cards_et
+        gift_cards
       WHERE 
-        date_et >= ${startStr}::date
-        AND date_et <= ${endStr}::date
+        purchase_date >= ${startUTC}::timestamp
+        AND purchase_date <= ${endUTC}::timestamp
     `);
     
-    // Query to get gift card redemptions in the date range using Eastern Time
+    // Query to get gift card redemptions using UTC timestamps
     const redeemedResult = await db.execute(sql`
       SELECT 
         COUNT(*) as redeemed_count,
         COALESCE(SUM(amount), 0) as redeemed_amount
       FROM 
-        gift_card_redemptions_et
+        gift_card_redemptions
       WHERE 
-        date_et >= ${startStr}::date
-        AND date_et <= ${endStr}::date
+        timestamp >= ${startUTC}::timestamp
+        AND timestamp <= ${endUTC}::timestamp
     `);
     
     // Extract the results
@@ -261,14 +287,14 @@ class PgStorage implements IStorage {
     // Calculate average value
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
     
-    console.log('Gift card summary calculated from database:', {
+    console.log('Gift card summary calculated from database using UTC:', {
       dateRange,
       soldCount,
       soldAmount,
       redeemedCount,
       redeemedAmount,
       averageValue,
-      dateRangeStr: `${startStr} to ${endStr}`
+      dateRangeStr: `${startUTC} to ${endUTC}`
     });
     
     return {
@@ -372,42 +398,43 @@ class PgStorage implements IStorage {
   }
 
   async getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<number> {
+    // Get UTC date range for the requested period
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Format dates as simple date strings (YYYY-MM-DD) for DATE comparison
-    // This is more reliable than using timestamp precision for daily boundaries
-    const startDateStr = formatEasternDate(start);
-    const endDateStr = formatEasternDate(end);
+    // Format UTC dates correctly for database query
+    // We're using the UTC timestamp directly
+    const startUTC = start.toISOString();
+    const endUTC = end.toISOString();
 
-    console.log('Getting gift card sales for date range:', { 
+    console.log('Getting gift card sales with UTC dates:', { 
       dateRange,
-      startDateStr, 
-      endDateStr,
+      startUTC, 
+      endUTC,
       startDate: startDate?.toISOString(),
       endDate: endDate?.toISOString()
     });
 
-    // Use the gift_cards_et view with date_et field for proper timezone alignment
+    // Query directly against gift_cards table using UTC timestamps
     // Always use activation_amount as the source of truth for gift card sales
     const result = await db.execute(sql`
       SELECT 
-        SUM(activationamount) as total_activation,
+        SUM(activation_amount) as total_activation,
         COUNT(*) as card_count
       FROM 
-        gift_cards_et
+        gift_cards
       WHERE 
-        date_et >= ${startDateStr}::date
-        AND date_et <= ${endDateStr}::date
+        purchase_date >= ${startUTC}::timestamp
+        AND purchase_date <= ${endUTC}::timestamp
     `);
 
     const totalSales = Number(result.rows[0]?.total_activation) || 0;
     const cardCount = Number(result.rows[0]?.card_count) || 0;
     
-    console.log('Gift card sales calculated from database:', {
+    console.log('Gift card sales calculated from database using UTC:', {
       dateRange,
       totalSales,
       cardCount,
-      dateRangeStr: `${startDateStr} to ${endDateStr}`
+      dateRangeStr: `${startUTC} to ${endUTC}`
     });
     return totalSales;
   }
