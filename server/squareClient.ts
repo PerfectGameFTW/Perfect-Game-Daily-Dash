@@ -672,7 +672,13 @@ function mapSquareStatus(status: string): TransactionStatus {
 }
 
 // Map Square category to our Category
-function mapSquareCategory(itemName: string): Category {
+function mapSquareCategory(itemName: string, itemType?: string): Category {
+  // CRITICAL FIX: First check explicitly for GIFT_CARD type
+  if (itemType === 'GIFT_CARD') {
+    return 'giftCard';
+  }
+  
+  // Fallback to text matching
   const lowerItemName = itemName.toLowerCase();
 
   if (lowerItemName.includes('food') || lowerItemName.includes('meal') || lowerItemName.includes('burger')) {

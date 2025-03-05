@@ -193,10 +193,12 @@ async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: 
             
             // Find gift card line items in this order
             const giftCardItems = order.lineItems.filter((item: any) => 
-              // Look for multiple indicators that this item is a gift card
-              (item.name && item.name.toLowerCase().includes('gift card')) ||
-              (item.catalogObjectId && item.catalogObjectId.startsWith('gift_card')) ||
-              (item.variationName && item.variationName.toLowerCase().includes('gift card'))
+              // CRITICAL FIX: First check for the explicit GIFT_CARD itemType
+              (item.itemType === "GIFT_CARD") ||
+              // Then fallback to other indicators
+              (item.name && item.name.toLowerCase().includes("gift card")) ||
+              (item.catalogObjectId && item.catalogObjectId.startsWith("gift_card")) ||
+              (item.variationName && item.variationName.toLowerCase().includes("gift card"))
             );
             
             // Extract activation details for each gift card in this order
@@ -263,13 +265,15 @@ async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: 
           
           for (const order of batchOrders) {
             // Skip orders without line items
-            if (!order.lineItems || order.lineItems.length === 0) continue;
-            
             // Find gift card line items in this order
             const giftCardItems = order.lineItems.filter((item: any) => 
-              // Look for multiple indicators that this item is a gift card
-              (item.name && item.name.toLowerCase().includes('gift card')) ||
-              (item.catalogObjectId && item.catalogObjectId.startsWith('gift_card')) ||
+              // CRITICAL FIX: First check for the explicit GIFT_CARD itemType
+              (item.itemType === "GIFT_CARD") ||
+              // Then fallback to other indicators
+              (item.name && item.name.toLowerCase().includes("gift card")) ||
+              (item.catalogObjectId && item.catalogObjectId.startsWith("gift_card")) ||
+              (item.variationName && item.variationName.toLowerCase().includes("gift card"))
+            );
               (item.variationName && item.variationName.toLowerCase().includes('gift card'))
             );
             
