@@ -25,6 +25,53 @@ interface UpdateResult {
   skipped: number;
 }
 
+// Verify activation amounts for debugging
+async function verifyActivationAmounts(): Promise<void> {
+  try {
+    const result = await db.execute(sql`
+      SELECT 
+        DATE(purchase_date AT TIME ZONE 'America/New_York') as date, 
+        COUNT(*) as card_count,
+        SUM(activation_amount) as total_activation,
+        SUM(amount) as total_current,
+        SUM(redeemed_amount) as total_redeemed
+      FROM 
+        gift_cards
+      GROUP BY 
+        DATE(purchase_date AT TIME ZONE 'America/New_York')
+      ORDER BY 
+        date
+    `);
+    
+    console.log('Gift Card Activation Amounts By Date:');
+    for (const row of result.rows) {
+      console.log(`${row.date}: ${row.card_count} cards, $${Number(row.total_activation).toFixed(2)} total activation`);
+      console.log(`  Current Balance Total: $${Number(row.total_current).toFixed(2)}`);
+      console.log(`  Redeemed Amount Total: $${Number(row.total_redeemed).toFixed(2)}`);
+      const sum = Number(row.total_current) + Number(row.total_redeemed);
+      console.log(`  Sum (Balance + Redeemed): $${sum.toFixed(2)}`);
+      
+      // Count cards with and without activation amount
+      const detailedCount = await db.execute(sql`
+        SELECT 
+          COUNT(*) FILTER (WHERE activation_amount IS NOT NULL AND activation_amount > 0) as with_activation,
+          COUNT(*) FILTER (WHERE activation_amount IS NULL OR activation_amount = 0) as without_activation
+        FROM 
+          gift_cards
+        WHERE 
+          DATE(purchase_date AT TIME ZONE 'America/New_York') = ${row.date}
+      `);
+      
+      if (detailedCount.rows.length > 0) {
+        console.log(`  Cards with activation amount: ${detailedCount.rows[0].with_activation}`);
+        console.log(`  Cards missing activation amount: ${detailedCount.rows[0].without_activation}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error verifying activation amounts:', error);
+  }
+}
+
 export async function updateGiftCardActivationFromTransactions(): Promise<UpdateResult> {
   console.log('Starting gift card activation update from transactions...');
   
@@ -107,40 +154,41 @@ export async function updateGiftCardActivationFromTransactions(): Promise<Update
             ABS(EXTRACT(EPOCH FROM (o.created_at - ${giftCard.transaction_timestamp}::timestamptz)))
         `);
         
-        if (matchingOrders.rows.length === 0) {
-          console.log(`No matching orders found for gift card ID ${giftCardId}`);
+          if (matchingOrders.rows.length === 0) {
+            console.log(`No matching orders found for gift card ID ${giftCardId}`);
+            skippedCount++;
+            continue;
+          }
+          
+          console.log(`Found ${matchingOrders.rows.length} potential matching orders for gift card ID ${giftCardId}`);
+          
+          // Use the closest matching order
+          const closestOrder = matchingOrders.rows[0];
+          const giftCardAmount = closestOrder.item_total || closestOrder.order_total;
+          
+          if (!giftCardAmount || isNaN(Number(giftCardAmount)) || Number(giftCardAmount) <= 0) {
+            console.log(`Invalid gift card amount for gift card ID ${giftCardId}`);
+            skippedCount++;
+            continue;
+          }
+          
+          // FORCE UPDATE ALL gift cards with the amount from orders
+          const currentActivationAmount = Number(giftCard.activation_amount || 0);
+          const newActivationAmount = Number(giftCardAmount);
+          
+          console.log(`Gift card ID ${giftCardId}: Current activation amount: $${currentActivationAmount.toFixed(2)}, New amount from order: $${newActivationAmount.toFixed(2)}`);
+          
+          // ALWAYS update with the order amount - no tolerance check
+          await db.update(giftCards)
+            .set({ activationAmount: newActivationAmount })
+            .where(sql`id = ${giftCardId}`);
+          
+          console.log(`✅ FORCE UPDATED gift card ID ${giftCardId} with amount $${newActivationAmount.toFixed(2)} from order ID ${closestOrder.order_id} (was $${currentActivationAmount.toFixed(2)})`);
+          updatedCount++;
+        } catch (error) {
+          console.error(`Error processing gift card ${giftCard.id}:`, error);
           skippedCount++;
-          continue;
         }
-        
-        console.log(`Found ${matchingOrders.rows.length} potential matching orders for gift card ID ${giftCardId}`);
-        
-        // Use the closest matching order
-        const closestOrder = matchingOrders.rows[0];
-        const giftCardAmount = closestOrder.item_total || closestOrder.order_total;
-        
-        if (!giftCardAmount || isNaN(Number(giftCardAmount)) || Number(giftCardAmount) <= 0) {
-          console.log(`Invalid gift card amount for gift card ID ${giftCardId}`);
-          skippedCount++;
-          continue;
-        }
-        
-        // FORCE UPDATE ALL gift cards with the amount from orders
-        const currentActivationAmount = Number(giftCard.activation_amount || 0);
-        const newActivationAmount = Number(giftCardAmount);
-        
-        console.log(`Gift card ID ${giftCardId}: Current activation amount: $${currentActivationAmount.toFixed(2)}, New amount from order: $${newActivationAmount.toFixed(2)}`);
-        
-        // ALWAYS update with the order amount - no tolerance check
-        await db.update(giftCards)
-          .set({ activationAmount: newActivationAmount })
-          .where(sql`id = ${giftCardId}`);
-        
-        console.log(`✅ FORCE UPDATED gift card ID ${giftCardId} with amount $${newActivationAmount.toFixed(2)} from order ID ${closestOrder.order_id} (was $${currentActivationAmount.toFixed(2)})`);
-        updatedCount++;
-      } catch (error) {
-        console.error(`Error processing gift card ${giftCard.id}:`, error);
-        skippedCount++;
       }
     }
     
@@ -234,59 +282,13 @@ export async function updateGiftCardActivationFromTransactions(): Promise<Update
   }
 }
 
-// Verify activation amounts for debugging
-async function verifyActivationAmounts(): Promise<void> {
-  try {
-    const result = await db.execute(sql`
-      SELECT 
-        DATE(purchase_date AT TIME ZONE 'America/New_York') as date, 
-        COUNT(*) as card_count,
-        SUM(activation_amount) as total_activation,
-        SUM(amount) as total_current,
-        SUM(redeemed_amount) as total_redeemed
-      FROM 
-        gift_cards
-      GROUP BY 
-        DATE(purchase_date AT TIME ZONE 'America/New_York')
-      ORDER BY 
-        date
-    `);
-    
-    console.log('Gift Card Activation Amounts By Date:');
-    for (const row of result.rows) {
-      console.log(`${row.date}: ${row.card_count} cards, $${Number(row.total_activation).toFixed(2)} total activation`);
-      console.log(`  Current Balance Total: $${Number(row.total_current).toFixed(2)}`);
-      console.log(`  Redeemed Amount Total: $${Number(row.total_redeemed).toFixed(2)}`);
-      const sum = Number(row.total_current) + Number(row.total_redeemed);
-      console.log(`  Sum (Balance + Redeemed): $${sum.toFixed(2)}`);
-      
-      // Count cards with and without activation amount
-      const detailedCount = await db.execute(sql`
-        SELECT 
-          COUNT(*) FILTER (WHERE activation_amount IS NOT NULL AND activation_amount > 0) as with_activation,
-          COUNT(*) FILTER (WHERE activation_amount IS NULL OR activation_amount = 0) as without_activation
-        FROM 
-          gift_cards
-        WHERE 
-          DATE(purchase_date AT TIME ZONE 'America/New_York') = ${row.date}
-      `);
-      
-      if (detailedCount.rows.length > 0) {
-        console.log(`  Cards with activation amount: ${detailedCount.rows[0].with_activation}`);
-        console.log(`  Cards missing activation amount: ${detailedCount.rows[0].without_activation}`);
-      }
-    }
-  } catch (error) {
-    console.error('Error verifying activation amounts:', error);
-  }
-}
-
 // Allow this file to be run directly with 'node --loader tsx <file>'
 // but avoid execution when it's imported as a module
 import { fileURLToPath } from 'url';
 
 // ES module equivalent of 'if this file is run directly'
-const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+const isMainModule = process.argv.length > 1 && 
+                     fileURLToPath(import.meta.url) === process.argv[1];
 
 if (isMainModule) {
   updateGiftCardActivationFromTransactions()

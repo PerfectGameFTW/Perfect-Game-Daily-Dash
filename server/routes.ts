@@ -1586,27 +1586,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log("Starting FORCE UPDATE of ALL gift card activation amounts from transaction-order matching...");
       
+      // Return a quick response to the client so it doesn't time out
+      res.json({
+        success: true,
+        message: "FORCE UPDATE of ALL gift cards has been started in the background",
+        note: "Check server logs for progress. This operation may take several minutes to complete.",
+        checkSummaryEndpoint: "/api/fix-gift-cards"
+      });
+      
       // Import the updateGiftCardActivationFromTransactions function dynamically
       const { updateGiftCardActivationFromTransactions } = await import('./updateGiftCardActivationFromTransactions');
       
-      // Run the function to process ALL gift cards
-      const result = await updateGiftCardActivationFromTransactions();
-      
-      // Return detailed results of the update operation
-      return res.json({
-        success: true,
-        message: "FORCE UPDATED ALL gift card activation amounts from orders table",
-        result: {
-          updated: result?.updated || 0,
-          directlyUpdated: result?.directlyUpdated || 0,
-          totalUpdated: (result?.updated || 0) + (result?.directlyUpdated || 0),
-          skipped: result?.skipped || 0
-        }
-      });
+      // Run the function to process ALL gift cards in the background
+      updateGiftCardActivationFromTransactions()
+        .then(result => {
+          console.log("Force update of ALL gift cards completed successfully:");
+          console.log(`✅ Updated: ${result.updated} cards`);
+          console.log(`✅ Directly updated: ${result.directlyUpdated} cards`);
+          console.log(`✅ Total updated: ${result.updated + result.directlyUpdated} cards`);
+          console.log(`⚠️ Skipped: ${result.skipped} cards`);
+        })
+        .catch(error => {
+          console.error("Error during background gift card update:", error);
+        });
     } catch (error) {
-      console.error("Error during universal gift card update:", error);
+      console.error("Error initiating universal gift card update:", error);
       res.status(500).json({
-        error: "Failed to update all gift cards",
+        error: "Failed to initiate gift card update",
         message: error instanceof Error ? error.message : "Unknown error"
       });
     }
