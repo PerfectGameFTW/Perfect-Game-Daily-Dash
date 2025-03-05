@@ -91,7 +91,23 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         {/* Gift Card Sales */}
         <div className="flex justify-between py-3 border-b border-zinc-800">
           <span className="text-white">Gift Card Sales</span>
-          <span className="text-white">{formatCurrency(detailedTransactions?.giftCardSales || 0)}</span>
+          <div className="flex items-center">
+            <span className="text-white mr-3">{formatCurrency(data?.giftCardSales || 0)}</span>
+            <div
+              className={`px-2 py-1 rounded text-xs font-semibold flex items-center ${
+                isPositiveChange(data?.giftCardSalesChange || 0)
+                  ? "bg-green-900/30 text-green-400"
+                  : "bg-red-900/30 text-red-400"
+              }`}
+            >
+              {isPositiveChange(data?.giftCardSalesChange || 0) ? (
+                <ChevronUp className="mr-0.5 h-3 w-3" />
+              ) : (
+                <ChevronDown className="mr-0.5 h-3 w-3" />
+              )}
+              {formatPercentage(Math.abs(data?.giftCardSalesChange || 0))}
+            </div>
+          </div>
         </div>
 
         {/* Partywirks */}
