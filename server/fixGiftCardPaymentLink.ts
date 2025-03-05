@@ -234,8 +234,10 @@ export async function linkGiftCardsToPayments() {
   }
 }
 
-// Entry point when run directly
-if (require.main === module) {
+// Entry point when run directly from command line
+// This uses import.meta.url to check if this is the main module
+// (ESM equivalent of the CommonJS require.main === module pattern)
+if (import.meta.url === `file://${process.argv[1]}`) {
   linkGiftCardsToPayments()
     .then(() => {
       console.log('Gift card payment linking completed');
