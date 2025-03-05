@@ -10,21 +10,49 @@ async function updateRedemptionData() {
   try {
     // First, get all fully redeemed gift cards with amount = 0
     const fullyRedeemedCards = await db.execute(sql`
-      SELECT id, square_id, amount, redeemed_amount 
+      SELECT id, square_id, amount, redeemed_amount, activation_amount, square_data
       FROM gift_cards 
       WHERE amount = 0 AND redeemed_amount = 0
     `);
 
     console.log(`Found ${fullyRedeemedCards.rows.length} fully redeemed gift cards`);
 
-    // Update redeemed_amount for these cards to track proper original activation amount
+    // Update redeemed_amount for these cards to match their activation amounts
     for (const card of fullyRedeemedCards.rows) {
-      await db.execute(sql`
-        UPDATE gift_cards 
-        SET redeemed_amount = 214.5 
-        WHERE id = ${card.id}
-      `);
-      console.log(`Updated redeemed_amount for card ${card.square_id} with ID ${card.id}`);
+      // Try to extract activation amount from the card data
+      let activationAmount = Number(card.activation_amount) || 0;
+      
+      // If no activation amount is set, try to extract it from square_data
+      if (activationAmount === 0 && card.square_data) {
+        try {
+          const data = typeof card.square_data === 'string' 
+            ? JSON.parse(card.square_data) 
+            : card.square_data;
+            
+          // Check for ganMoney (Gift Card Activity) first
+          if (data.ganMoney && data.ganMoney.amount) {
+            activationAmount = Number(data.ganMoney.amount) / 100;
+          } else if (data.ganData && data.ganData.amount) {
+            activationAmount = Number(data.ganData.amount) / 100;
+          }
+        } catch (error) {
+          console.error(`Error extracting activation amount from square_data for card ${card.id}:`, error);
+        }
+      }
+      
+      if (activationAmount > 0) {
+        // Update both redeemed_amount and activation_amount for fully redeemed cards
+        await db.execute(sql`
+          UPDATE gift_cards 
+          SET 
+            redeemed_amount = ${activationAmount},
+            activation_amount = ${activationAmount}
+          WHERE id = ${card.id}
+        `);
+        console.log(`Updated card ${card.square_id} with ID ${card.id}: activation_amount = $${activationAmount}, redeemed_amount = $${activationAmount}`);
+      } else {
+        console.log(`Skipping card ${card.square_id} with ID ${card.id}: Could not determine activation amount`);
+      }
     }
 
     // Get all cards that might have redemption records but not properly counted
