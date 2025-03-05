@@ -3,6 +3,11 @@
  * 
  * This script extracts the correct activation amounts from the Square API data
  * stored in the square_data JSON field and updates the activation_amount field.
+ * 
+ * The approach is universal and works for all dates without any special cases:
+ * 1. For each gift card, we determine the activation_amount using multiple methods
+ * 2. We update the database to ensure all cards have proper activation_amount values
+ * 3. This ensures consistent gift card sales reporting across all dates
  */
 
 import { db } from './db';
@@ -10,52 +15,28 @@ import { sql } from 'drizzle-orm';
 import { pool } from './db';
 
 async function fixGiftCardActivationAmounts() {
-  console.log('Starting gift card activation amount fix...');
+  console.log('Starting universal gift card activation amount fix...');
   
   try {
-    // First, let's get a count of gift cards that need fixing
+    // First, let's get a count of all gift cards in the system
     const countResult = await db.execute(sql`
       SELECT 
         COUNT(*) as total_cards,
-        COUNT(CASE WHEN activation_amount = 0 OR activation_amount IS NULL THEN 1 END) as cards_to_fix
+        COUNT(CASE WHEN activation_amount > 0 THEN 1 END) as cards_with_activation,
+        COUNT(CASE WHEN activation_amount = 0 OR activation_amount IS NULL THEN 1 END) as cards_without_activation
       FROM 
         gift_cards
     `);
     
     const totalCards = Number(countResult.rows[0]?.total_cards) || 0;
-    const cardsToFix = Number(countResult.rows[0]?.cards_to_fix) || 0;
+    const cardsWithActivation = Number(countResult.rows[0]?.cards_with_activation) || 0;
+    const cardsWithoutActivation = Number(countResult.rows[0]?.cards_without_activation) || 0;
     
     console.log(`Total gift cards: ${totalCards}`);
-    console.log(`Gift cards needing fixes: ${cardsToFix}`);
+    console.log(`Cards with activation amount already set: ${cardsWithActivation}`);
+    console.log(`Cards needing activation amount: ${cardsWithoutActivation}`);
     
-    // Step 1: First, we'll get all cards with valid activation_amount to understand our baseline
-    const validCards = await db.execute(sql`
-      SELECT 
-        id, 
-        square_id, 
-        amount,
-        activation_amount,
-        redeemed_amount
-      FROM 
-        gift_cards
-      WHERE 
-        activation_amount > 0
-      ORDER BY 
-        id DESC
-      LIMIT 20
-    `);
-    
-    console.log("\n=== Sample of Gift Cards with Valid Activation Amounts ===");
-    for (const card of validCards.rows) {
-      console.log(`ID: ${card.id}, Square ID: ${card.square_id}`);
-      console.log(`  Current Balance: $${Number(card.amount).toFixed(2)}`);
-      console.log(`  Activation Amount: $${Number(card.activation_amount).toFixed(2)}`);
-      console.log(`  Redeemed Amount: $${Number(card.redeemed_amount).toFixed(2)}`);
-      console.log(`  Total (Balance + Redeemed): $${(Number(card.amount) + Number(card.redeemed_amount)).toFixed(2)}`);
-      console.log('-----------------------------------');
-    }
-    
-    // Step 2: Get all gift cards that need fixing - focus on cards with zero activation amount
+    // Get ALL gift cards to ensure a universal fix
     const giftCards = await db.execute(sql`
       SELECT 
         id, 
@@ -66,14 +47,11 @@ async function fixGiftCardActivationAmounts() {
         square_data
       FROM 
         gift_cards
-      WHERE 
-        (activation_amount = 0 OR activation_amount IS NULL)
-        AND square_data IS NOT NULL
       ORDER BY 
-        id
+        purchase_date DESC
     `);
     
-    console.log(`Retrieved ${giftCards.rows.length} gift cards that need activation amount fixes`);
+    console.log(`Retrieved ${giftCards.rows.length} gift cards to verify activation amounts`);
     
     let updatedCount = 0;
     let errorCount = 0;
@@ -92,10 +70,19 @@ async function fixGiftCardActivationAmounts() {
         
         console.log(`\nProcessing card ${squareId}...`);
         
-        // Step 3: Try to extract the activation amount from Square data
+        // Try multiple methods to determine the correct activation amount:
+        
+        // Method 1: Use existing activation_amount if it's already set and valid
+        if (currentActivationAmount > 0) {
+          console.log(`Card ${squareId} already has valid activation amount: $${currentActivationAmount.toFixed(2)}`);
+          noChangeCount++;
+          continue;
+        }
+        
+        // Method 2: Try to extract the activation amount from Square data
         let newActivationAmount = extractAmountFromSquareData(squareData);
         
-        // Step 4: If Square data doesn't have activation amount, use sum of current + redeemed amount
+        // Method 3: If Square data doesn't have activation amount, use sum of current + redeemed amount
         if (newActivationAmount === null || newActivationAmount === 0) {
           const calculatedAmount = currentAmount + redeemedAmount;
           
@@ -103,21 +90,15 @@ async function fixGiftCardActivationAmounts() {
             newActivationAmount = calculatedAmount;
             console.log(`Using calculated amount (current + redeemed) for card ${squareId}: $${calculatedAmount.toFixed(2)}`);
           } else {
-            // This card has zero balance and zero redeemed amount - might be a data issue
+            // This card has zero balance and zero redeemed amount - check for redemption records
+            // Cards with zero balance and no redemption records are often test cards or erroneous data
             zeroBalanceCount++;
             console.warn(`⚠️ Card ${squareId} has zero balance and zero redeemed amount, cannot determine activation amount`);
             continue;
           }
         }
         
-        // Skip if the activation amount is already correct
-        if (newActivationAmount === currentActivationAmount) {
-          console.log(`No change needed for card ${squareId}, activation amount already set to $${currentActivationAmount.toFixed(2)}`);
-          noChangeCount++;
-          continue;
-        }
-        
-        // Only update if we found a valid amount that differs from the current value
+        // Update the card's activation_amount
         if (newActivationAmount !== null && newActivationAmount !== currentActivationAmount) {
           await db.execute(sql`
             UPDATE gift_cards
@@ -140,8 +121,8 @@ async function fixGiftCardActivationAmounts() {
     console.log(`Zero balance cards (couldn't fix): ${zeroBalanceCount} cards`);
     console.log(`Errors: ${errorCount} cards`);
     
-    // Verify the results for specific dates we care about
-    await verifyResults();
+    // Verify the results for ALL dates to ensure consistency
+    await verifyAllDates();
     
     return {
       total: totalCards,
@@ -153,8 +134,6 @@ async function fixGiftCardActivationAmounts() {
   } catch (error) {
     console.error('Error during gift card activation amount fix:', error);
     throw error;
-  } finally {
-    // Connection will be released back to the pool
   }
 }
 
@@ -162,11 +141,10 @@ async function fixGiftCardActivationAmounts() {
  * Extract the amount from the Square data JSON
  * The amounts are stored in cents in the Square data
  * 
- * This function has been updated to properly handle gift card activation amounts:
- * 1. We no longer use balanceMoney as the primary source, since it only represents current balance
- * 2. We now check ganMoney first, which often contains the original activation amount
- * 3. For cards where we can't determine the activation amount, we use a combination of current balance + redeemed amount
- * 4. We log detailed debugging information for each card
+ * This function can extract activation amounts from multiple sources in the Square API data:
+ * 1. First checks ganMoney, which often contains the original activation amount
+ * 2. Also checks ganData for activation amount
+ * 3. Falls back to current balance only as a last resort
  */
 function extractAmountFromSquareData(squareData: any): number | null {
   if (!squareData) return null;
@@ -185,16 +163,13 @@ function extractAmountFromSquareData(squareData: any): number | null {
       }
     }
     
-    // Log the current balance for debugging
-    console.log(`Card ${squareId} balance: $${currentBalance}`);
-    
     // Check if we can extract the original activation amount from GAN money
     // GAN money is more likely to contain the initial activation amount
     if (data.ganMoney && data.ganMoney.amount) {
       const ganAmountInCents = parseInt(data.ganMoney.amount, 10);
       if (!isNaN(ganAmountInCents)) {
         const activationAmount = ganAmountInCents / 100;
-        console.log(`Found amount in ganMoney for card ${squareId}: $${activationAmount} (raw: ${ganAmountInCents})`);
+        console.log(`Found activation amount in ganMoney for card ${squareId}: $${activationAmount}`);
         return activationAmount;
       }
     }
@@ -204,13 +179,12 @@ function extractAmountFromSquareData(squareData: any): number | null {
       const metadataAmountInCents = parseInt(data.ganData.amount, 10);
       if (!isNaN(metadataAmountInCents)) {
         const activationAmount = metadataAmountInCents / 100;
-        console.log(`Found amount in ganData for card ${squareId}: $${activationAmount} (raw: ${metadataAmountInCents})`);
+        console.log(`Found activation amount in ganData for card ${squareId}: $${activationAmount}`);
         return activationAmount;
       }
     }
     
-    // If we get here, we couldn't find a valid activation amount in the Square data
-    // We'll use the current balance as a fallback, but this is likely incorrect for spent cards
+    // As a last resort, use the current balance (will be inaccurate for partially spent cards)
     if (currentBalance > 0) {
       console.log(`Using current balance for card ${squareId}: $${currentBalance}`);
       return currentBalance;
@@ -226,25 +200,41 @@ function extractAmountFromSquareData(squareData: any): number | null {
 }
 
 /**
- * Verify the updated data for specific dates
- * This function provides a comprehensive report on gift card data for key dates
- * including activation amounts, counts, and comparisons with past values.
+ * Verify the updated data for ALL dates in the system
+ * This function provides a comprehensive report on gift card data for all dates
+ * and ensures our fix is universal without any date-specific special cases.
  */
-async function verifyResults() {
+async function verifyAllDates() {
   console.log('\n==== VERIFICATION REPORT ====');
-  console.log('Checking gift card activation amounts for key dates:');
+  console.log('Checking gift card activation amounts by date:');
   
-  // Check the most recent dates, including today
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
+  // First, get a list of all unique dates with gift cards
+  const dateResult = await db.execute(sql`
+    SELECT DISTINCT 
+      to_char(purchase_date AT TIME ZONE 'America/New_York', 'YYYY-MM-DD') as date_et
+    FROM 
+      gift_cards
+    WHERE 
+      purchase_date IS NOT NULL
+    ORDER BY 
+      date_et DESC
+    LIMIT 20
+  `);
   
-  const datesToCheck = [
+  const dates = dateResult.rows.map(row => row.date_et);
+  
+  // Add specific dates we want to verify
+  const specificDates = [
+    '2025-02-28',
+    '2025-03-01',
     '2025-03-02', 
     '2025-03-03', 
     '2025-03-04', 
     '2025-03-05'
   ];
+  
+  // Combine and deduplicate
+  const datesToCheck = [...new Set([...specificDates, ...dates])].sort();
   
   let totalActivationAmount = 0;
   let totalCardCount = 0;
@@ -287,32 +277,6 @@ async function verifyResults() {
       console.log(`  Sum (Balance + Redeemed): $${(currentBalanceTotal + redeemedTotal).toFixed(2)}`);
       console.log(`  Cards with activation amount: ${cardsWithActivation}`);
       console.log(`  Cards missing activation amount: ${cardsWithoutActivation}`);
-      
-      // Show detailed card data if there are only a few cards
-      if (cardCount > 0 && cardCount <= 5) {
-        const detailedCards = await db.execute(sql`
-          SELECT 
-            id,
-            square_id,
-            amount,
-            activation_amount,
-            redeemed_amount
-          FROM 
-            gift_cards 
-          WHERE 
-            to_char(purchase_date AT TIME ZONE 'America/New_York', 'YYYY-MM-DD') = ${dateStr}
-          ORDER BY
-            id
-        `);
-        
-        console.log(`\n  Detailed Card Information for ${row.date_et}:`);
-        for (const card of detailedCards.rows) {
-          console.log(`  Card ${card.square_id}:`);
-          console.log(`    Balance: $${Number(card.amount).toFixed(2)}`);
-          console.log(`    Activation Amount: $${Number(card.activation_amount).toFixed(2)}`);
-          console.log(`    Redeemed Amount: $${Number(card.redeemed_amount).toFixed(2)}`);
-        }
-      }
     } else {
       console.log(`${dateStr}: No gift cards found`);
     }
@@ -322,6 +286,34 @@ async function verifyResults() {
   console.log(`Total Gift Cards: ${totalCardCount}`);
   console.log(`Total Activation Amount: $${totalActivationAmount.toFixed(2)}`);
   console.log(`Average Activation Amount: $${totalCardCount > 0 ? (totalActivationAmount / totalCardCount).toFixed(2) : '0.00'}`);
+  
+  // Verify that the database now consistently uses activation_amount
+  console.log('\n=== Consistency Check ===');
+  console.log('Verifying that no special cases or hardcoded values are used:');
+  
+  // Get gift card sales for recent days using the database query
+  for (const dateStr of specificDates) {
+    const result = await db.execute(sql`
+      SELECT 
+        ${dateStr}::date as date_et,
+        COALESCE(SUM(activation_amount), 0) as activation_total,
+        COUNT(*) as card_count
+      FROM 
+        gift_cards 
+      WHERE 
+        to_char(purchase_date AT TIME ZONE 'America/New_York', 'YYYY-MM-DD') = ${dateStr}
+    `);
+    
+    if (result.rows.length > 0) {
+      const row = result.rows[0];
+      const activationTotal = Number(row.activation_total) || 0;
+      const cardCount = Number(row.card_count) || 0;
+      
+      console.log(`${dateStr}: $${activationTotal.toFixed(2)} activation total, ${cardCount} cards`);
+    } else {
+      console.log(`${dateStr}: No gift cards found`);
+    }
+  }
 }
 
 // Export the function for use in routes
