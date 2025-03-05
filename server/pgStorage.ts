@@ -113,16 +113,76 @@ class PgStorage implements IStorage {
 
   // Dashboard summary methods
   async getDailySummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<DailySummary> {
-    // Simplified implementation for now
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
+    
+    // Get completed transactions for the current period
+    const currentTransactions = await this.getTransactions(dateRange, startDate, endDate, 'completed');
+    
+    // Calculate total revenue from transactions
+    const totalRevenue = currentTransactions.reduce((sum, t) => sum + t.amount, 0);
+    
+    // Get gift card sales for the period
+    const giftCardSales = await this.getGiftCardSales(dateRange, startDate, endDate);
+    
+    // Get previous period for comparison
+    let previousStart = new Date(start);
+    let previousEnd = new Date(end);
+    
+    // Calculate previous period based on current date range
+    if (dateRange === 'today') {
+      previousStart.setDate(previousStart.getDate() - 1);
+      previousEnd.setDate(previousEnd.getDate() - 1);
+    } else if (dateRange === 'yesterday') {
+      previousStart.setDate(previousStart.getDate() - 1);
+      previousEnd.setDate(previousEnd.getDate() - 1);
+    } else if (dateRange === 'thisMonth' || dateRange === 'lastMonth') {
+      previousStart.setMonth(previousStart.getMonth() - 1);
+      previousEnd.setMonth(previousEnd.getMonth() - 1);
+    } else {
+      // For last7days, last30days, and custom, just shift by the same duration
+      const currentDuration = end.getTime() - start.getTime();
+      previousStart = new Date(start.getTime() - currentDuration);
+      previousEnd = new Date(start.getTime() - 1); // End just before current period starts
+    }
+    
+    // Get previous period transactions
+    const previousTransactions = await this.getTransactions(
+      'custom', 
+      previousStart, 
+      previousEnd, 
+      'completed'
+    );
+    
+    // Calculate previous period metrics
+    const previousRevenue = previousTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const previousGiftCardSales = await this.getGiftCardSales('custom', previousStart, previousEnd);
+    
+    // Calculate changes
+    const revenueChange = previousRevenue === 0 ? 0 : (totalRevenue - previousRevenue) / previousRevenue;
+    const giftCardSalesChange = previousGiftCardSales === 0 ? 0 : (giftCardSales - previousGiftCardSales) / previousGiftCardSales;
+    
+    // Calculate orders metrics (placeholder implementation)
+    // In a real implementation, we would count actual orders
+    const totalOrders = currentTransactions.length;
+    const previousOrders = previousTransactions.length;
+    const ordersChange = previousOrders === 0 ? 0 : (totalOrders - previousOrders) / previousOrders;
+    
+    // Calculate average order value
+    const averageOrder = totalOrders === 0 ? 0 : totalRevenue / totalOrders;
+    const previousAverage = previousOrders === 0 ? 0 : previousRevenue / previousOrders;
+    const averageOrderChange = previousAverage === 0 ? 0 : (averageOrder - previousAverage) / previousAverage;
+    
     return {
-      totalRevenue: 0,
-      revenueChange: 0,
-      totalOrders: 0,
-      ordersChange: 0,
-      averageOrder: 0,
-      averageOrderChange: 0,
-      giftCardSales: 0,
-      giftCardSalesChange: 0,
+      totalRevenue,
+      revenueChange,
+      totalOrders,
+      ordersChange,
+      averageOrder,
+      averageOrderChange,
+      giftCardSales,
+      giftCardSalesChange,
       date: new Date().toLocaleDateString()
     };
   }
