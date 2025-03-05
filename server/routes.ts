@@ -796,6 +796,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Add a simple sync endpoint
+  apiRouter.post("/simple-sync", async (req, res) => {
+    try {
+      console.log("Starting simple sync process...");
+
+      // Check Square API connection first
+      try {
+        const connectionTest = await squareClient.testConnection();
+        console.log("Square API connection test:", connectionTest);
+      } catch (apiError) {
+        console.error("Square API connection failed:", apiError);
+        return res.status(503).json({
+          error: "Failed to connect to Square API"
+        });
+      }
+
+      // Calculate sync window
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 30); // Sync last 30 days
+
+      console.log(`Fetching payments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
+      // Fetch payments from Square
+      let payments = [];
+      try {
+        payments = await squareClient.fetchPayments(startDate, endDate);
+        console.log(`Successfully fetched ${payments.length} payments from Square`);
+      } catch (fetchError) {
+        console.error("Error fetching payments:", fetchError);
+        throw new Error(`Failed to fetch payments: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`);
+      }
+
+      // Process payments - avoid using onConflictDoUpdate which causes SQL errors
+      let processedCount = 0;
+      let errorCount = 0;
+
+      for (const payment of payments) {
+        try {
+          // Check if transaction already exists
+          const existingTransaction = await db.query.transactions.findFirst({
+            where: eq(transactions.squareId, payment.id)
+          });
+
+          // Skip if it already exists
+          if (existingTransaction) {
+            continue;
+          }
+
+          // Create new transaction
+          const transaction = squareClient.convertSquarePaymentToTransaction(payment);
+          await db.insert(transactions).values(transaction);
+          processedCount++;
+        } catch (error) {
+          errorCount++;
+          console.error(`Error processing payment ${payment.id}:`, error);
+        }
+      }
+
+      // Return simple success response
+      res.json({
+        success: true,
+        processed: processedCount,
+        total: payments.length,
+        errors: errorCount
+      });
+
+    } catch (error) {
+      console.error("Sync process failed:", error);
+      res.status(500).json({
+        error: "Failed to sync data"
+      });
+    }
+  });
+
   // Add test endpoint after the fix-gift-cards endpoint
   apiRouter.get("/test-redemption", async (req, res) => {
     try {
@@ -804,7 +879,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create a sample gift card (for testing only)
       const sampleGiftCard = {
         squareId: "gftc:test-gift-card-id",
-        gan: "1234567890",
+        gan:"1234567890",
         amount: 50.0,
         createdAt: new Date(),
         updatedAt: new Date(),
