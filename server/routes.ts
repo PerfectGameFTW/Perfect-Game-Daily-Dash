@@ -836,12 +836,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Now sync gift cards as well
+      let giftCardProcessed = 0;
+      let giftCardErrorCount = 0;
+
+      try {
+        console.log("Starting gift card sync process...");
+
+        // Fetch all gift cards from Square
+        const squareGiftCards = await squareClient.fetchGiftCards();
+        console.log(`Fetched ${squareGiftCards.length} gift cards from Square`);
+
+        // Process each gift card – update if exists, otherwise insert new record
+        for (const card of squareGiftCards) {
+          try {
+            // Process the Square gift card data to ensure it's safe for JSON serialization
+            const safeCard = ensureSerializable(card);
+
+            // Attempt to find an existing gift card record by squareId
+            const existingCard = await db.query.giftCards.findFirst({
+              where: eq(giftCards.squareId, safeCard.id)
+            });
+
+            // Determine the current balance (convert from cents to dollars)
+            let amount = 0;
+            if (safeCard.balanceMoney && safeCard.balanceMoney.amount) {
+              amount = Number(safeCard.balanceMoney.amount) / 100;
+            } else if (safeCard.balance_money && safeCard.balance_money.amount) {
+              amount = Number(safeCard.balance_money.amount) / 100;
+            }
+
+            if (existingCard) {
+              // Update the existing gift card record
+              await db.update(giftCards)
+                .set({
+                  amount: amount,
+                  squareData: safeCard
+                })
+                .where(eq(giftCards.squareId, safeCard.id));
+              console.log(`Updated gift card ${safeCard.id} with amount $${amount.toFixed(2)}`);
+            } else {
+              // Insert a new gift card record
+              const newCard = {
+                squareId: safeCard.id,
+                gan: safeCard.gan || '',
+                amount: amount,
+                                squareData: safeCard,
+                purchaseDate: new Date(),
+                status: 'ACTIVE',
+                isActive: true
+              };
+
+              await db.insert(giftCards).values(newCard);
+              console.log(`Inserted new gift card ${safeCard.id} with amount $${amount.toFixed(2)}`);
+            }
+
+            giftCardProcessed++;
+          } catch (cardError) {
+            giftCardErrorCount++;
+            console.error(`Error processing gift card ${card.id}:`, cardError);
+          }
+        }
+
+        // Update the gift card sync state
+        const giftCardSyncState = await db.query.syncState.findFirst({
+          where: eq(syncState.syncType, 'giftCards')
+        });
+
+        if (giftCardSyncState) {
+          await db.update(syncState)
+            .set({
+              lastSyncedAt: new Date(),
+              status: 'completed',
+              processedCount: giftCardProcessed,
+              totalCount: squareGiftCards.length,
+              isComplete: true,
+              errorMessage: giftCardErrorCount > 0 ? `${giftCardErrorCount} errors occurred` : null
+            })
+            .where(eq(syncState.id, giftCardSyncState.id));
+        } else {
+          // Create sync state record if it doesn't exist
+          await db.insert(syncState).values({
+            syncType: 'giftCards',
+            lastSyncedAt: new Date(),
+            status: 'completed',
+            processedCount: giftCardProcessed,
+            totalCount: squareGiftCards.length,
+            isComplete: true,
+            errorMessage: giftCardErrorCount > 0 ? `${giftCardErrorCount} errors occurred` : null
+          });
+        }
+
+        console.log(`Gift card sync completed: processed ${giftCardProcessed}, errors ${giftCardErrorCount}`);
+      } catch (giftCardError) {
+        console.error("Error syncing gift cards:", giftCardError);
+
+        // Update gift card sync state to reflect the error
+        try {
+          await db.update(syncState)
+            .set({
+              lastSyncedAt: new Date(),
+              status: 'error',
+              errorMessage: giftCardError instanceof Error ? giftCardError.message : 'Unknown error during gift card sync'
+            })
+            .where(eq(syncState.syncType, 'giftCards'));
+        } catch (updateError) {
+          console.error("Failed to update gift card sync state:", updateError);
+        }
+      }
+
       // Return simple success response
       res.json({
         success: true,
-        processed: processedCount,
-        total: payments.length,
-        errors: errorCount
+        processed: {
+          payments: processedCount,
+          giftCards: giftCardProcessed
+        },
+        errors: {
+          payments: errorCount,
+          giftCards: giftCardErrorCount
+        },
+        timestamp: new Date().toISOString()
       });
 
     } catch (error) {
