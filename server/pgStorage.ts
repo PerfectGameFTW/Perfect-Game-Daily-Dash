@@ -214,13 +214,59 @@ class PgStorage implements IStorage {
   }
 
   async getGiftCardSummary(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<GiftCardSummary> {
-    // Simplified implementation for now
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
+    
+    console.log('Getting gift card summary for range:', { startStr, endStr });
+    
+    // Query to get gift cards sold in the date range using Eastern Time
+    const soldResult = await db.execute(sql`
+      SELECT 
+        COUNT(*) as sold_count,
+        COALESCE(SUM(amount + redeemed_amount), 0) as sold_amount
+      FROM 
+        gift_cards_et
+      WHERE 
+        DATE(purchase_date_et) >= ${startStr}::date
+        AND DATE(purchase_date_et) <= ${endStr}::date
+    `);
+    
+    // Query to get gift card redemptions in the date range using Eastern Time
+    const redeemedResult = await db.execute(sql`
+      SELECT 
+        COUNT(*) as redeemed_count,
+        COALESCE(SUM(amount), 0) as redeemed_amount
+      FROM 
+        gift_card_redemptions_et
+      WHERE 
+        DATE(timestamp_et) >= ${startStr}::date
+        AND DATE(timestamp_et) <= ${endStr}::date
+    `);
+    
+    // Extract the results
+    const soldCount = Number(soldResult.rows[0]?.sold_count) || 0;
+    const soldAmount = Number(soldResult.rows[0]?.sold_amount) || 0;
+    const redeemedCount = Number(redeemedResult.rows[0]?.redeemed_count) || 0;
+    const redeemedAmount = Number(redeemedResult.rows[0]?.redeemed_amount) || 0;
+    
+    // Calculate average value
+    const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
+    
+    console.log('Gift card summary calculated from database:', {
+      soldCount,
+      soldAmount,
+      redeemedCount,
+      redeemedAmount,
+      averageValue
+    });
+    
     return {
-      soldCount: 0,
-      soldAmount: 0,
-      redeemedCount: 0,
-      redeemedAmount: 0,
-      averageValue: 0
+      soldCount,
+      soldAmount,
+      redeemedCount,
+      redeemedAmount,
+      averageValue
     };
   }
 
