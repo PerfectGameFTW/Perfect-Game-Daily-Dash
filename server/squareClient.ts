@@ -232,13 +232,44 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
       throw new Error("Invalid Square order data: missing id");
     }
     
-    // Check for gift card items in the order
+    // Check for gift card items in the order with enhanced detection
     let hasGiftCardItems = false;
+    let giftCardTotal = 0;
+    
     if (safeOrder.lineItems && Array.isArray(safeOrder.lineItems)) {
-      const giftCardItems = safeOrder.lineItems.filter((item: any) => 
-        item.itemType === 'GIFT_CARD' || 
-        (item.name && typeof item.name === 'string' && item.name.toLowerCase().includes('gift card'))
-      );
+      // More comprehensive detection with multiple patterns
+      const giftCardItems = safeOrder.lineItems.filter((item: any) => {
+        // Check multiple patterns that might indicate gift card
+        const isGiftCard = 
+          // Direct type check  
+          item.itemType === 'GIFT_CARD' || 
+          
+          // Name-based checks (with defensive coding)
+          (item.name && typeof item.name === 'string' && (
+            item.name.toLowerCase().includes('gift') ||
+            item.name.toLowerCase().includes('card') ||
+            item.name.toLowerCase().includes('deposit')
+          )) ||
+          
+          // Special case for items that are marked as gift cards in metadata
+          (item.metadata && item.metadata.isGiftCard === 'true') ||
+          
+          // Check catalog object type if available
+          (item.catalogObjectType === 'GIFT_CARD');
+        
+        // Mark the item as a gift card in its data for easy detection later
+        if (isGiftCard && item) {
+          item.isGiftCard = true;
+          
+          // Calculate the gift card amount
+          if (item.totalMoney && item.totalMoney.amount) {
+            item.giftCardAmount = Number(item.totalMoney.amount) / 100;
+            giftCardTotal += item.giftCardAmount;
+          }
+        }
+        
+        return isGiftCard;
+      });
       
       if (giftCardItems.length > 0) {
         console.log(`Found gift card purchase in order ${safeOrder.id}`);
@@ -249,7 +280,8 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
           console.log(`Gift card item ${index + 1}:`, {
             name: item.name,
             quantity: item.quantity,
-            totalMoney: item.totalMoney ? Number(item.totalMoney.amount) / 100 : 0
+            totalMoney: item.totalMoney ? Number(item.totalMoney.amount) / 100 : 0,
+            giftCardAmount: item.giftCardAmount || 0
           });
         });
       }
@@ -269,6 +301,8 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
       squareData: {
         ...safeOrder,
         hasGiftCardItems, // Flag to indicate this order contains gift card items
+        giftCardTotal, // Total amount of gift cards in this order
+        isGiftCardPurchase: hasGiftCardItems // Alternative flag name for consistency
       }
     };
   } catch (error) {
