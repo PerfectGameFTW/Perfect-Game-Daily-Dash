@@ -12,7 +12,7 @@
 
 import { db } from './db';
 import { sql } from 'drizzle-orm';
-import { squareClient } from './squareClient';
+import { squareClient, ordersApi } from './squareClient';
 import { getEasternDateRange } from './dateUtils';
 import { DateRange } from '../shared/schema';
 
@@ -263,9 +263,9 @@ async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: 
       
       // Make the actual API request for this batch
       try {
-        // Check if we have direct access to the Orders API through squareClient
-        if (!squareClient.ordersApi) {
-          console.log("Direct access to Orders API not available, using fetchOrders method instead");
+        // Use the imported ordersApi directly
+        if (!ordersApi) {
+          console.log("Orders API not available, using fetchOrders method from squareClient instead");
           const orders = await squareClient.fetchOrders(currentStart, queryEndDate);
           
           // Process the orders from fetchOrders
@@ -327,7 +327,7 @@ async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: 
           }
         } else {
           // Use direct ordersApi if available
-          const { result } = await squareClient.ordersApi.searchOrders({
+          const { result } = await ordersApi.searchOrders({
             locationIds: [locationId],
             query: {
               filter: {
@@ -347,6 +347,8 @@ async function getGiftCardActivations(dateRange: ExtendedDateRange, startDate?: 
           
           for (const order of batchOrders) {
             // Skip orders without line items
+            if (!order.lineItems || order.lineItems.length === 0) continue;
+            
             // Find gift card line items in this order
             const giftCardItems = order.lineItems.filter((item: any) => 
               // CRITICAL FIX: First check for the explicit GIFT_CARD itemType

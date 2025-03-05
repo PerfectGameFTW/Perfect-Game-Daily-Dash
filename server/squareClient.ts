@@ -271,7 +271,7 @@ export function convertSquareDiscountToOrderDiscount(discount: any, orderId: num
 }
 
 // Add enhanced gift card redemption detection
-function isGiftCardRedemption(payment: any): boolean {
+export function isGiftCardRedemption(payment: any): boolean {
   try {
     // Check for gift card payment source
     const isGiftCard = (
@@ -313,6 +313,7 @@ function isGiftCardRedemption(payment: any): boolean {
 
 // Update the fetchPayments method with better pagination control and timing logs
 export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]> {
+  const startTime = Date.now(); // Initialize this at the very top to avoid reference errors
   try {
     const now = new Date();
     const start = startDate || new Date(now.setDate(now.getDate() - 30));
@@ -341,7 +342,6 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     let hasMorePages = true;
     let pageCount = 0;
     const MAX_PAGES = 10; // Temporarily reduced for testing
-    const startTime = Date.now(); // Changed variable name from START_TIME to startTime
     const TIMEOUT = 5 * 60 * 1000; // 5 minute timeout
 
     while (hasMorePages && pageCount < MAX_PAGES) {
@@ -983,4 +983,4 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
   }
 }
 
-export { squareClient };
+export { squareClient, ordersApi, paymentsApi, giftCardsApi, catalogApi };
