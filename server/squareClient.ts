@@ -213,14 +213,21 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
 // Add a new function to convert Square order to our format
 export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
   const safeOrder = processSafeSquareData(squareOrder);
-
+  
+  // Ensure all required fields are present and handle nulls properly
+  if (!safeOrder.id) {
+    console.error("Square order missing required field: id");
+    throw new Error("Invalid Square order data: missing id");
+  }
+  
+  // Ensure all required fields are set properly and provide defaults for missing values
   return {
     squareId: safeOrder.id,
-    status: safeOrder.state,
+    status: safeOrder.state || "COMPLETED", // Default to COMPLETED if no state provided
     totalMoney: safeOrder.totalMoney ? Number(safeOrder.totalMoney.amount) / 100 : 0,
     totalTax: safeOrder.totalTaxMoney ? Number(safeOrder.totalTaxMoney.amount) / 100 : 0,
     totalDiscount: safeOrder.totalDiscountMoney ? Number(safeOrder.totalDiscountMoney.amount) / 100 : 0,
-    createdAt: new Date(safeOrder.createdAt),
+    createdAt: safeOrder.createdAt ? new Date(safeOrder.createdAt) : new Date(), // Default to current date if missing
     closedAt: safeOrder.closedAt ? new Date(safeOrder.closedAt) : null,
     source: safeOrder.source?.name || 'unknown',
     squareData: safeOrder
