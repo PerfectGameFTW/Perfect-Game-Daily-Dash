@@ -141,8 +141,8 @@ export async function updateGiftCardActivationFromTransactions(): Promise<Update
             for (const transaction of matchingTransactions.rows) {
               try {
                 // Extract orderId directly from transaction's square_data
-                const squareData = transaction.square_data;
-                const orderId = squareData.orderId;
+                const squareData = transaction.square_data as Record<string, any>;
+                const orderId = squareData?.orderId;
                 
                 if (!orderId) {
                   console.log(`Transaction ${transaction.id} has no orderId in square_data`);
