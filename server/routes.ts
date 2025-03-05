@@ -703,20 +703,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log("Starting gift card activation fix using Orders API...");
       
-      // Get date range from query parameters if provided
-      const dateRangeParam = req.query.dateRange as string || 'all_time';
-      console.log(`Using date range: ${dateRangeParam}`);
+      // Parse optional dateRange from query parameters
+      const dateRange = req.query.dateRange as string | undefined;
+      let parsedDateRange: string = 'all_time'; // Default to all time if not specified
       
-      // Import the new Orders-based fix function
+      // Optional custom date range parameters
+      let startDate: Date | undefined = undefined;
+      let endDate: Date | undefined = undefined;
+      
+      // If dateRange is provided, validate it
+      if (dateRange) {
+        try {
+          const validatedRange = dateRangeSchema.safeParse(dateRange);
+          if (validatedRange.success) {
+            parsedDateRange = validatedRange.data;
+          } else {
+            return res.status(400).json({ error: "Invalid date range" });
+          }
+        } catch (error) {
+          return res.status(400).json({ error: "Invalid date range parameter" });
+        }
+      }
+      
+      // Parse custom date range if provided
+      if (req.query.startDate && req.query.endDate) {
+        try {
+          startDate = new Date(req.query.startDate as string);
+          endDate = new Date(req.query.endDate as string);
+        } catch (error) {
+          return res.status(400).json({ error: "Invalid custom date format" });
+        }
+      }
+      
+      console.log(`Using date range: ${parsedDateRange}`);
+      
+      // Import the Orders API-based fix function
       const { fixGiftCardActivationsFromOrders } = await import('./fixGiftCardActivationsFromOrders');
       
-      // Run the new fix function that uses Orders API to find activations
-      const result = await fixGiftCardActivationsFromOrders(dateRangeParam as any);
+      // Run the fix function
+      const result = await fixGiftCardActivationsFromOrders(parsedDateRange as any, startDate, endDate);
       
-      // Process the result to make it safe for JSON response
-      const response = processSafeSquareData({
+      // Return results
+      return res.json({
         success: true,
-        message: "Gift card activation amounts have been fixed using Order data",
+        message: "Gift card activation amounts updated from Orders API",
+        dateRange: parsedDateRange,
+        customRange: startDate && endDate ? {
+          start: startDate.toISOString(),
+          end: endDate.toISOString()
+        } : null,
         result: {
           totalCards: result.total,
           updatedCards: result.updated,
@@ -726,8 +761,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           errors: result.errors
         }
       });
-      
-      return res.json(response);
     } catch (error) {
       console.error("Error fixing gift cards from orders:", error);
       res.status(500).json({
