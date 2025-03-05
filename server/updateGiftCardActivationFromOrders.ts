@@ -51,7 +51,7 @@ export async function updateGiftCardActivationFromOrders() {
       try {
         // Extract order details
         const orderId = order.order_id;
-        const orderCreatedAt = new Date(order.order_created_at);
+        const orderCreatedAt = new Date(order.order_created_at as string);
         
         // Use the gift card total if available, otherwise use the full order amount
         let giftCardAmount = 0;
@@ -131,7 +131,7 @@ export async function updateGiftCardActivationFromOrders() {
             console.log(`Updating gift card ${giftCard.id} (GAN: ${giftCard.gan}) with activation amount ${giftCardAmount}`);
             await db.update(giftCards)
               .set({ activationAmount: giftCardAmount })
-              .where(eq(giftCards.id, giftCard.id));
+              .where(sql`id = ${giftCard.id}`);
               
             updatedCount++;
           } 
@@ -144,7 +144,7 @@ export async function updateGiftCardActivationFromOrders() {
             console.log(`Updating closest gift card ${closestGiftCard.id} (GAN: ${closestGiftCard.gan}) with activation amount ${giftCardAmount}`);
             await db.update(giftCards)
               .set({ activationAmount: giftCardAmount })
-              .where(eq(giftCards.id, closestGiftCard.id));
+              .where(sql`id = ${closestGiftCard.id}`);
               
             updatedCount++;
           }
@@ -202,8 +202,14 @@ async function verifyActivationAmounts() {
   }
 }
 
-// If this script is run directly
-if (require.main === module) {
+// Allow this file to be run directly with 'node --loader tsx <file>'
+// but avoid execution when it's imported as a module
+import { fileURLToPath } from 'url';
+
+// ES module equivalent of 'if this file is run directly'
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+
+if (isMainModule) {
   updateGiftCardActivationFromOrders()
     .then(() => process.exit(0))
     .catch(error => {

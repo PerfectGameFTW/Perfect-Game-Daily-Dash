@@ -9,6 +9,7 @@ import { createServer, type Server } from "http";
 import { db } from "./db"; // Import db directly
 import { pgStorage } from "./pgStorage"; // Keep this for other storage operations
 import { fixGiftCardActivationAmounts } from "./fixGiftCardActivationAmounts";
+import { updateGiftCardActivationFromOrders } from "./updateGiftCardActivationFromOrders";
 import {
   dateRangeSchema,
   transactions,
@@ -1528,6 +1529,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error linking gift cards to payments:", error);
       res.status(500).json({
         error: "Failed to link gift cards to payments",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
+  // New endpoint to fix gift card activation amounts from order data
+  apiRouter.get("/update-gift-card-activations", async (req, res) => {
+    try {
+      console.log("Starting gift card activation amount update from order data...");
+      
+      const result = await updateGiftCardActivationFromOrders();
+      
+      // Return detailed results of the update operation
+      return res.json({
+        success: true,
+        message: "Gift card activation amounts updated from order data",
+        result
+      });
+    } catch (error) {
+      console.error("Error updating gift card activation amounts:", error);
+      res.status(500).json({
+        error: "Failed to update gift card activation amounts",
         message: error instanceof Error ? error.message : "Unknown error"
       });
     }
