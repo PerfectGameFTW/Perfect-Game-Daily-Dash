@@ -209,7 +209,7 @@ export function convertSquareDiscountToOrderDiscount(discount: any, orderId: num
 }
 
 // Add enhanced gift card redemption detection
-export function isGiftCardRedemption(payment: any): boolean {
+function isGiftCardRedemption(payment: any): boolean {
   try {
     // Check for gift card payment source
     const isGiftCard = (
@@ -279,7 +279,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     let hasMorePages = true;
     let pageCount = 0;
     const MAX_PAGES = 10; // Temporarily reduced for testing
-    const fetchStartTime = Date.now();
+    const START_TIME = Date.now();
     const TIMEOUT = 5 * 60 * 1000; // 5 minute timeout
 
     while (hasMorePages && pageCount < MAX_PAGES) {
@@ -288,7 +288,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
       console.log(`Starting to fetch payments page ${pageCount}${cursor ? ' with cursor' : ''} at ${new Date(pageStartTime).toISOString()}`);
 
       // Check for timeout
-      if (Date.now() - fetchStartTime > TIMEOUT) {
+      if (Date.now() - START_TIME > TIMEOUT) {
         throw new Error('Sync timeout reached after 5 minutes');
       }
 
@@ -343,14 +343,14 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
           stack: pageError instanceof Error ? pageError.stack : undefined,
           page: pageCount,
           cursor,
-          timeElapsed: Date.now() - fetchStartTime
+          timeElapsed: Date.now() - START_TIME
         };
         console.error('Error fetching payments page:', errorDetail);
         throw new Error(`Failed to fetch page ${pageCount}: ${errorDetail.message}`);
       }
     }
 
-    const totalTime = Date.now() - fetchStartTime;
+    const totalTime = Date.now() - START_TIME;
     if (pageCount >= MAX_PAGES) {
       console.warn(`Reached maximum page limit (${MAX_PAGES}). Some payments may be missing. Total time: ${totalTime}ms`);
     }
@@ -358,11 +358,11 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     console.log(`Successfully fetched ${allPayments.length} payments from Square API in ${totalTime}ms`);
     return allPayments;
   } catch (error) {
-    const errorTime = Date.now();
     console.error('Error in fetchPayments:', {
       error,
       message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
+      totalTimeMs: Date.now() - START_TIME
     });
     throw error;
   }
@@ -863,241 +863,6 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
     console.log(`Completed orders sync. Success: ${successCount}, Errors: ${errorCount}`);
   } catch (error) {
     console.error('Error during orders sync:', error);
-    throw error;
-  }
-}
-
-// Get gift card activations directly from the Square API
-export async function getGiftCardActivations(startDate?: Date, endDate?: Date): Promise<number> {
-  try {
-    const now = new Date();
-    const start = startDate || new Date(now.setDate(now.getDate() - 1)); // Default to yesterday
-    const end = endDate || new Date(); // Default to now
-    
-    // Format dates for Square API
-    const beginTime = start.toISOString();
-    const endTime = end.toISOString();
-    
-    console.log(`Fetching gift card activations from Square API:`, {
-      startDate: beginTime,
-      endDate: endTime,
-      locationId: process.env.SQUARE_LOCATION_ID
-    });
-    
-    if (!process.env.SQUARE_ACCESS_TOKEN) {
-      throw new Error('Square access token is not configured');
-    }
-    
-    if (!process.env.SQUARE_LOCATION_ID) {
-      throw new Error('Square location ID is not configured');
-    }
-    
-    // Square Orders API query to find gift card activations
-    const { result } = await squareClient.ordersApi.searchOrders({
-      locationIds: [process.env.SQUARE_LOCATION_ID as string],
-      query: {
-        filter: {
-          dateTimeFilter: {
-            createdAt: {
-              startAt: beginTime,
-              endAt: endTime
-            }
-          },
-          stateFilter: {
-            states: ['COMPLETED']
-          }
-        }
-      }
-    });
-    
-    if (!result.orders || result.orders.length === 0) {
-      console.log('No orders found in the specified date range');
-      return 0;
-    }
-    
-    console.log(`Found ${result.orders.length} orders in the date range`);
-    
-    // Filter orders containing gift card line items
-    // Look for specific naming patterns in the item names
-    let giftCardTotal = 0;
-    
-    for (const order of result.orders) {
-      if (!order.lineItems) continue;
-      
-      for (const item of order.lineItems) {
-        const itemName = item.name?.toLowerCase() || '';
-        
-        // Check if this is a gift card item
-        // Look for "gift card", "gift certificate", etc.
-        if (
-          itemName.includes('gift card') || 
-          itemName.includes('gift certificate') ||
-          itemName.includes('gift cert') ||
-          itemName.includes('egift')
-        ) {
-          // Safely convert amounts to avoid BigInt issues
-          const totalAmount = item.totalMoney?.amount;
-          // Convert to number safely (might be number, string, or BigInt)
-          let amountValue = 0;
-          if (totalAmount) {
-            // Convert any type to string first, then to number, then divide by 100
-            amountValue = Number(String(totalAmount)) / 100;
-          }
-          const quantity = item.quantity ? parseInt(item.quantity) : 1;
-          
-          // Add to total
-          giftCardTotal += amountValue * quantity;
-          
-          console.log(`Found gift card item: ${item.name}, Amount: $${amountValue}, Quantity: ${quantity}`);
-        }
-      }
-    }
-    
-    // If no gift cards found, try second approach using Payments API
-    if (giftCardTotal === 0) {
-      console.log('No gift cards found in orders, trying Payments API...');
-      
-      // Call listPayments with begin/end times
-      const paymentsResponse = await squareClient.paymentsApi.listPayments(
-        beginTime,
-        endTime,
-        'DESC',
-        undefined,
-        process.env.SQUARE_LOCATION_ID
-      );
-      
-      const payments = paymentsResponse.result.payments;
-      
-      if (payments && payments.length > 0) {
-        console.log(`Found ${payments.length} payments`);
-        
-        // Look for gift card payments
-        for (const payment of payments) {
-          // Check payment notes or references for gift card indicators
-          const paymentNote = payment.note?.toLowerCase() || '';
-          // Square Payment type has no sourceId, need to safely access card data
-          const cardInfo = payment.cardDetails?.card ? 
-            payment.cardDetails.card.id?.toLowerCase() || '' : '';
-          
-          if (
-            paymentNote.includes('gift card') ||
-            paymentNote.includes('gift certificate') ||
-            cardInfo.includes('gftc:') // Gift card identifier
-          ) {
-            // Convert to number safely for any type (number, string, or BigInt)
-            let amountValue = 0;
-            if (payment.amountMoney?.amount) {
-              // Convert to string first, then to number, then divide by 100
-              amountValue = Number(String(payment.amountMoney.amount)) / 100;
-            }
-              
-            giftCardTotal += amountValue;
-            console.log(`Found gift card payment: $${amountValue}, ID: ${payment.id}`);
-          }
-        }
-      }
-    }
-    
-    // Third approach: query directly for catalog items that are gift cards
-    if (giftCardTotal === 0) {
-      console.log('Still no gift cards found, checking catalog items...');
-      
-      const catalogResponse = await squareClient.catalogApi.searchCatalogItems({
-        textFilter: 'gift card'
-      });
-      
-      const catalogItems = catalogResponse.result.items;
-      
-      if (catalogItems && catalogItems.length > 0) {
-        console.log(`Found ${catalogItems.length} gift card catalog items`);
-        
-        // Get the IDs of gift card catalog items
-        const giftCardItemIds = catalogItems.map(item => item.id as string);
-        
-        // Search for orders containing these items
-        const orderResponse = await squareClient.ordersApi.searchOrders({
-          locationIds: [process.env.SQUARE_LOCATION_ID as string],
-          query: {
-            filter: {
-              dateTimeFilter: {
-                createdAt: {
-                  startAt: beginTime,
-                  endAt: endTime
-                }
-              },
-              stateFilter: {
-                states: ['COMPLETED']
-              }
-            }
-          }
-        });
-        
-        const orders = orderResponse.result.orders;
-        
-        if (orders) {
-          for (const order of orders) {
-            if (!order.lineItems) continue;
-            
-            for (const item of order.lineItems) {
-              if (item.catalogObjectId && giftCardItemIds.includes(item.catalogObjectId)) {
-                const totalAmount = item.totalMoney?.amount;
-                // Convert safely to avoid BigInt issues
-                let amountValue = 0;
-                if (totalAmount) {
-                  // Convert any type to string first, then to number, then divide by 100
-                  amountValue = Number(String(totalAmount)) / 100;
-                }
-                const quantity = item.quantity ? parseInt(item.quantity) : 1;
-                
-                // Add to total
-                giftCardTotal += amountValue * quantity;
-                
-                console.log(`Found gift card catalog item in order: ${item.name}, Amount: $${amountValue}, Quantity: ${quantity}`);
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    // Fourth approach: check the gift cards API directly
-    if (giftCardTotal === 0) {
-      try {
-        console.log('Still no gift cards found, checking gift cards API directly...');
-        
-        // Attempt to fetch recent gift cards
-        const recentGiftCards = await fetchGiftCards();
-        
-        if (recentGiftCards && recentGiftCards.length > 0) {
-          // Filter gift cards created in the target timeframe
-          const filteredCards = recentGiftCards.filter(card => {
-            const createdAt = new Date(card.created_at);
-            return createdAt >= start && createdAt <= end;
-          });
-          
-          if (filteredCards.length > 0) {
-            console.log(`Found ${filteredCards.length} gift cards created in the timeframe`);
-            
-            // Sum up the values
-            for (const card of filteredCards) {
-              if (card.gan_source && card.gan_source.money && card.gan_source.money.amount) {
-                const amountValue = Number(String(card.gan_source.money.amount)) / 100;
-                giftCardTotal += amountValue;
-                console.log(`Found gift card with value: $${amountValue}, GAN: ${card.gan}`);
-              }
-            }
-          }
-        }
-      } catch (giftCardError) {
-        console.error('Error checking gift cards API:', giftCardError);
-        // Continue with current total, don't throw here
-      }
-    }
-    
-    console.log(`Total gift card activations amount: $${giftCardTotal}`);
-    return giftCardTotal;
-  } catch (error) {
-    console.error('Error getting gift card activations:', error);
     throw error;
   }
 }
