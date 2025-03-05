@@ -518,7 +518,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     purchaseDate = new Date();
   }
 
-  // Extract amount from balanceMoney
+  // Extract current balance from balanceMoney
   let amount = 0;
   if (safeGiftCard.balanceMoney?.amount) {
     amount = Number(safeGiftCard.balanceMoney.amount) / 100;
@@ -526,12 +526,33 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     amount = Number(safeGiftCard.balance_money.amount) / 100;
   }
 
-  console.log(`Processing gift card ${safeGiftCard.id} with amount: $${amount}`);
+  // Determine the activation amount from ganMoney (Gift Card Activity)
+  // If not available, use either the provided value or fall back to calculating
+  let activationAmount = 0;
+  
+  // Try to get the original activation amount from ganMoney if available
+  if (safeGiftCard.ganMoney?.amount) {
+    activationAmount = Number(safeGiftCard.ganMoney.amount) / 100;
+  } else if (safeGiftCard.gan_money?.amount) {
+    activationAmount = Number(safeGiftCard.gan_money.amount) / 100;
+  }
+  
+  // If we couldn't find the activation amount, default to the current amount
+  // This will be updated later if we find redemption data
+  if (activationAmount === 0) {
+    activationAmount = amount;
+    console.log(`No direct activation amount found for card ${safeGiftCard.id}, using current balance: $${amount}`);
+  } else {
+    console.log(`Found activation amount for card ${safeGiftCard.id}: $${activationAmount}`);
+  }
+
+  console.log(`Processing gift card ${safeGiftCard.id} with current balance: $${amount}, activation amount: $${activationAmount}`);
 
   const card: InsertGiftCard = {
     squareId: safeGiftCard.id,
     amount: amount,
     redeemedAmount: 0, // May need to calculate this separately
+    activationAmount: activationAmount, // Store the original activation amount
     isActive: safeGiftCard.state === 'ACTIVE',
     purchaseDate,
     squareData: safeGiftCard
