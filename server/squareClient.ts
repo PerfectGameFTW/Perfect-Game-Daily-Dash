@@ -362,8 +362,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     console.error('Error in fetchPayments:', {
       error,
       message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      totalTimeMs: errorTime - fetchStartTime
+      stack: error instanceof Error ? error.stack : undefined
     });
     throw error;
   }
@@ -895,7 +894,7 @@ export async function getGiftCardActivations(startDate?: Date, endDate?: Date): 
     
     // Square Orders API query to find gift card activations
     const { result } = await squareClient.ordersApi.searchOrders({
-      locationIds: [process.env.SQUARE_LOCATION_ID],
+      locationIds: [process.env.SQUARE_LOCATION_ID as string],
       query: {
         filter: {
           dateTimeFilter: {
@@ -936,13 +935,20 @@ export async function getGiftCardActivations(startDate?: Date, endDate?: Date): 
           itemName.includes('gift cert') ||
           itemName.includes('egift')
         ) {
-          const totalMoney = item.totalMoney?.amount || 0;
+          // Safely convert amounts to avoid BigInt issues
+          const totalAmount = item.totalMoney?.amount;
+          // Convert to number safely (might be number, string, or BigInt)
+          let amountValue = 0;
+          if (totalAmount) {
+            // Convert any type to string first, then to number, then divide by 100
+            amountValue = Number(String(totalAmount)) / 100;
+          }
           const quantity = item.quantity ? parseInt(item.quantity) : 1;
           
-          // Add to total (convert from cents to dollars)
-          giftCardTotal += (totalMoney / 100) * quantity;
+          // Add to total
+          giftCardTotal += amountValue * quantity;
           
-          console.log(`Found gift card item: ${item.name}, Amount: $${totalMoney / 100}, Quantity: ${quantity}`);
+          console.log(`Found gift card item: ${item.name}, Amount: $${amountValue}, Quantity: ${quantity}`);
         }
       }
     }
@@ -951,30 +957,37 @@ export async function getGiftCardActivations(startDate?: Date, endDate?: Date): 
     if (giftCardTotal === 0) {
       console.log('No gift cards found in orders, trying Payments API...');
       
-      // Payments API to check for gift card activations
-      const paymentsResult = await squareClient.paymentsApi.listPayments({
-        beginTime: beginTime,
-        endTime: endTime,
-        limit: 100
-      });
+      // Use only the limit parameter with the correct typing
+      const listPaymentsParams = { limit: 100 };
+      const paymentsResponse = await squareClient.paymentsApi.listPayments(listPaymentsParams);
       
-      if (paymentsResult.result.payments && paymentsResult.result.payments.length > 0) {
-        console.log(`Found ${paymentsResult.result.payments.length} payments`);
+      const payments = paymentsResponse.result.payments;
+      
+      if (payments && payments.length > 0) {
+        console.log(`Found ${payments.length} payments`);
         
         // Look for gift card payments
-        for (const payment of paymentsResult.result.payments) {
+        for (const payment of payments) {
           // Check payment notes or references for gift card indicators
           const paymentNote = payment.note?.toLowerCase() || '';
-          const sourceId = payment.sourceId?.toLowerCase() || '';
+          // Square Payment type has no sourceId, need to safely access card data
+          const cardInfo = payment.cardDetails?.card ? 
+            payment.cardDetails.card.id?.toLowerCase() || '' : '';
           
           if (
             paymentNote.includes('gift card') ||
             paymentNote.includes('gift certificate') ||
-            sourceId.includes('gftc:') // Gift card identifier
+            cardInfo.includes('gftc:') // Gift card identifier
           ) {
-            const amount = payment.amountMoney?.amount || 0;
-            giftCardTotal += amount / 100;
-            console.log(`Found gift card payment: $${amount / 100}, ID: ${payment.id}`);
+            // Convert to number safely for any type (number, string, or BigInt)
+            let amountValue = 0;
+            if (payment.amountMoney?.amount) {
+              // Convert to string first, then to number, then divide by 100
+              amountValue = Number(String(payment.amountMoney.amount)) / 100;
+            }
+              
+            giftCardTotal += amountValue;
+            console.log(`Found gift card payment: $${amountValue}, ID: ${payment.id}`);
           }
         }
       }
@@ -984,20 +997,21 @@ export async function getGiftCardActivations(startDate?: Date, endDate?: Date): 
     if (giftCardTotal === 0) {
       console.log('Still no gift cards found, checking catalog items...');
       
-      const { result: catalogResult } = await squareClient.catalogApi.searchCatalogItems({
-        textFilter: 'gift card',
-        limit: 100
+      const catalogResponse = await squareClient.catalogApi.searchCatalogItems({
+        textFilter: 'gift card'
       });
       
-      if (catalogResult.items && catalogResult.items.length > 0) {
-        console.log(`Found ${catalogResult.items.length} gift card catalog items`);
+      const catalogItems = catalogResponse.result.items;
+      
+      if (catalogItems && catalogItems.length > 0) {
+        console.log(`Found ${catalogItems.length} gift card catalog items`);
         
         // Get the IDs of gift card catalog items
-        const giftCardItemIds = catalogResult.items.map(item => item.id!);
+        const giftCardItemIds = catalogItems.map(item => item.id as string);
         
         // Search for orders containing these items
-        const { result: itemOrdersResult } = await squareClient.ordersApi.searchOrders({
-          locationIds: [process.env.SQUARE_LOCATION_ID],
+        const orderResponse = await squareClient.ordersApi.searchOrders({
+          locationIds: [process.env.SQUARE_LOCATION_ID as string],
           query: {
             filter: {
               dateTimeFilter: {
@@ -1013,19 +1027,27 @@ export async function getGiftCardActivations(startDate?: Date, endDate?: Date): 
           }
         });
         
-        if (itemOrdersResult.orders) {
-          for (const order of itemOrdersResult.orders) {
+        const orders = orderResponse.result.orders;
+        
+        if (orders) {
+          for (const order of orders) {
             if (!order.lineItems) continue;
             
             for (const item of order.lineItems) {
               if (item.catalogObjectId && giftCardItemIds.includes(item.catalogObjectId)) {
-                const totalMoney = item.totalMoney?.amount || 0;
+                const totalAmount = item.totalMoney?.amount;
+                // Convert safely to avoid BigInt issues
+                let amountValue = 0;
+                if (totalAmount) {
+                  // Convert any type to string first, then to number, then divide by 100
+                  amountValue = Number(String(totalAmount)) / 100;
+                }
                 const quantity = item.quantity ? parseInt(item.quantity) : 1;
                 
-                // Add to total (convert from cents to dollars)
-                giftCardTotal += (totalMoney / 100) * quantity;
+                // Add to total
+                giftCardTotal += amountValue * quantity;
                 
-                console.log(`Found gift card catalog item in order: ${item.name}, Amount: $${totalMoney / 100}, Quantity: ${quantity}`);
+                console.log(`Found gift card catalog item in order: ${item.name}, Amount: $${amountValue}, Quantity: ${quantity}`);
               }
             }
           }
