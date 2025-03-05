@@ -44,22 +44,21 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
   return (
     <div className="mt-4">
-      {/* Main Sales Section */}
-      <div className="mb-2">
-        <h2 className="text-sm font-medium text-zinc-400">Gross sales</h2>
+      {/* Main Sales Section - Centered and Enlarged */}
+      <div className="flex justify-center items-center mb-8">
         <div className="flex items-center">
-          <p className="text-xl font-bold text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
+          <p className="text-4xl font-bold text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
           <div
-            className={`ml-2 px-2 py-1 rounded text-xs font-semibold flex items-center ${
+            className={`ml-3 px-2 py-1 rounded text-sm font-semibold flex items-center ${
               isPositiveChange(data?.revenueChange || 0)
                 ? "bg-green-900/30 text-green-400"
                 : "bg-red-900/30 text-red-400"
             }`}
           >
             {isPositiveChange(data?.revenueChange || 0) ? (
-              <ChevronUp className="mr-0.5 h-3 w-3" />
+              <ChevronUp className="mr-0.5 h-4 w-4" />
             ) : (
-              <ChevronDown className="mr-0.5 h-3 w-3" />
+              <ChevronDown className="mr-0.5 h-4 w-4" />
             )}
             {formatPercentage(Math.abs(data?.revenueChange || 0))}
           </div>
