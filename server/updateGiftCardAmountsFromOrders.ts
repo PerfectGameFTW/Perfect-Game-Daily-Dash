@@ -61,16 +61,32 @@ export async function updateGiftCardAmountsFromOrders() {
           ? JSON.parse(order.line_item_data)
           : order.line_item_data;
             
-        // Square stores money amounts in cents in the JSON, convert to dollars if needed
+        // Square stores money amounts in cents in the JSON, always convert to dollars
         if (lineItemSquareData && lineItemSquareData.totalMoney && lineItemSquareData.totalMoney.amount) {
           const amountInCents = Number(lineItemSquareData.totalMoney.amount) || 0;
           // Convert from cents to dollars
           const amountInDollars = amountInCents / 100; 
           
-          // If the calculated amount is different from what's stored, use the calculated amount
-          if (Math.abs(amountInDollars - itemAmount) > 1) {
-            console.log(`Correcting amount from $${itemAmount.toFixed(2)} to $${amountInDollars.toFixed(2)} based on Square data`);
-            itemAmount = amountInDollars;
+          // Always use the amount in dollars from Square data (cents converted to dollars)
+          console.log(`Using amount $${amountInDollars.toFixed(2)} (${amountInCents} cents) from Square data`);
+          itemAmount = amountInDollars;
+        } else {
+          // If we can't find the totalMoney.amount directly, look deeper in the data structure
+          console.log(`Searching deeper in Square data for amount information...`);
+          
+          // Try to find the basePriceMoney if totalMoney is not available
+          if (lineItemSquareData && lineItemSquareData.basePriceMoney && lineItemSquareData.basePriceMoney.amount) {
+            const baseAmountInCents = Number(lineItemSquareData.basePriceMoney.amount) || 0;
+            const baseAmountInDollars = baseAmountInCents / 100;
+            console.log(`Found basePriceMoney amount: $${baseAmountInDollars.toFixed(2)} (${baseAmountInCents} cents)`);
+            itemAmount = baseAmountInDollars;
+          }
+          // Try to find the variationTotalPriceMoney if available
+          else if (lineItemSquareData && lineItemSquareData.variationTotalPriceMoney && lineItemSquareData.variationTotalPriceMoney.amount) {
+            const varAmountInCents = Number(lineItemSquareData.variationTotalPriceMoney.amount) || 0;
+            const varAmountInDollars = varAmountInCents / 100;
+            console.log(`Found variationTotalPriceMoney amount: $${varAmountInDollars.toFixed(2)} (${varAmountInCents} cents)`);
+            itemAmount = varAmountInDollars;
           }
         }
         

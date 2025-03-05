@@ -1534,7 +1534,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
-
+  
   // New endpoint to fix gift card activation amounts from order data
   apiRouter.get("/update-gift-card-activations", async (req, res) => {
     try {
