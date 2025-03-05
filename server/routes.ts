@@ -853,6 +853,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Process the Square gift card data to ensure it's safe for JSON serialization
             const safeCard = ensureSerializable(card);
 
+            console.log(`Processing gift card ${safeCard.id}:`, {
+              gan: safeCard.gan,
+              createdAt: safeCard.createdAt || 'unknown',
+              balanceMoney: safeCard.balanceMoney,
+              balance_money: safeCard.balance_money
+            });
+
             // Attempt to find an existing gift card record by squareId
             const existingCard = await db.query.giftCards.findFirst({
               where: eq(giftCards.squareId, safeCard.id)
@@ -866,12 +873,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
               amount = Number(safeCard.balance_money.amount) / 100;
             }
 
+            // Extract the actual purchase date from Square data if available
+            // Otherwise use existing date or today's date as fallback
+            let purchaseDate = new Date();
+            if (safeCard.createdAt) {
+              purchaseDate = new Date(safeCard.createdAt);
+            } else if (existingCard && existingCard.purchaseDate) {
+              purchaseDate = existingCard.purchaseDate;
+            }
+
+            console.log(`Gift card ${safeCard.id} computed values:`, {
+              amount: amount,
+              purchaseDate: purchaseDate.toISOString()
+            });
+
             if (existingCard) {
               // Update the existing gift card record
               await db.update(giftCards)
                 .set({
                   amount: amount,
-                  squareData: safeCard
+                  squareData: safeCard,
+                  // Only update purchase date if we got a new date from Square
+                  ...(safeCard.createdAt ? { purchaseDate: purchaseDate } : {})
                 })
                 .where(eq(giftCards.squareId, safeCard.id));
               console.log(`Updated gift card ${safeCard.id} with amount $${amount.toFixed(2)}`);
@@ -881,14 +904,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 squareId: safeCard.id,
                 gan: safeCard.gan || '',
                 amount: amount,
-                                squareData: safeCard,
-                purchaseDate: new Date(),
+                squareData: safeCard,
+                purchaseDate: purchaseDate,
                 status: 'ACTIVE',
                 isActive: true
               };
 
               await db.insert(giftCards).values(newCard);
-              console.log(`Inserted new gift card ${safeCard.id} with amount $${amount.toFixed(2)}`);
+              console.log(`Inserted new gift card ${safeCard.id} with amount $${amount.toFixed(2)} and purchase date ${purchaseDate.toISOString()}`);
             }
 
             giftCardProcessed++;
@@ -960,9 +983,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
     } catch (error) {
-      console.error("Sync process failed:", error);
+      console.error("Error during simple sync:", error);
+
+      // Update sync state to failed if we have a sync state
+      try {
+        await db.update(syncState)
+          .set({
+            status: 'failed',
+            lastSyncedAt: new Date(),
+            errorMessage: error instanceof Error ? error.message : "Unknown error"
+          })
+          .where(eq(syncState.syncType, 'payments'));
+      } catch (updateError) {
+        console.error("Failed to update sync state:", updateError);
+      }
+
       res.status(500).json({
-        error: "Failed to sync data"
+        error: "Failed to sync data",
+        message: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.stack : undefined
       });
     }
   });
@@ -975,7 +1014,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create a sample gift card (for testing only)
       const sampleGiftCard = {
         squareId: "gftc:test-gift-card-id",
-        gan:"1234567890",
+        gan: "1234567890",
         amount: 50.0,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -998,7 +1037,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "CAPTURED",
         },
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),        note: "Test gift card redemption"
+        updatedAt: new Date().toISOString(),
+        note: "Test gift card redemption"
       };
 
       // Check if the payment is a gift card redemption
@@ -1043,7 +1083,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
           .where(eq(giftCards.squareId, sampleGiftCard.squareId))
           .returning()
-          .then(res => res[0]);console.log("Updated giftcard:", updatedGiftCard);
+          .then(res => res[0]);
+        console.log("Updated giftcard:", updatedGiftCard);
 
         res.json({
           success: true,
