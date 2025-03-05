@@ -227,8 +227,10 @@ class PgStorage implements IStorage {
       const startStr = formatEasternDate(start);
       const endStr = formatEasternDate(end);
       
-      // Get gift card activations (initial sales) from database using the existing ET view
-      // This query specifically gets the original activation amounts
+      console.log('Retrieving gift card summary from database ET views');
+      
+      // PRIMARY SOURCE: Get gift card activations from database using the existing ET view
+      // This query specifically gets the original activation amounts (current balance + already redeemed)
       const salesResult = await db.execute(sql`
         SELECT 
           COUNT(id) as sold_count,
@@ -259,9 +261,10 @@ class PgStorage implements IStorage {
       // Calculate average value
       const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
       
-      // If this is today or yesterday and sold amount is 0, try Square API as a backup
+      // Database-first approach with Square API fallback only for recent dates with missing data
+      // If this is today or yesterday and sold amount is 0, try Square API as a fallback source
       if ((dateRange === 'today' || dateRange === 'yesterday') && soldAmount === 0) {
-        console.log('No gift card sales found in database for recent date, trying Square API as backup...');
+        console.log('No gift card sales found in database for recent date, trying Square API as fallback...');
         try {
           // Import getGiftCardActivations dynamically to avoid circular dependencies
           const { getGiftCardActivations } = await import('./squareClient');
@@ -276,7 +279,7 @@ class PgStorage implements IStorage {
               soldAmount: squareApiAmount,
               redeemedCount,
               redeemedAmount,
-              averageValue: squareApiAmount // If count is 0, just use the amount as average
+              averageValue: soldCount > 0 ? squareApiAmount / soldCount : squareApiAmount
             };
           }
         } catch (apiError) {
@@ -285,7 +288,11 @@ class PgStorage implements IStorage {
         }
       }
       
+      // Log the database results we're returning
       console.log('Gift Card Summary Results from Database:', {
+        dateRange,
+        startDate: startStr,
+        endDate: endStr,
         soldCount,
         soldAmount,
         redeemedCount,
@@ -293,6 +300,7 @@ class PgStorage implements IStorage {
         averageValue
       });
       
+      // Return the database results as our primary source
       return {
         soldCount,
         soldAmount,
@@ -300,10 +308,32 @@ class PgStorage implements IStorage {
         redeemedAmount,
         averageValue
       };
-    } catch (error) {
-      console.error('Error getting gift card summary:', error);
+    } catch (dbError) {
+      console.error('Error getting gift card summary from database:', dbError);
       
-      // Fallback to zero values if there's an error
+      // If database query fails, try the Square API as a last resort
+      if (dateRange === 'today' || dateRange === 'yesterday') {
+        try {
+          console.log('Database query failed, trying Square API as last resort...');
+          const { getGiftCardActivations } = await import('./squareClient');
+          const squareApiAmount = await getGiftCardActivations(start, end);
+          
+          if (squareApiAmount > 0) {
+            console.log(`Retrieved ${squareApiAmount} in gift card sales from Square API as fallback`);
+            return {
+              soldCount: 1, // Assume at least 1 if we got a positive amount
+              soldAmount: squareApiAmount,
+              redeemedCount: 0, // Can't get redemption data without database
+              redeemedAmount: 0,
+              averageValue: squareApiAmount
+            };
+          }
+        } catch (apiError) {
+          console.error('Both database and API retrieval failed:', apiError);
+        }
+      }
+      
+      // Final fallback to zero values if everything else fails
       return {
         soldCount: 0,
         soldAmount: 0,
@@ -414,25 +444,15 @@ class PgStorage implements IStorage {
       endDate: end.toISOString()
     });
 
+    // Get the Eastern Time date strings for SQL
+    const startStr = formatEasternDate(start);
+    const endStr = formatEasternDate(end);
+    
     try {
-      // Import the getGiftCardActivations function from squareClient
-      const { getGiftCardActivations } = await import('./squareClient');
+      // PRIMARY SOURCE: Query the database using ET views
+      // This implements a database-first approach
+      console.log('Retrieving gift card sales from database ET views');
       
-      // Use the new direct method to get gift card activations from Square
-      const giftCardSales = await getGiftCardActivations(start, end);
-      
-      console.log('Gift card sales retrieved directly from Square API:', giftCardSales);
-      return giftCardSales;
-    } catch (error) {
-      console.error('Error retrieving gift card activations from Square API:', error);
-      
-      // Fallback to the database method in case of API errors
-      console.log('Falling back to database calculation method for gift card sales');
-      
-      const startStr = formatEasternDate(start);
-      const endStr = formatEasternDate(end);
-      
-      // Fallback: Use the database query with ET views directly
       const result = await db.execute(sql`
         SELECT 
           -- Calculate total activation amount (original value)
@@ -458,8 +478,44 @@ class PgStorage implements IStorage {
 
       const totalSales = Number(result.rows[0]?.total_activation) || 0;
       
-      console.log('Gift card sales calculated from database (fallback):', totalSales);
+      console.log('Gift card sales calculated from database:', totalSales);
+      
+      // For recent time periods (today, yesterday) with no data, try Square API as fallback
+      if ((dateRange === 'today' || dateRange === 'yesterday') && totalSales === 0) {
+        console.log('No recent gift card sales found in database, trying Square API as fallback');
+        try {
+          // Import the getGiftCardActivations function from squareClient
+          const { getGiftCardActivations } = await import('./squareClient');
+          
+          // Use the new direct method to get gift card activations from Square
+          const squareApiSales = await getGiftCardActivations(start, end);
+          
+          if (squareApiSales > 0) {
+            console.log('Gift card sales retrieved from Square API:', squareApiSales);
+            return squareApiSales;
+          }
+        } catch (apiError) {
+          console.error('Error retrieving gift card activations from Square API:', apiError);
+          // Fall back to database result (which is 0 in this case)
+        }
+      }
+      
+      // Return the database result as our primary source
       return totalSales;
+    } catch (dbError) {
+      console.error('Error retrieving gift card sales from database:', dbError);
+      
+      // Fallback to Square API only if database query fails
+      try {
+        console.log('Database query failed, falling back to Square API');
+        const { getGiftCardActivations } = await import('./squareClient');
+        const squareApiSales = await getGiftCardActivations(start, end);
+        console.log('Gift card sales retrieved from Square API (fallback):', squareApiSales);
+        return squareApiSales;
+      } catch (apiError) {
+        console.error('Both database and API retrieval failed:', apiError);
+        return 0; // Return 0 if both database and API fail
+      }
     }
   }
 }

@@ -1060,6 +1060,40 @@ export async function getGiftCardActivations(startDate?: Date, endDate?: Date): 
       }
     }
     
+    // Fourth approach: check the gift cards API directly
+    if (giftCardTotal === 0) {
+      try {
+        console.log('Still no gift cards found, checking gift cards API directly...');
+        
+        // Attempt to fetch recent gift cards
+        const recentGiftCards = await fetchGiftCards();
+        
+        if (recentGiftCards && recentGiftCards.length > 0) {
+          // Filter gift cards created in the target timeframe
+          const filteredCards = recentGiftCards.filter(card => {
+            const createdAt = new Date(card.created_at);
+            return createdAt >= start && createdAt <= end;
+          });
+          
+          if (filteredCards.length > 0) {
+            console.log(`Found ${filteredCards.length} gift cards created in the timeframe`);
+            
+            // Sum up the values
+            for (const card of filteredCards) {
+              if (card.gan_source && card.gan_source.money && card.gan_source.money.amount) {
+                const amountValue = Number(String(card.gan_source.money.amount)) / 100;
+                giftCardTotal += amountValue;
+                console.log(`Found gift card with value: $${amountValue}, GAN: ${card.gan}`);
+              }
+            }
+          }
+        }
+      } catch (giftCardError) {
+        console.error('Error checking gift cards API:', giftCardError);
+        // Continue with current total, don't throw here
+      }
+    }
+    
     console.log(`Total gift card activations amount: $${giftCardTotal}`);
     return giftCardTotal;
   } catch (error) {
