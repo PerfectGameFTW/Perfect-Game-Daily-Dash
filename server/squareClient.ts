@@ -209,7 +209,7 @@ export function convertSquareDiscountToOrderDiscount(discount: any, orderId: num
 }
 
 // Add enhanced gift card redemption detection
-function isGiftCardRedemption(payment: any): boolean {
+export function isGiftCardRedemption(payment: any): boolean {
   try {
     // Check for gift card payment source
     const isGiftCard = (
@@ -279,7 +279,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     let hasMorePages = true;
     let pageCount = 0;
     const MAX_PAGES = 10; // Temporarily reduced for testing
-    const START_TIME = Date.now();
+    const fetchStartTime = Date.now();
     const TIMEOUT = 5 * 60 * 1000; // 5 minute timeout
 
     while (hasMorePages && pageCount < MAX_PAGES) {
@@ -863,6 +863,133 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
     console.log(`Completed orders sync. Success: ${successCount}, Errors: ${errorCount}`);
   } catch (error) {
     console.error('Error during orders sync:', error);
+    throw error;
+  }
+}
+
+// New function to get gift card activations directly from the Payments API
+export async function getGiftCardActivations(startDate?: Date, endDate?: Date): Promise<number> {
+  try {
+    const now = new Date();
+    const start = startDate || new Date(now.setDate(now.getDate() - 1)); // Default to yesterday
+    const end = endDate || new Date(); // Default to now
+    
+    // Format dates for Square API
+    const beginTime = start.toISOString();
+    const endTime = end.toISOString();
+    
+    console.log(`Fetching gift card activations from Square API:`, {
+      startDate: beginTime,
+      endDate: endTime,
+      locationId: process.env.SQUARE_LOCATION_ID
+    });
+    
+    if (!process.env.SQUARE_ACCESS_TOKEN) {
+      throw new Error('Square access token is not configured');
+    }
+    
+    if (!process.env.SQUARE_LOCATION_ID) {
+      throw new Error('Square location ID is not configured');
+    }
+    
+    // First, get all payments in the date range
+    const payments = await fetchPayments(startDate, endDate);
+    
+    // Filter for gift card purchases (not payments using gift cards)
+    // and sum their amounts
+    let totalGiftCardActivations = 0;
+    let activationCount = 0;
+    
+    for (const payment of payments) {
+      try {
+        // Skip if this is a payment USING a gift card
+        const isUsingGiftCard = 
+          (payment.sourceType && payment.sourceType === 'GIFT_CARD') ||
+          (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD');
+        
+        if (isUsingGiftCard) {
+          continue;
+        }
+        
+        // Check if this is a gift card purchase from various indicators
+        let isGiftCardPurchase = false;
+        
+        // Check payment note
+        if (payment.note && 
+            (payment.note.toLowerCase().includes('gift card') || 
+             payment.note.toLowerCase().includes('gift certificate'))) {
+          isGiftCardPurchase = true;
+        }
+        
+        // Check order name
+        else if (payment.orderName && 
+                (payment.orderName.toLowerCase().includes('gift card') || 
+                 payment.orderName.toLowerCase().includes('gift certificate'))) {
+          isGiftCardPurchase = true;  
+        }
+        
+        // Check order data for gift card items
+        else if (payment.orderId && payment.orderData) {
+          try {
+            const orderData = typeof payment.orderData === 'string'
+              ? JSON.parse(payment.orderData)
+              : payment.orderData;
+            
+            if (orderData.lineItems && Array.isArray(orderData.lineItems)) {
+              const giftCardItems = orderData.lineItems.filter((item: any) =>
+                item.itemType === 'GIFT_CARD' ||
+                (item.name && item.name.toLowerCase().includes('gift card'))
+              );
+              
+              if (giftCardItems.length > 0) {
+                isGiftCardPurchase = true;
+              }
+            }
+          } catch (error) {
+            console.error(`Error checking order data for gift cards:`, error);
+          }
+        }
+        
+        // If this is a gift card purchase, add to the total
+        if (isGiftCardPurchase) {
+          const amountMoney = payment.amountMoney;
+          let amount = 0;
+          
+          if (amountMoney && amountMoney.amount !== undefined) {
+            if (typeof amountMoney.amount === 'bigint') {
+              amount = Number(amountMoney.amount) / 100;
+            } else {
+              amount = (Number(amountMoney.amount) || 0) / 100;
+            }
+          }
+          
+          totalGiftCardActivations += amount;
+          activationCount++;
+          
+          console.log(`Found gift card activation payment:`, {
+            paymentId: payment.id,
+            amount: amount,
+            orderName: payment.orderName || 'N/A',
+            note: payment.note || 'N/A'
+          });
+        }
+      } catch (error) {
+        console.error(`Error processing payment for gift card activation:`, error);
+      }
+    }
+    
+    console.log(`Gift Card Activations Summary:`, {
+      count: activationCount,
+      totalAmount: totalGiftCardActivations,
+      dateRange: {
+        start: beginTime,
+        end: endTime
+      }
+    });
+    
+    return totalGiftCardActivations;
+  } catch (error) {
+    console.error('Error getting gift card activations:', error);
     throw error;
   }
 }

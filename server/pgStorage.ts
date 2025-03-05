@@ -317,56 +317,69 @@ class PgStorage implements IStorage {
 
   async getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<number> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    const startStr = formatEasternDate(start);
-    const endStr = formatEasternDate(end);
 
-    console.log('Getting gift card sales for range:', { startStr, endStr });
+    console.log('Getting gift card sales for range:', { 
+      dateRange, 
+      startDate: start.toISOString(),
+      endDate: end.toISOString()
+    });
 
-    // This is a complete redesign of the gift card sales query.
-    // Instead of adding current balance + redemptions (which is complicated and error-prone),
-    // we directly query for all gift cards purchased in the date range and sum their ORIGINAL amounts.
-    //
-    // The original amount is what was paid at time of purchase - this is the activation amount.
-    // This approach provides consistent results for all dates regardless of redemption activity.
-    const result = await db.execute(sql`
-      WITH gift_cards_et AS (
+    try {
+      // Import the getGiftCardActivations function from squareClient
+      const { getGiftCardActivations } = await import('./squareClient');
+      
+      // Use the new direct method to get gift card activations from Square
+      const giftCardSales = await getGiftCardActivations(start, end);
+      
+      console.log('Gift card sales retrieved directly from Square API:', giftCardSales);
+      return giftCardSales;
+    } catch (error) {
+      console.error('Error retrieving gift card activations from Square API:', error);
+      
+      // Fallback to the database method in case of API errors
+      console.log('Falling back to database calculation method for gift card sales');
+      
+      const startStr = formatEasternDate(start);
+      const endStr = formatEasternDate(end);
+      
+      // Fallback: Use the database query as before
+      const result = await db.execute(sql`
+        WITH gift_cards_et AS (
+          SELECT 
+            id,
+            square_id,
+            amount,
+            redeemed_amount,
+            purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
+          FROM gift_cards
+        )
         SELECT 
-          id,
-          square_id,
-          amount,
-          redeemed_amount,
-          purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
-        FROM gift_cards
-      )
-      SELECT 
-        -- Calculate total activation amount (original value)
-        -- This is always current balance + total redemptions
-        COALESCE(SUM(
-          CASE 
-            -- For cards with value, use amount + redeemed_amount (current balance + redemptions)
-            WHEN amount > 0 OR redeemed_amount > 0 THEN amount + redeemed_amount
-            
-            -- For cards with both fields at 0, get original value from transaction history
-            -- This could happen with fully redeemed cards where tracking wasn't set up yet
-            -- Unfortunately, we can't dynamically look this up in SQL alone
-            -- Rely on our migration script to have set proper redeemed_amount values for these
-            ELSE 214.5  -- This is the average card value based on transaction history
-          END
-        ), 0) as total_activation
-      FROM 
-        gift_cards_et
-      WHERE 
-        DATE(purchase_date_et) >= ${startStr}::date
-        AND DATE(purchase_date_et) <= ${endStr}::date
-    `);
+          -- Calculate total activation amount (original value)
+          -- This is always current balance + total redemptions
+          COALESCE(SUM(
+            CASE 
+              -- For cards with value, use amount + redeemed_amount (current balance + redemptions)
+              WHEN amount > 0 OR redeemed_amount > 0 THEN amount + redeemed_amount
+              
+              -- For cards with both fields at 0, get original value from transaction history
+              -- This could happen with fully redeemed cards where tracking wasn't set up yet
+              -- Unfortunately, we can't dynamically look this up in SQL alone
+              -- Rely on our migration script to have set proper redeemed_amount values for these
+              ELSE 214.5  -- This is the average card value based on transaction history
+            END
+          ), 0) as total_activation
+        FROM 
+          gift_cards_et
+        WHERE 
+          DATE(purchase_date_et) >= ${startStr}::date
+          AND DATE(purchase_date_et) <= ${endStr}::date
+      `);
 
-    // No more hardcoded special cases - let's rely on the database query
-    // We've already updated the database with proper redemption amounts
-
-    const totalSales = Number(result.rows[0]?.total_activation) || 0;
-    
-    console.log('Gift card sales calculated from database:', totalSales);
-    return totalSales;
+      const totalSales = Number(result.rows[0]?.total_activation) || 0;
+      
+      console.log('Gift card sales calculated from database (fallback):', totalSales);
+      return totalSales;
+    }
   }
 }
 
