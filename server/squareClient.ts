@@ -1,6 +1,6 @@
 // Add BigInt serialization override at the top
 if (typeof BigInt.prototype.toJSON !== 'function') {
- BigInt.prototype.toJSON = function() {
+ (BigInt.prototype as any).toJSON = function() {
    return this.toString();
  };
 }
@@ -46,7 +46,7 @@ import {
   GiftCard, InsertGiftCard,
   Category, TransactionStatus, syncState, InsertOrder, InsertOrderLineItem, InsertOrderModifier, InsertOrderDiscount
 } from '@shared/schema';
-import { toZonedTime } from 'date-fns-tz';
+import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import dotenv from 'dotenv';
 //import { db } from './db'; // Import db directly instead of pgStorage
 import { eq } from 'drizzle-orm';
@@ -134,7 +134,7 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
       totalMoney: order.totalMoney ? Number(order.totalMoney.amount) / 100 : 0,
       totalTax: order.totalTaxMoney ? Number(order.totalTaxMoney.amount) / 100 : 0,
       totalDiscount: order.totalDiscountMoney ? Number(order.totalDiscountMoney.amount) / 100 : 0,
-      createdAt: new Date(order.createdAt),
+      createdAt: new Date(order.createdAt || new Date()),
       closedAt: order.closedAt ? new Date(order.closedAt) : null,
       source: order.source?.name || 'unknown',
       squareData: processSafeSquareData(order)
@@ -475,9 +475,9 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     console.log(`Created transaction from gift card payment:`, {
       squareId: transaction.squareId,
       amount: transaction.amount,
-      isGiftCardRedemption: transaction.squareData.isGiftCardRedemption,
-      redemptionAmount: transaction.squareData.redemptionAmount,
-      sourceId: transaction.squareData.sourceId
+      isGiftCardRedemption: (transaction.squareData as any)?.isGiftCardRedemption,
+      redemptionAmount: (transaction.squareData as any)?.redemptionAmount,
+      sourceId: (transaction.squareData as any)?.sourceId
     });
   }
 
