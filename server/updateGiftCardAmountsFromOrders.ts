@@ -33,8 +33,7 @@ export async function updateGiftCardAmountsFromOrders() {
       JOIN
         order_line_items oli ON o.id = oli.order_id
       WHERE 
-        LOWER(oli.name) LIKE '%gift card%'
-        OR LOWER(oli.name) LIKE '%giftcard%'
+        oli.square_data ->> 'itemType' = 'GIFT_CARD'
     `);
     
     console.log(`Found ${giftCardOrders.rows.length} order line items with itemType: "GIFT_CARD"`);
