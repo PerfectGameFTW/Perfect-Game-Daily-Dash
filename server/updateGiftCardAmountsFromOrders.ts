@@ -52,7 +52,27 @@ export async function updateGiftCardAmountsFromOrders() {
       try {
         const orderId = order.order_square_id;
         const orderDate = new Date(String(order.order_date));
-        const itemAmount = Number(order.item_amount) || 0;
+        
+        // Get amount from the totalMoney field in the Square data
+        let itemAmount = Number(order.item_amount) || 0;
+        
+        // Check if we can extract the amount from Square's JSON data
+        let lineItemSquareData = typeof order.line_item_data === 'string'
+          ? JSON.parse(order.line_item_data)
+          : order.line_item_data;
+            
+        // Square stores money amounts in cents in the JSON, convert to dollars if needed
+        if (lineItemSquareData && lineItemSquareData.totalMoney && lineItemSquareData.totalMoney.amount) {
+          const amountInCents = Number(lineItemSquareData.totalMoney.amount) || 0;
+          // Convert from cents to dollars
+          const amountInDollars = amountInCents / 100; 
+          
+          // If the calculated amount is different from what's stored, use the calculated amount
+          if (Math.abs(amountInDollars - itemAmount) > 1) {
+            console.log(`Correcting amount from $${itemAmount.toFixed(2)} to $${amountInDollars.toFixed(2)} based on Square data`);
+            itemAmount = amountInDollars;
+          }
+        }
         
         if (itemAmount <= 0) {
           console.log(`Skipping order ${orderId} with zero or negative amount: ${itemAmount}`);
