@@ -323,12 +323,14 @@ class PgStorage implements IStorage {
     console.log('Getting gift card sales for range:', { startStr, endStr });
 
     // Query total gift card sales using Eastern Time view
+    // Since the amount column stores the current balance (not the initial activation amount),
+    // we need to calculate the total activations by adding the current amount and redeemed_amount
     const result = await db.execute(sql`
       WITH gift_cards_et AS (
         SELECT *, purchase_date AT TIME ZONE 'America/New_York' as purchase_date_et
         FROM gift_cards
       )
-      SELECT COALESCE(SUM(amount), 0) as total_sales
+      SELECT COALESCE(SUM(amount + redeemed_amount), 0) as total_sales
       FROM gift_cards_et
       WHERE DATE(purchase_date_et) >= ${startStr}::date
         AND DATE(purchase_date_et) <= ${endStr}::date
