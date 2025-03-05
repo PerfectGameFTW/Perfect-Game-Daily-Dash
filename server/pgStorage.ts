@@ -414,9 +414,8 @@ class PgStorage implements IStorage {
       endDate: endDate?.toISOString()
     });
 
-    // Query directly against gift_cards table using UTC timestamps
-    // Always use activation_amount as the source of truth for gift card sales
-    const result = await db.execute(sql`
+    // First, query gift_cards table for direct gift card activations
+    const giftCardsResult = await db.execute(sql`
       SELECT 
         SUM(activation_amount) as total_activation,
         COUNT(*) as card_count
@@ -427,15 +426,47 @@ class PgStorage implements IStorage {
         AND purchase_date <= ${endUTC}::timestamp
     `);
 
-    const totalSales = Number(result.rows[0]?.total_activation) || 0;
-    const cardCount = Number(result.rows[0]?.card_count) || 0;
+    const giftCardSales = Number(giftCardsResult.rows[0]?.total_activation) || 0;
+    const giftCardCount = Number(giftCardsResult.rows[0]?.card_count) || 0;
+    
+    // Next, query order_line_items for gift card purchases through orders
+    // We check the squareData JSON field for isGiftCard flag or if name contains "gift card"
+    const orderLineItemsResult = await db.execute(sql`
+      SELECT 
+        SUM(oli.total_money) as order_gift_card_total,
+        COUNT(*) as order_gift_card_count
+      FROM 
+        order_line_items oli
+      JOIN
+        orders o ON oli.order_id = o.id
+      WHERE 
+        o.created_at >= ${startUTC}::timestamp
+        AND o.created_at <= ${endUTC}::timestamp
+        AND (
+          (oli.square_data->>'isGiftCard')::boolean = true
+          OR LOWER(oli.name) LIKE '%gift card%'
+          OR LOWER(oli.name) LIKE '%giftcard%'
+        )
+    `);
+
+    const orderGiftCardSales = Number(orderLineItemsResult.rows[0]?.order_gift_card_total) || 0;
+    const orderGiftCardCount = Number(orderLineItemsResult.rows[0]?.order_gift_card_count) || 0;
+    
+    // Combine both sources for total gift card sales
+    const totalSales = giftCardSales + orderGiftCardSales;
+    const totalCount = giftCardCount + orderGiftCardCount;
     
     console.log('Gift card sales calculated from database using UTC:', {
       dateRange,
+      giftCardSales,
+      giftCardCount,
+      orderGiftCardSales,
+      orderGiftCardCount,
       totalSales,
-      cardCount,
+      totalCount,
       dateRangeStr: `${startUTC} to ${endUTC}`
     });
+    
     return totalSales;
   }
 }

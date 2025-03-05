@@ -294,6 +294,20 @@ export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: num
     console.log(`Found line item with missing name, using fallback: ${itemName}`, safeLineItem);
   }
 
+  // Detect if this is a gift card item
+  const isGiftCard = 
+    safeLineItem.itemType === 'GIFT_CARD' || 
+    (itemName && typeof itemName === 'string' && 
+     (itemName.toLowerCase().includes('gift card') || 
+      itemName.toLowerCase().includes('giftcard')));
+  
+  if (isGiftCard) {
+    console.log(`Found gift card line item: ${itemName} with value: ${safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0}`);
+    // Add gift card metadata to the squareData
+    safeLineItem.isGiftCard = true;
+    safeLineItem.giftCardAmount = safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0;
+  }
+
   return {
     orderId,
     name: itemName,
