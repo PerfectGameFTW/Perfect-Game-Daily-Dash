@@ -91,14 +91,7 @@ export async function updateGiftCardAmountsFromOrders() {
           console.error(`Failed to parse order data for ${orderId}:`, e);
         }
         
-        let lineItemData: any = {};
-        try {
-          lineItemData = typeof order.line_item_data === 'string'
-            ? JSON.parse(order.line_item_data)
-            : order.line_item_data;
-        } catch (e) {
-          console.error(`Failed to parse line item data for ${orderId}:`, e);
-        }
+        // We already have parsed line item data from earlier, no need to parse again
         
         // Find all gift cards from around the same time (within 1 hour)
         const timeWindow = 60 * 60 * 1000; // 1 hour in milliseconds
