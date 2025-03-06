@@ -18,15 +18,15 @@ export const EASTERN_TIMEZONE = 'America/New_York';
  * These dates represent business day boundaries in Eastern Time but are returned as UTC timestamps
  * for direct database queries without timezone conversions.
  */
-export function getEasternDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date): { start: Date; end: Date } {
+export function getEasternDateRange(dateRange: DateRange, inputStartDate?: Date, inputEndDate?: Date): { start: Date; end: Date } {
   const now = new Date();
   let startStr: string;
   let endStr: string;
 
   // Calculate date range boundaries in ET (for display)
-  if (startDate && endDate && dateRange === 'custom') {
-    startStr = formatInTimeZone(startDate, EASTERN_TIMEZONE, 'yyyy-MM-dd');
-    endStr = formatInTimeZone(endDate, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+  if (inputStartDate && inputEndDate && dateRange === 'custom') {
+    startStr = formatInTimeZone(inputStartDate, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+    endStr = formatInTimeZone(inputEndDate, EASTERN_TIMEZONE, 'yyyy-MM-dd');
   } else {
     const today = formatInTimeZone(now, EASTERN_TIMEZONE, 'yyyy-MM-dd');
 
@@ -76,8 +76,8 @@ export function getEasternDateRange(dateRange: DateRange, startDate?: Date, endD
   console.log('Date range calculation:', {
     range: dateRange,
     input: {
-      startDate: startDate?.toISOString(),
-      endDate: endDate?.toISOString()
+      startDate: inputStartDate?.toISOString(),
+      endDate: inputEndDate?.toISOString()
     },
     calculated: {
       startStr,
@@ -86,13 +86,20 @@ export function getEasternDateRange(dateRange: DateRange, startDate?: Date, endD
     }
   });
 
-  // Return UTC dates that correspond to the ET date boundaries
-  // This ensures we're using consistent UTC timestamps in all database queries
-  // These timestamps represent midnight and 11:59:59.999 PM in Eastern Time
-  // but are stored as UTC values for direct database comparison
+  // Parse dates with correct timezone handling
+  const startDate = new Date(`${startStr}T00:00:00-04:00`);
+  const endDate = new Date(`${endStr}T23:59:59.999-04:00`);
+  
+  console.log('Converting Eastern dates to UTC:', {
+    startET: `${startStr}T00:00:00-04:00`,
+    endET: `${endStr}T23:59:59.999-04:00`,
+    startUTC: startDate.toISOString(),
+    endUTC: endDate.toISOString()
+  });
+  
   return {
-    start: new Date(`${startStr}T00:00:00-05:00`), // Beginning of ET day in UTC
-    end: new Date(`${endStr}T23:59:59.999-05:00`)  // End of ET day in UTC
+    start: startDate,
+    end: endDate
   };
 }
 
