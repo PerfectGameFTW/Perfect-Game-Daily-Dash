@@ -46,12 +46,12 @@ export default function GiftCardActivity({
         datasets: [{
           data: [data.soldAmount, data.redeemedAmount],
           backgroundColor: [
-            'rgba(249, 168, 212, 0.9)', // pink-500 with alpha
-            'rgba(129, 140, 248, 0.9)'  // indigo-500 with alpha
+            'rgba(225, 29, 72, 0.9)', // red-600 with alpha
+            'rgba(255, 255, 255, 0.7)'  // white with alpha
           ],
           borderColor: [
-            'rgba(249, 168, 212, 1)', // pink-500
-            'rgba(129, 140, 248, 1)'  // indigo-500
+            'rgba(225, 29, 72, 1)', // red-600
+            'rgba(255, 255, 255, 0.8)'  // white
           ],
           borderWidth: 2,
           hoverOffset: 6,
@@ -120,17 +120,17 @@ export default function GiftCardActivity({
       <div className="flex flex-row items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-bold flex items-center text-white">
-            <CreditCard size={20} className="mr-2 text-pink-400" />
+            <CreditCard size={20} className="mr-2 text-red-600" />
             <span>Gift Card Activity</span>
           </h2>
           {data && !isLoading && (
             <div className="flex items-center text-white/70 text-sm">
-              <TrendingUp size={16} className="mr-1 text-green-400" />
+              <TrendingUp size={16} className="mr-1 text-white" />
               <span>Total sales: {formatCurrency(data?.soldAmount || 0)}</span>
             </div>
           )}
         </div>
-        <div className="flex items-center px-3 py-1.5 bg-pink-500/10 text-pink-400 rounded-lg text-sm font-medium">
+        <div className="flex items-center px-3 py-1.5 bg-red-600/10 text-red-600 rounded-lg text-sm font-medium">
           <CreditCard size={14} className="mr-1.5" />
           <span>Gift Cards</span>
         </div>
@@ -156,7 +156,7 @@ export default function GiftCardActivity({
             <h4 className="text-base font-medium text-white/90">
               {dateRange === 'yesterday' ? 'Gift Card Sales Yesterday' : 'Gift Card Sales Today'}
             </h4>
-            <span className="text-2xl font-bold text-pink-400">{formatCurrency(data?.soldAmount || 0)}</span>
+            <span className="text-2xl font-bold text-red-600">{formatCurrency(data?.soldAmount || 0)}</span>
           </div>
           
           {/* Donut Chart for Gift Card Sales vs Redemptions */}
@@ -172,7 +172,7 @@ export default function GiftCardActivity({
                 </div>
                 <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-pink-500 rounded-full" 
+                    className="h-full bg-red-600 rounded-full" 
                     style={{ 
                       width: `${data?.soldAmount ? Math.min(100, (data.soldAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
                     }} 
@@ -187,7 +187,7 @@ export default function GiftCardActivity({
                 </div>
                 <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-indigo-500 rounded-full" 
+                    className="h-full bg-white/80 rounded-full" 
                     style={{ 
                       width: `${data?.redeemedAmount ? Math.min(100, (data.redeemedAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
                     }} 
@@ -201,8 +201,8 @@ export default function GiftCardActivity({
           <div className="mt-6 grid grid-cols-2 gap-4">
             <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-pink-500/20 flex items-center justify-center mr-3">
-                  <CreditCard className="h-4 w-4 text-pink-400" />
+                <div className="h-8 w-8 rounded-lg bg-red-600/20 flex items-center justify-center mr-3">
+                  <CreditCard className="h-4 w-4 text-red-600" />
                 </div>
                 <div>
                   <div className="text-sm font-medium text-white/60">Cards Sold</div>
@@ -212,8 +212,8 @@ export default function GiftCardActivity({
             </div>
             <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-indigo-500/20 flex items-center justify-center mr-3">
-                  <RefreshCcw className="h-4 w-4 text-indigo-400" />
+                <div className="h-8 w-8 rounded-lg bg-white/20 flex items-center justify-center mr-3">
+                  <RefreshCcw className="h-4 w-4 text-white" />
                 </div>
                 <div>
                   <div className="text-sm font-medium text-white/60">Cards Redeemed</div>
@@ -223,8 +223,8 @@ export default function GiftCardActivity({
             </div>
             <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-green-500/20 flex items-center justify-center mr-3">
-                  <DollarSign className="h-4 w-4 text-green-400" />
+                <div className="h-8 w-8 rounded-lg bg-red-600/20 flex items-center justify-center mr-3">
+                  <DollarSign className="h-4 w-4 text-red-600" />
                 </div>
                 <div>
                   <div className="text-sm font-medium text-white/60">Avg. Card Value</div>
@@ -234,8 +234,8 @@ export default function GiftCardActivity({
             </div>
             <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-orange-500/20 flex items-center justify-center mr-3">
-                  <TrendingUp className="h-4 w-4 text-orange-400" />
+                <div className="h-8 w-8 rounded-lg bg-white/20 flex items-center justify-center mr-3">
+                  <TrendingUp className="h-4 w-4 text-white" />
                 </div>
                 <div>
                   <div className="text-sm font-medium text-white/60">Redemption Value</div>

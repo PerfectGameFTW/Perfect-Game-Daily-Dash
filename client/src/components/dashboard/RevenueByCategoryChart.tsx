@@ -126,17 +126,17 @@ export default function RevenueByCategoryChart({
       <div className="flex flex-row items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-bold flex items-center text-white">
-            <ChartPie size={20} className="mr-2 text-primary" />
+            <ChartPie size={20} className="mr-2 text-red-600" />
             <span>Revenue by Category</span>
           </h2>
           {data && !isLoading && (
             <div className="flex items-center text-white/70 text-sm">
-              <PieChart size={16} className="mr-1 text-green-400" />
+              <PieChart size={16} className="mr-1 text-white" />
               <span>Top: {topCategory} ({formatCurrency(totalRevenue)})</span>
             </div>
           )}
         </div>
-        <div className="flex items-center px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-sm font-medium">
+        <div className="flex items-center px-3 py-1.5 bg-red-600/10 text-red-600 rounded-lg text-sm font-medium">
           <PieChart size={14} className="mr-1.5" />
           <span>Category Split</span>
         </div>
