@@ -377,16 +377,19 @@ export class OrderService {
         COALESCE(SUM(${orders.totalMoney}), 0) AS amount
       FROM ${orders}
       WHERE ${orders.createdAt} BETWEEN ${start} AND ${end}
-        AND ${orders.isDeleted} = FALSE
       GROUP BY hour
       ORDER BY hour
     `);
     
     // Format hours as strings like "12 AM", "1 PM", etc.
-    return result.map(row => ({
-      hour: formatHour(row.hour),
-      amount: row.amount
-    }));
+    const hourlyRevenue: HourlyRevenue[] = [];
+    for (const row of result) {
+      hourlyRevenue.push({
+        hour: formatHour(row.hour),
+        amount: row.amount
+      });
+    }
+    return hourlyRevenue;
   }
   
   /**
@@ -409,12 +412,7 @@ export class OrderService {
     const result = await db.select({
       totalOrders: count(orders.id),
     }).from(orders)
-      .where(
-        and(
-          between(orders.createdAt, start, end),
-          eq(orders.isDeleted, false)
-        )
-      );
+      .where(between(orders.createdAt, start, end));
     
     return result[0]?.totalOrders || 0;
   }
