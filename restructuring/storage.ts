@@ -1,19 +1,24 @@
-import {
-  Order, InsertOrder, OrderLineItem, InsertOrderLineItem,
-  OrderModifier, InsertOrderModifier, OrderDiscount, InsertOrderDiscount,
-  Payment, InsertPayment, PaymentSource, InsertPaymentSource,
-  GiftCard, InsertGiftCard, GiftCardRedemption, InsertGiftCardRedemption,
-  User, InsertUser, SyncState, InsertSyncState,
-  OrderSummary, DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
-  DateRange, TransactionStatus, Category
-} from './schema';
-
 /**
  * Storage interface with clear separation of concerns:
  * - Each domain has its own set of methods
  * - All methods return Promises with clear return types
  * - Error handling is consistent throughout
  */
+import {
+  User, InsertUser,
+  Order, InsertOrder,
+  OrderLineItem, InsertOrderLineItem,
+  OrderModifier, InsertOrderModifier,
+  OrderDiscount, InsertOrderDiscount,
+  Payment, InsertPayment,
+  PaymentSource, InsertPaymentSource,
+  GiftCard, InsertGiftCard,
+  GiftCardRedemption, InsertGiftCardRedemption,
+  SyncState, InsertSyncState,
+  OrderSummary, DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
+  DateRange, TransactionStatus
+} from './schema';
+
 export interface IStorage {
   /* User Management */
   getUser(id: number): Promise<User | undefined>;

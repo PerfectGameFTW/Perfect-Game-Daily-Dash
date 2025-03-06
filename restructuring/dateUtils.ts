@@ -4,15 +4,15 @@
  * Provides consistent handling of dates and times throughout the application
  * with clear separation between storage (UTC) and display (Eastern Time)
  */
-import { format, addDays, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { format, utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
+import { startOfDay, endOfDay, subDays, addDays, isSameDay } from 'date-fns';
 import { DateRange } from './schema';
 
-// Timezone constants
+// Constants
 export const EASTERN_TIMEZONE = 'America/New_York';
 export const UTC_TIMEZONE = 'UTC';
 
-// Define date range for queries
+// Define the shape of date range boundaries
 interface DateRangeBoundary {
   start: Date;  // Start datetime in UTC
   end: Date;    // End datetime in UTC
@@ -31,54 +31,98 @@ export function getDateRangeBoundaries(
   startDate?: Date,
   endDate?: Date
 ): DateRangeBoundary {
-  // Always work with fresh Date objects to avoid mutation issues
+  // For consistent results, start with a UTC date representation
   const now = new Date();
   
-  // For custom date ranges, use the provided dates
-  if (dateRange === 'custom' && startDate && endDate) {
-    return {
-      start: setUTCStartOfDay(startDate),
-      end: setUTCEndOfDay(endDate)
-    };
-  }
-  
-  // Calculate standard date ranges in UTC
   let start: Date;
   let end: Date = setUTCEndOfDay(now); // Default end is end of today
   
-  switch (dateRange) {
-    case 'today':
-      start = setUTCStartOfDay(now);
-      break;
-      
-    case 'yesterday':
-      start = setUTCStartOfDay(subDays(now, 1));
-      end = setUTCEndOfDay(subDays(now, 1));
-      break;
-      
-    case 'last7days':
-      start = setUTCStartOfDay(subDays(now, 6));
-      break;
-      
-    case 'last30days':
-      start = setUTCStartOfDay(subDays(now, 29));
-      break;
-      
-    case 'thisMonth':
-      // First day of current month
-      start = setUTCStartOfDay(startOfMonth(now));
-      break;
-      
-    case 'lastMonth':
-      // First day of previous month
-      start = setUTCStartOfDay(startOfMonth(subMonths(now, 1)));
-      // Last day of previous month
-      end = setUTCEndOfDay(endOfMonth(subMonths(now, 1)));
-      break;
-      
-    default:
-      start = setUTCStartOfDay(now);
+  // For custom date range, use the provided dates
+  if (dateRange === 'custom' && startDate && endDate) {
+    // Ensure dates are interpreted as UTC
+    start = setUTCStartOfDay(new Date(startDate));
+    end = setUTCEndOfDay(new Date(endDate));
+  } 
+  // Handle predefined date ranges
+  else {
+    switch (dateRange) {
+      case 'today':
+        start = setUTCStartOfDay(now);
+        end = setUTCEndOfDay(now);
+        break;
+        
+      case 'yesterday':
+        const yesterday = subDays(now, 1);
+        start = setUTCStartOfDay(yesterday);
+        end = setUTCEndOfDay(yesterday);
+        break;
+        
+      case 'this_week':
+        // Start from Sunday or Monday of current week
+        const dayOfWeek = now.getUTCDay(); // 0 = Sunday, 1 = Monday, ...
+        const daysFromStartOfWeek = dayOfWeek === 0 ? 0 : dayOfWeek;
+        start = setUTCStartOfDay(subDays(now, daysFromStartOfWeek));
+        break;
+        
+      case 'last_week':
+        // Last week (previous Sunday to Saturday)
+        const daysFromLastSunday = now.getUTCDay() === 0 
+          ? 7 // If today is Sunday, go back to last Sunday
+          : now.getUTCDay() + 7;
+        start = setUTCStartOfDay(subDays(now, daysFromLastSunday));
+        end = setUTCEndOfDay(addDays(start, 6)); // End on Saturday
+        break;
+        
+      case 'this_month':
+        // Start from 1st of current month
+        start = setUTCStartOfDay(new Date(Date.UTC(
+          now.getUTCFullYear(), 
+          now.getUTCMonth(), 
+          1
+        )));
+        break;
+        
+      case 'last_month':
+        // Last month (1st to last day of previous month)
+        start = setUTCStartOfDay(new Date(Date.UTC(
+          now.getUTCFullYear(), 
+          now.getUTCMonth() - 1, 
+          1
+        )));
+        
+        // End of last month = day before 1st of current month
+        end = setUTCEndOfDay(new Date(Date.UTC(
+          now.getUTCFullYear(), 
+          now.getUTCMonth(), 
+          0
+        )));
+        break;
+        
+      case 'last_30_days':
+        start = setUTCStartOfDay(subDays(now, 30));
+        break;
+        
+      case 'last_90_days':
+        start = setUTCStartOfDay(subDays(now, 90));
+        break;
+        
+      default:
+        // Default to today
+        start = setUTCStartOfDay(now);
+        end = setUTCEndOfDay(now);
+    }
   }
+  
+  // Log for debugging
+  console.log(`Date range calculation:`, {
+    range: dateRange,
+    input: { startDate, endDate },
+    calculated: {
+      startStr: start.toISOString().split('T')[0],
+      endStr: end.toISOString().split('T')[0],
+      timezone: 'UTC'
+    }
+  });
   
   return { start, end };
 }
@@ -88,9 +132,12 @@ export function getDateRangeBoundaries(
  * Used for creating proper date range boundaries
  */
 function setUTCStartOfDay(date: Date): Date {
-  const result = new Date(date);
-  result.setUTCHours(0, 0, 0, 0);
-  return result;
+  return new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    0, 0, 0, 0
+  ));
 }
 
 /**
@@ -98,9 +145,12 @@ function setUTCStartOfDay(date: Date): Date {
  * Used for creating proper date range boundaries
  */
 function setUTCEndOfDay(date: Date): Date {
-  const result = new Date(date);
-  result.setUTCHours(23, 59, 59, 999);
-  return result;
+  return new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    23, 59, 59, 999
+  ));
 }
 
 /**
@@ -112,7 +162,11 @@ function setUTCEndOfDay(date: Date): Date {
  * @returns Formatted date string in Eastern Time
  */
 export function formatEasternDate(date: Date, formatStr: string = 'yyyy-MM-dd'): string {
-  return formatInTimeZone(date, EASTERN_TIMEZONE, formatStr);
+  // Convert date to Eastern Time
+  const easternDate = utcToZonedTime(date, EASTERN_TIMEZONE);
+  
+  // Format the date in Eastern Time
+  return format(easternDate, formatStr, { timeZone: EASTERN_TIMEZONE });
 }
 
 /**
@@ -120,7 +174,7 @@ export function formatEasternDate(date: Date, formatStr: string = 'yyyy-MM-dd'):
  * Used for display purposes
  */
 export function getNowInEastern(): Date {
-  return toZonedTime(new Date(), EASTERN_TIMEZONE);
+  return utcToZonedTime(new Date(), EASTERN_TIMEZONE);
 }
 
 /**
@@ -142,24 +196,34 @@ export function getDateRangeLabel(
 ): string {
   const { start, end } = getDateRangeBoundaries(dateRange, startDate, endDate);
   
-  // Format dates in Eastern Time for display
-  const startStr = formatEasternDate(start, 'MMM d, yyyy');
-  const endStr = formatEasternDate(end, 'MMM d, yyyy');
-  
-  if (startStr === endStr) {
-    return startStr;
+  // For single-day ranges, just show one date
+  if (isSameDay(start, end)) {
+    return formatEasternDate(start, 'MMMM d, yyyy');
   }
   
-  return `${startStr} - ${endStr}`;
+  // For multi-day ranges, show start and end dates
+  const startMonth = formatEasternDate(start, 'MMMM');
+  const endMonth = formatEasternDate(end, 'MMMM');
+  const startDay = formatEasternDate(start, 'd');
+  const endDay = formatEasternDate(end, 'd');
+  const year = formatEasternDate(end, 'yyyy');
+  
+  // If same month, don't repeat month name
+  if (startMonth === endMonth) {
+    return `${startMonth} ${startDay} - ${endDay}, ${year}`;
+  }
+  
+  // Different months
+  return `${startMonth} ${startDay} - ${endMonth} ${endDay}, ${year}`;
 }
 
 /**
  * Format an hour number (0-23) to a readable string (12am, 1pm, etc.)
  */
 export function formatHour(hour: number): string {
-  if (hour === 0) return '12am';
-  if (hour === 12) return '12pm';
-  return hour < 12 ? `${hour}am` : `${hour - 12}pm`;
+  const h = hour % 12 || 12; // Convert 0 to 12 for 12am
+  const ampm = hour < 12 ? 'am' : 'pm';
+  return `${h}${ampm}`;
 }
 
 /**
