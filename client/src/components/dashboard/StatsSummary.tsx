@@ -97,8 +97,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <h3 className="text-sm font-medium text-white/70">Gift Card Sales</h3>
               <p className="text-3xl font-bold mt-2 text-white">{formatCurrency(data?.giftCardSales || 0)}</p>
             </div>
-            <div className="h-12 w-12 rounded-xl bg-indigo-500/10 flex items-center justify-center">
-              <Gift className="h-6 w-6 text-indigo-400" />
+            <div className="h-12 w-12 rounded-xl bg-red-600/10 flex items-center justify-center">
+              <Gift className="h-6 w-6 text-red-600" />
             </div>
           </div>
           
@@ -128,8 +128,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <h3 className="text-sm font-medium text-white/70">Tips</h3>
               <p className="text-3xl font-bold mt-2 text-white">{formatCurrency(detailedTransactions?.tips || 0)}</p>
             </div>
-            <div className="h-12 w-12 rounded-xl bg-cyan-500/10 flex items-center justify-center">
-              <BadgeDollarSign className="h-6 w-6 text-cyan-400" />
+            <div className="h-12 w-12 rounded-xl bg-red-600/10 flex items-center justify-center">
+              <BadgeDollarSign className="h-6 w-6 text-red-600" />
             </div>
           </div>
           
