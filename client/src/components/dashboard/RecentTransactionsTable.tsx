@@ -144,8 +144,6 @@ export default function RecentTransactionsTable({
               )}
             </TableBody>
           </Table>
-            </TableBody>
-          </Table>
         </div>
       </CardContent>
     </Card>

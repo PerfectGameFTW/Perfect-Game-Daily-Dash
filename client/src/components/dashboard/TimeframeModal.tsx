@@ -158,8 +158,8 @@ export default function TimeframeModal({
               <div className="mt-6 border border-white/10 rounded-xl bg-black/30 overflow-hidden transition-all hover:border-primary/30">
                 <div className="p-4 flex items-center justify-between cursor-pointer">
                   <div className="flex items-center">
-                    <div className="h-10 w-10 rounded-lg bg-indigo-500/10 flex items-center justify-center mr-3">
-                      <Calendar className="h-5 w-5 text-indigo-400" />
+                    <div className="h-10 w-10 rounded-lg bg-red-600/10 flex items-center justify-center mr-3">
+                      <Calendar className="h-5 w-5 text-red-600" />
                     </div>
                     <span className="font-medium text-white">Reporting hours</span>
                   </div>
