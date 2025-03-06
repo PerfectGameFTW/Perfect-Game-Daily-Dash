@@ -36,6 +36,22 @@ The following database backup tables created during the migration process have b
 - order_modifiers_backup_2025_03_06T07_21_55_270Z
 - order_discounts_backup_2025_03_06T07_21_55_397Z
 
+### Removed Views
+The following legacy Eastern Time (ET) timezone-based views have been removed as they are no longer needed in the UTC-based architecture:
+
+- transactions_et (cascade removed dependent views as well)
+- gift_cards_et
+- gift_card_redemptions_et
+- orders_et
+- daily_metrics_et
+- hourly_metrics_et
+- orders_without_tests
+
+### Modified Database Structure
+The following database structure modifications were made:
+
+- Removed the foreign key constraint `orders_transaction_id_fkey` from the `orders` table since it was no longer used (all values were NULL)
+
 ## API Endpoint Cleanup
 
 ### Removed Endpoints
@@ -69,4 +85,18 @@ The system has been thoroughly tested and remains stable after these cleanup ope
 
 ## Future Considerations
 
-The restructuring folder (`/restructuring`) contains the implementation of the new architecture and was intentionally left intact as a reference for future development. It may be removed in a future cleanup once the team is fully comfortable with the new UTC-based architecture.
+### Pending Cleanup Tasks
+The following cleanup tasks have been identified but require careful coordination with code changes:
+
+1. **Legacy Transactions Table**
+   - The `transactions` table has been replaced by the `payments` table in the new architecture
+   - All data has been successfully migrated from `transactions` to `payments`
+   - The foreign key constraint from `orders.transaction_id` to `transactions.id` has been removed
+   - Before dropping the `transactions` table, the following code must be updated:
+     - Update `server/pgStorage.ts` to use `payments` instead of `transactions`
+     - Update `server/routes.ts` to reference payments API endpoints
+     - Update client components like `RecentTransactionsTable.tsx` to work with the payment model
+
+2. **Restructuring Folder**
+   - The restructuring folder (`/restructuring`) contains the implementation of the new architecture and was intentionally left intact as a reference for future development. 
+   - It may be removed in a future cleanup once the team is fully comfortable with the new UTC-based architecture.
