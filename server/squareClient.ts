@@ -342,12 +342,18 @@ export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: num
     safeLineItem.giftCardAmount = safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0;
   }
 
+  // Determine the category for the item
+  let category = mapSquareCategory(itemName, safeLineItem.itemType || '');
+  
   return {
     orderId,
     name: itemName,
     quantity: safeLineItem.quantity || 1,
     basePriceMoney: safeLineItem.basePriceMoney ? Number(safeLineItem.basePriceMoney.amount) / 100 : 0,
     totalMoney: safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0,
+    category: category,
+    productId: safeLineItem.catalogObjectId || null,
+    isGiftCard: isGiftCard,
     squareData: safeLineItem
   };
 }
