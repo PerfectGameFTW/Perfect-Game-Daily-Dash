@@ -17,18 +17,21 @@ interface NavItemProps {
 const NavItem = ({ icon, label, active, onClick }: NavItemProps) => {
   return (
     <button 
-      className="flex flex-col items-center justify-center w-1/5 relative py-2"
+      className="flex flex-col items-center justify-center w-1/5 relative py-2 transition-all"
       onClick={onClick}
     >
       {active && (
-        <div className="absolute top-0 left-1/2 w-1/2 h-1 bg-primary rounded-b-lg transform -translate-x-1/2" />
+        <div className="absolute top-0 left-1/2 w-8 h-1 bg-primary rounded-b-lg transform -translate-x-1/2 transition-all duration-300" />
       )}
-      <div className={`mb-1 ${active ? 'text-primary' : 'text-white/50'}`}>
+      <div className={`mb-1 transition-colors duration-200 ${active ? 'text-primary scale-110' : 'text-white/50'}`}>
         {icon}
       </div>
-      <span className={`text-xs ${active ? 'text-white font-medium' : 'text-white/50'}`}>
+      <span className={`text-xs md:text-sm transition-colors duration-200 ${active ? 'text-white font-medium' : 'text-white/50'}`}>
         {label}
       </span>
+      {active && (
+        <div className="absolute -bottom-1 left-1/2 w-1.5 h-1.5 bg-primary rounded-full transform -translate-x-1/2" />
+      )}
     </button>
   );
 };
@@ -54,40 +57,42 @@ const BottomNavigation = ({ activeTab = "overview", onTabChange }: BottomNavigat
 
   return (
     <div 
-      className={`fixed bottom-0 left-0 right-0 h-20 backdrop-blur-sm bg-black/70 border-t border-white/10 flex items-center justify-between px-2 transition-all duration-300 ease-in-out ${
+      className={`fixed bottom-0 left-0 right-0 h-16 md:h-20 backdrop-blur-sm bg-black/80 border-t border-white/10 flex items-center justify-between px-2 md:px-4 transition-all duration-300 ease-in-out z-50 ${
         animateNav ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'
       }`}
     >
-      <NavItem 
-        icon={<BarChart3 className="w-5 h-5" />} 
-        label="Overview" 
-        active={activeTab === "overview"}
-        onClick={() => handleTabChange("overview")}
-      />
-      <NavItem 
-        icon={<TrendingUp className="w-5 h-5" />} 
-        label="Hourly" 
-        active={activeTab === "hourly"}
-        onClick={() => handleTabChange("hourly")}
-      />
-      <NavItem 
-        icon={<ChartPie className="w-5 h-5" />} 
-        label="Categories" 
-        active={activeTab === "categories"}
-        onClick={() => handleTabChange("categories")}
-      />
-      <NavItem 
-        icon={<CreditCard className="w-5 h-5" />} 
-        label="Gift Cards" 
-        active={activeTab === "giftcards"}
-        onClick={() => handleTabChange("giftcards")}
-      />
-      <NavItem 
-        icon={<Settings className="w-5 h-5" />} 
-        label="Settings"
-        active={activeTab === "settings"}
-        onClick={() => handleTabChange("settings")}
-      />
+      <div className="w-full max-w-xl mx-auto flex items-center justify-between">
+        <NavItem 
+          icon={<BarChart3 className="w-5 h-5 md:w-6 md:h-6" />} 
+          label="Overview" 
+          active={activeTab === "overview"}
+          onClick={() => handleTabChange("overview")}
+        />
+        <NavItem 
+          icon={<TrendingUp className="w-5 h-5 md:w-6 md:h-6" />} 
+          label="Hourly" 
+          active={activeTab === "hourly"}
+          onClick={() => handleTabChange("hourly")}
+        />
+        <NavItem 
+          icon={<ChartPie className="w-5 h-5 md:w-6 md:h-6" />} 
+          label="Categories" 
+          active={activeTab === "categories"}
+          onClick={() => handleTabChange("categories")}
+        />
+        <NavItem 
+          icon={<CreditCard className="w-5 h-5 md:w-6 md:h-6" />} 
+          label="Gift Cards" 
+          active={activeTab === "giftcards"}
+          onClick={() => handleTabChange("giftcards")}
+        />
+        <NavItem 
+          icon={<Settings className="w-5 h-5 md:w-6 md:h-6" />} 
+          label="Settings"
+          active={activeTab === "settings"}
+          onClick={() => handleTabChange("settings")}
+        />
+      </div>
     </div>
   );
 };

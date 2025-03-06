@@ -179,57 +179,7 @@ export default function Dashboard() {
         isSyncing={isSyncing}
       />
 
-      {/* Navigation Tabs */}
-      <div className="w-full px-4 pt-4">
-        <div className="w-full max-w-7xl mx-auto">
-          <div className="flex space-x-2 overflow-x-auto pb-2 md:justify-center">
-            <button
-              onClick={() => setActiveTab("overview")}
-              className={`px-4 py-2 rounded-lg flex items-center space-x-2 whitespace-nowrap transition-all ${
-                activeTab === "overview" 
-                  ? "bg-primary text-white font-medium shadow-lg shadow-primary/30" 
-                  : "bg-white/5 hover:bg-white/10 text-white/70"
-              }`}
-            >
-              <BarChart3 className="h-4 w-4" />
-              <span>Overview</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("hourly")}
-              className={`px-4 py-2 rounded-lg flex items-center space-x-2 whitespace-nowrap transition-all ${
-                activeTab === "hourly" 
-                  ? "bg-primary text-white font-medium shadow-lg shadow-primary/30" 
-                  : "bg-white/5 hover:bg-white/10 text-white/70"
-              }`}
-            >
-              <TrendingUp className="h-4 w-4" />
-              <span>Hourly</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("categories")}
-              className={`px-4 py-2 rounded-lg flex items-center space-x-2 whitespace-nowrap transition-all ${
-                activeTab === "categories" 
-                  ? "bg-primary text-white font-medium shadow-lg shadow-primary/30" 
-                  : "bg-white/5 hover:bg-white/10 text-white/70"
-              }`}
-            >
-              <ChartPie className="h-4 w-4" />
-              <span>Categories</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("giftcards")}
-              className={`px-4 py-2 rounded-lg flex items-center space-x-2 whitespace-nowrap transition-all ${
-                activeTab === "giftcards" 
-                  ? "bg-primary text-white font-medium shadow-lg shadow-primary/30" 
-                  : "bg-white/5 hover:bg-white/10 text-white/70"
-              }`}
-            >
-              <CreditCard className="h-4 w-4" />
-              <span>Gift Cards</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* No top navigation - using only bottom navigation */}
 
       <main className="flex-1 w-full overflow-y-auto px-4 py-4 space-y-6">
         <div className="w-full max-w-7xl mx-auto">
@@ -237,7 +187,7 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {isMobile && <BottomNavigation activeTab={activeTab} onTabChange={setActiveTab} />}
+      <BottomNavigation activeTab={activeTab} onTabChange={setActiveTab} />
 
       <TimeframeModal 
         open={timeframeModalOpen}
