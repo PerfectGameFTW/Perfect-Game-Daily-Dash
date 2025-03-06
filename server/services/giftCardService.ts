@@ -192,26 +192,26 @@ export class GiftCardService {
     
     console.log(`Getting gift card summary with UTC dates: ${start.toISOString()} to ${end.toISOString()}`);
     
-    // Query the database for gift card activations with direct SQL queries
-    // to ensure full control over query construction
-    const activationsResult = await db.execute<{ sold_count: number, sold_amount: number }>(`
+    // Query the database for gift card activations using Drizzle's SQL template
+    // which properly handles parameterized queries
+    const activationsResult = await db.execute(sql`
       SELECT 
         COUNT(*) as sold_count,
         COALESCE(SUM(activation_amount), 0) as sold_amount
       FROM gift_cards
-      WHERE purchase_date BETWEEN $1 AND $2
+      WHERE purchase_date BETWEEN ${start} AND ${end}
         AND activation_amount > 0
-    `, [start, end]);
+    `);
     
-    // Query the database for gift card redemptions with direct SQL queries
-    // to ensure full control over query construction
-    const redemptionsResult = await db.execute<{ redeemed_count: number, redeemed_amount: number }>(`
+    // Query the database for gift card redemptions using Drizzle's SQL template
+    // which properly handles parameterized queries
+    const redemptionsResult = await db.execute(sql`
       SELECT 
         COUNT(*) as redeemed_count,
         COALESCE(SUM(amount), 0) as redeemed_amount
       FROM gift_card_redemptions
-      WHERE timestamp BETWEEN $1 AND $2
-    `, [start, end]);
+      WHERE timestamp BETWEEN ${start} AND ${end}
+    `);
     
     // Access the result properly from the raw SQL query results
     const soldCount = activationsResult.rows?.[0]?.sold_count || 0;
@@ -253,16 +253,16 @@ export class GiftCardService {
   endDate: ${endDate ? `'${endDate.toISOString()}'` : 'undefined'}
 }`);
     
-    // Query the database for gift card sales with direct SQL
-    // to ensure full control over query construction
-    const result = await db.execute<{ gift_card_sales: number, gift_card_count: number }>(`
+    // Query the database for gift card sales using Drizzle's SQL template
+    // which properly handles parameterized queries
+    const result = await db.execute(sql`
       SELECT 
         COALESCE(SUM(activation_amount), 0) as gift_card_sales,
         COUNT(*) as gift_card_count
       FROM gift_cards
-      WHERE purchase_date BETWEEN $1 AND $2
+      WHERE purchase_date BETWEEN ${start} AND ${end}
         AND activation_amount > 0
-    `, [start, end]);
+    `);
     
     // Access the result properly from the raw SQL query result
     const giftCardSales = result.rows?.[0]?.gift_card_sales || 0;
@@ -302,7 +302,7 @@ export class GiftCardService {
     // We need to use a raw query here to properly reference the related gift card
     // Note: The transactions table doesn't have a direct giftCardId column in schema
     // So we're using a subquery to extract gift card ID from the square_data JSON
-    const result = await db.execute(`
+    const result = await db.execute(sql`
       UPDATE gift_cards gc
       SET 
         activation_amount = GREATEST(
