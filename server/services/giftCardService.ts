@@ -256,7 +256,7 @@ export class GiftCardService {
         COALESCE(SUM(${giftCards.activationAmount}), 0) as gift_card_sales,
         COUNT(*) as gift_card_count
       FROM ${giftCards}
-      WHERE ${giftCards.createdAt} BETWEEN ${start} AND ${end}
+      WHERE ${giftCards.purchaseDate} BETWEEN ${start} AND ${end}
         AND ${giftCards.activationAmount} > 0
     `);
     
@@ -295,6 +295,9 @@ export class GiftCardService {
    * @returns Number of fixed gift cards
    */
   async fixGiftCardActivationAmounts(): Promise<number> {
+    // We need to use a raw query here to properly reference the related gift card
+    // Note: The transactions table doesn't have a direct giftCardId column in schema
+    // So we're using a subquery to extract gift card ID from the square_data JSON
     const result = await db.execute(sql`
       UPDATE ${giftCards} gc
       SET 
@@ -303,8 +306,9 @@ export class GiftCardService {
           COALESCE((
             SELECT ${transactions.amount}
             FROM ${transactions}
-            WHERE ${transactions.giftCardId} = ${giftCards.id}
+            WHERE ${transactions.categoryId} = 'giftCard'
               AND ${transactions.status} = 'completed'
+              AND ${transactions.squareId} = gc.${giftCards.squareId}
             ORDER BY ${transactions.timestamp}
             LIMIT 1
           ), 0)
