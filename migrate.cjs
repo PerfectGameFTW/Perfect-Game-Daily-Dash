@@ -83,7 +83,9 @@ async function createBackup(pool, backupName) {
   const results = {};
   
   for (const table of backupTables) {
-    const backupTableName = `${table}_${backupName}`;
+    // Generate a safe backup table name without hyphens
+    const timestamp = new Date().toISOString().replace(/[-:.]/g, '_');
+    const backupTableName = `${table}_backup_${timestamp}`;
     
     // Check if table exists
     const tableExists = await pool.query(`
@@ -96,11 +98,11 @@ async function createBackup(pool, backupName) {
     
     if (tableExists.rows[0].exists) {
       // Create backup table with the same structure and data
-      await pool.query(`CREATE TABLE ${backupTableName} AS SELECT * FROM ${table}`);
+      await pool.query(`CREATE TABLE "${backupTableName}" AS SELECT * FROM "${table}"`);
       console.log(`Created backup table: ${backupTableName}`);
       
       // Count rows
-      const countResult = await pool.query(`SELECT COUNT(*) FROM ${backupTableName}`);
+      const countResult = await pool.query(`SELECT COUNT(*) FROM "${backupTableName}"`);
       const rowCount = parseInt(countResult.rows[0].count);
       results[table] = rowCount;
       
@@ -219,39 +221,49 @@ async function createNewTables(pool) {
   await pool.query(createPaymentSourcesTable);
   await pool.query(createPaymentsTable);
   
-  // Add foreign key constraints
-  // Note: We're adding these separately to avoid circular references
+  // Add new columns to existing tables first
   await pool.query(`
     ALTER TABLE gift_cards 
-    ADD COLUMN IF NOT EXISTS activation_payment_id INTEGER,
-    ADD CONSTRAINT IF NOT EXISTS fk_gift_card_payment 
-      FOREIGN KEY (activation_payment_id) REFERENCES payments(id)
+    ADD COLUMN IF NOT EXISTS activation_payment_id INTEGER
   `);
   
-  await pool.query(`
-    ALTER TABLE payment_sources 
-    ADD CONSTRAINT IF NOT EXISTS fk_payment_source_gift_card 
-      FOREIGN KEY (gift_card_id) REFERENCES gift_cards(id)
-  `);
-  
-  await pool.query(`
-    ALTER TABLE payments 
-    ADD CONSTRAINT IF NOT EXISTS fk_payment_order
-      FOREIGN KEY (order_id) REFERENCES orders(id),
-    ADD CONSTRAINT IF NOT EXISTS fk_payment_gift_card
-      FOREIGN KEY (gift_card_id) REFERENCES gift_cards(id)
-  `);
-  
-  // Add new columns to existing tables if needed
   await pool.query(`
     ALTER TABLE gift_cards 
-    ADD COLUMN IF NOT EXISTS activation_amount REAL NOT NULL DEFAULT 0
+    ADD COLUMN IF NOT EXISTS activation_amount REAL
   `);
   
   await pool.query(`
     ALTER TABLE sync_state 
     ADD COLUMN IF NOT EXISTS total_count INTEGER DEFAULT 0
   `);
+  
+  // After tables exist, add foreign key constraints one by one
+  await pool.query(`
+    ALTER TABLE payment_sources 
+    ADD CONSTRAINT fk_payment_source_gift_card 
+    FOREIGN KEY (gift_card_id) REFERENCES gift_cards(id)
+  `);
+  
+  await pool.query(`
+    ALTER TABLE payments 
+    ADD CONSTRAINT fk_payment_order
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+  `);
+  
+  await pool.query(`
+    ALTER TABLE payments 
+    ADD CONSTRAINT fk_payment_gift_card
+    FOREIGN KEY (gift_card_id) REFERENCES gift_cards(id)
+  `);
+  
+  await pool.query(`
+    ALTER TABLE gift_cards 
+    ADD CONSTRAINT fk_gift_card_payment 
+    FOREIGN KEY (activation_payment_id) REFERENCES payments(id)
+  `);
+  
+  // Add new columns to existing tables if needed
+  // Already added columns earlier
 }
 
 async function migrateData(pool) {
@@ -482,9 +494,9 @@ Commands:
   help            Show this help message
 
 Examples:
-  node migrate.js backup pre-migration
-  node migrate.js migrate
-  node migrate.js verify
+  node migrate.cjs backup pre-migration
+  node migrate.cjs migrate
+  node migrate.cjs verify
   `);
 }
 
