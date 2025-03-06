@@ -1,0 +1,517 @@
+/**
+ * Sync Service
+ * 
+ * Handles synchronization of data with the Square API.
+ * Provides a clean API for other services to trigger synchronization.
+ */
+
+import { db } from '../db';
+import { eq, and, between, desc, asc, sql, isNull, gt } from 'drizzle-orm';
+import { 
+  syncState,
+  type SyncState,
+  type InsertSyncState
+} from '../../shared/schema';
+import * as squareClient from '../squareClient';
+import { orderService } from './orderService';
+import { paymentService } from './paymentService';
+import { giftCardService } from './giftCardService';
+
+export class SyncError extends Error {
+  constructor(message: string, public readonly code: string, public readonly details?: any) {
+    super(message);
+    this.name = 'SyncError';
+  }
+}
+
+export class SyncService {
+  /**
+   * Get the current sync state for a specific sync type
+   * 
+   * @param syncType The type of sync to get state for (payments, orders, giftCards)
+   * @returns The sync state or undefined if not found
+   */
+  async getSyncState(syncType: string): Promise<SyncState | undefined> {
+    const result = await db.select().from(syncState)
+      .where(eq(syncState.syncType, syncType))
+      .limit(1);
+    
+    return result.length ? result[0] : undefined;
+  }
+  
+  /**
+   * Create a new sync state record
+   * 
+   * @param stateData The sync state data to insert
+   * @returns The created sync state
+   */
+  async createSyncState(stateData: InsertSyncState): Promise<SyncState> {
+    const result = await db.insert(syncState).values(stateData).returning();
+    
+    if (!result.length) {
+      throw new SyncError('Failed to create sync state', 'DB_ERROR');
+    }
+    
+    return result[0];
+  }
+  
+  /**
+   * Update an existing sync state record
+   * 
+   * @param id The sync state ID
+   * @param updates The partial sync state data to update
+   * @returns The updated sync state
+   */
+  async updateSyncState(id: number, updates: Partial<InsertSyncState>): Promise<SyncState> {
+    const result = await db.update(syncState)
+      .set({
+        ...updates,
+        updatedAt: new Date()
+      })
+      .where(eq(syncState.id, id))
+      .returning();
+    
+    if (!result.length) {
+      throw new SyncError(`Failed to update sync state with ID ${id}`, 'DB_ERROR');
+    }
+    
+    return result[0];
+  }
+  
+  /**
+   * Get the current sync progress for all sync types
+   * 
+   * @returns Object with sync progress for each type
+   */
+  async getSyncProgress(): Promise<Record<string, number>> {
+    const states = await db.select().from(syncState);
+    
+    const progress: Record<string, number> = {};
+    
+    for (const state of states) {
+      if (state.totalItems > 0) {
+        progress[state.syncType] = Math.min(
+          100,
+          Math.round((state.processedItems / state.totalItems) * 100)
+        );
+      } else {
+        progress[state.syncType] = 0;
+      }
+    }
+    
+    return progress;
+  }
+  
+  /**
+   * Synchronize orders from Square API
+   * 
+   * @param startDate Optional start date for sync
+   * @param endDate Optional end date for sync
+   * @returns Object with sync results
+   */
+  async syncOrders(startDate?: Date, endDate?: Date): Promise<{
+    processed: number;
+    created: number;
+    updated: number;
+    failed: number;
+  }> {
+    // Initialize counters
+    let processed = 0;
+    let created = 0;
+    let updated = 0;
+    let failed = 0;
+    
+    try {
+      // Get or create sync state
+      let state = await this.getSyncState('orders');
+      
+      if (!state) {
+        state = await this.createSyncState({
+          syncType: 'orders',
+          lastSyncDate: null,
+          inProgress: false,
+          processedItems: 0,
+          totalItems: 0,
+          status: 'idle',
+          message: 'Ready to sync',
+          error: null
+        });
+      }
+      
+      // Update state to in progress
+      await this.updateSyncState(state.id, {
+        inProgress: true,
+        status: 'in_progress',
+        message: 'Fetching orders from Square API',
+        processedItems: 0,
+        totalItems: 0,
+        error: null
+      });
+      
+      // Fetch orders from Square API
+      const squareOrders = await squareClient.fetchOrders(startDate, endDate);
+      
+      // Update state with total items
+      await this.updateSyncState(state.id, {
+        totalItems: squareOrders.length,
+        message: `Found ${squareOrders.length} orders to sync`
+      });
+      
+      // Process each order
+      for (const squareOrder of squareOrders) {
+        try {
+          // Convert Square order to our data model
+          const orderData = squareClient.convertSquareOrderToOrder(squareOrder);
+          
+          // Check if order exists
+          let existingOrder;
+          try {
+            existingOrder = await orderService.getOrderBySquareId(orderData.squareId);
+          } catch (error) {
+            // Order doesn't exist, which is fine
+          }
+          
+          if (existingOrder) {
+            // Order exists, skip for now (could implement update logic here)
+            updated++;
+          } else {
+            // Order doesn't exist, create it
+            await orderService.createOrder(orderData);
+            
+            // Extract and create line items
+            if (squareOrder.lineItems) {
+              for (const squareLineItem of squareOrder.lineItems) {
+                const lineItemData = squareClient.convertSquareLineItemToOrderLineItem(
+                  squareLineItem,
+                  existingOrder ? existingOrder.id : orderData.id
+                );
+                
+                const lineItem = await orderService.createOrderItem(lineItemData);
+                
+                // Extract and create modifiers if any
+                if (squareLineItem.modifiers && squareLineItem.modifiers.length > 0) {
+                  for (const squareModifier of squareLineItem.modifiers) {
+                    const modifierData = squareClient.convertSquareModifierToOrderModifier(
+                      squareModifier,
+                      lineItem.id
+                    );
+                    
+                    // Create modifier (would need a createOrderModifier method)
+                  }
+                }
+              }
+            }
+            
+            // Extract and create discounts if any
+            if (squareOrder.discounts) {
+              for (const squareDiscount of squareOrder.discounts) {
+                const discountData = squareClient.convertSquareDiscountToOrderDiscount(
+                  squareDiscount,
+                  existingOrder ? existingOrder.id : orderData.id
+                );
+                
+                // Create discount (would need a createOrderDiscount method)
+              }
+            }
+            
+            created++;
+          }
+          
+          processed++;
+          
+          // Update sync state progress
+          if (processed % 10 === 0 || processed === squareOrders.length) {
+            await this.updateSyncState(state.id, {
+              processedItems: processed,
+              message: `Processed ${processed} of ${squareOrders.length} orders`
+            });
+          }
+        } catch (error) {
+          failed++;
+          console.error('Failed to process order:', error);
+        }
+      }
+      
+      // Update state to completed
+      await this.updateSyncState(state.id, {
+        inProgress: false,
+        status: 'completed',
+        message: `Completed. Processed ${processed} orders. Created: ${created}, Updated: ${updated}, Failed: ${failed}`,
+        lastSyncDate: new Date(),
+        processedItems: processed
+      });
+      
+      return { processed, created, updated, failed };
+    } catch (error) {
+      // Update state to error
+      const state = await this.getSyncState('orders');
+      
+      if (state) {
+        await this.updateSyncState(state.id, {
+          inProgress: false,
+          status: 'error',
+          message: 'Error syncing orders',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+      
+      throw new SyncError(
+        'Failed to sync orders',
+        'SYNC_ERROR',
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+  
+  /**
+   * Synchronize payments from Square API
+   * 
+   * @param startDate Optional start date for sync
+   * @param endDate Optional end date for sync
+   * @returns Object with sync results
+   */
+  async syncPayments(startDate?: Date, endDate?: Date): Promise<{
+    processed: number;
+    created: number;
+    updated: number;
+    failed: number;
+  }> {
+    // Initialize counters
+    let processed = 0;
+    let created = 0;
+    let updated = 0;
+    let failed = 0;
+    
+    try {
+      // Get or create sync state
+      let state = await this.getSyncState('payments');
+      
+      if (!state) {
+        state = await this.createSyncState({
+          syncType: 'payments',
+          lastSyncDate: null,
+          inProgress: false,
+          processedItems: 0,
+          totalItems: 0,
+          status: 'idle',
+          message: 'Ready to sync',
+          error: null
+        });
+      }
+      
+      // Update state to in progress
+      await this.updateSyncState(state.id, {
+        inProgress: true,
+        status: 'in_progress',
+        message: 'Fetching payments from Square API',
+        processedItems: 0,
+        totalItems: 0,
+        error: null
+      });
+      
+      // Fetch payments from Square API
+      const squarePayments = await squareClient.fetchPayments(startDate, endDate);
+      
+      // Update state with total items
+      await this.updateSyncState(state.id, {
+        totalItems: squarePayments.length,
+        message: `Found ${squarePayments.length} payments to sync`
+      });
+      
+      // Process each payment
+      for (const squarePayment of squarePayments) {
+        try {
+          // Convert Square payment to our data model
+          const paymentData = squareClient.convertSquarePaymentToTransaction(squarePayment);
+          
+          // Check if payment exists
+          let existingPayment;
+          try {
+            existingPayment = await paymentService.getPaymentBySquareId(paymentData.squareId);
+          } catch (error) {
+            // Payment doesn't exist, which is fine
+          }
+          
+          if (existingPayment) {
+            // Payment exists, skip for now (could implement update logic here)
+            updated++;
+          } else {
+            // Payment doesn't exist, create it
+            await paymentService.createPayment(paymentData);
+            created++;
+          }
+          
+          processed++;
+          
+          // Update sync state progress
+          if (processed % 10 === 0 || processed === squarePayments.length) {
+            await this.updateSyncState(state.id, {
+              processedItems: processed,
+              message: `Processed ${processed} of ${squarePayments.length} payments`
+            });
+          }
+        } catch (error) {
+          failed++;
+          console.error('Failed to process payment:', error);
+        }
+      }
+      
+      // Update state to completed
+      await this.updateSyncState(state.id, {
+        inProgress: false,
+        status: 'completed',
+        message: `Completed. Processed ${processed} payments. Created: ${created}, Updated: ${updated}, Failed: ${failed}`,
+        lastSyncDate: new Date(),
+        processedItems: processed
+      });
+      
+      return { processed, created, updated, failed };
+    } catch (error) {
+      // Update state to error
+      const state = await this.getSyncState('payments');
+      
+      if (state) {
+        await this.updateSyncState(state.id, {
+          inProgress: false,
+          status: 'error',
+          message: 'Error syncing payments',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+      
+      throw new SyncError(
+        'Failed to sync payments',
+        'SYNC_ERROR',
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+  
+  /**
+   * Synchronize gift cards from Square API
+   * 
+   * @returns Object with sync results
+   */
+  async syncGiftCards(): Promise<{
+    processed: number;
+    created: number;
+    updated: number;
+    failed: number;
+  }> {
+    // Initialize counters
+    let processed = 0;
+    let created = 0;
+    let updated = 0;
+    let failed = 0;
+    
+    try {
+      // Get or create sync state
+      let state = await this.getSyncState('giftCards');
+      
+      if (!state) {
+        state = await this.createSyncState({
+          syncType: 'giftCards',
+          lastSyncDate: null,
+          inProgress: false,
+          processedItems: 0,
+          totalItems: 0,
+          status: 'idle',
+          message: 'Ready to sync',
+          error: null
+        });
+      }
+      
+      // Update state to in progress
+      await this.updateSyncState(state.id, {
+        inProgress: true,
+        status: 'in_progress',
+        message: 'Fetching gift cards from Square API',
+        processedItems: 0,
+        totalItems: 0,
+        error: null
+      });
+      
+      // Fetch gift cards from Square API
+      const squareGiftCards = await squareClient.fetchGiftCards();
+      
+      // Update state with total items
+      await this.updateSyncState(state.id, {
+        totalItems: squareGiftCards.length,
+        message: `Found ${squareGiftCards.length} gift cards to sync`
+      });
+      
+      // Process each gift card
+      for (const squareGiftCard of squareGiftCards) {
+        try {
+          // Convert Square gift card to our data model
+          const giftCardData = squareClient.convertSquareGiftCardToGiftCard(squareGiftCard);
+          
+          // Check if gift card exists
+          let existingGiftCard;
+          try {
+            existingGiftCard = await giftCardService.getGiftCardByGAN(giftCardData.gan);
+          } catch (error) {
+            // Gift card doesn't exist, which is fine
+          }
+          
+          if (existingGiftCard) {
+            // Gift card exists, skip for now (could implement update logic here)
+            updated++;
+          } else {
+            // Gift card doesn't exist, create it
+            await giftCardService.createGiftCard(giftCardData);
+            created++;
+          }
+          
+          processed++;
+          
+          // Update sync state progress
+          if (processed % 10 === 0 || processed === squareGiftCards.length) {
+            await this.updateSyncState(state.id, {
+              processedItems: processed,
+              message: `Processed ${processed} of ${squareGiftCards.length} gift cards`
+            });
+          }
+        } catch (error) {
+          failed++;
+          console.error('Failed to process gift card:', error);
+        }
+      }
+      
+      // If successful, run the gift card activation amount fix
+      await giftCardService.fixGiftCardActivationAmounts();
+      
+      // Update state to completed
+      await this.updateSyncState(state.id, {
+        inProgress: false,
+        status: 'completed',
+        message: `Completed. Processed ${processed} gift cards. Created: ${created}, Updated: ${updated}, Failed: ${failed}`,
+        lastSyncDate: new Date(),
+        processedItems: processed
+      });
+      
+      return { processed, created, updated, failed };
+    } catch (error) {
+      // Update state to error
+      const state = await this.getSyncState('giftCards');
+      
+      if (state) {
+        await this.updateSyncState(state.id, {
+          inProgress: false,
+          status: 'error',
+          message: 'Error syncing gift cards',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+      
+      throw new SyncError(
+        'Failed to sync gift cards',
+        'SYNC_ERROR',
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+}
+
+// Create and export a singleton instance
+export const syncService = new SyncService();

@@ -91,30 +91,14 @@ class OrderNotFoundError extends OrderError {
 }
 
 
+// Import the new API router creator
+import { createApiRouter } from './routes/api';
+
 export async function registerRoutes(app: Express): Promise<Server> {
-  const apiRouter = express.Router();
-
-  // Get sync state
-  apiRouter.get("/sync-state", async (req, res) => {
-    try {
-      // Get sync state directly from db
-      const paymentsSyncState = await db.query.syncState.findFirst({
-        where: eq(syncState.syncType, 'payments')
-      });
-
-      const giftCardsSyncState = await db.query.syncState.findFirst({
-        where: eq(syncState.syncType, 'giftCards')
-      });
-
-      res.json({
-        payments: paymentsSyncState || { status: 'none' },
-        giftCards: giftCardsSyncState || { status: 'none' }
-      });
-    } catch (error) {
-      console.error("Error getting sync state:", error);
-      res.status(500).json({ error: "Failed to get sync state" });
-    }
-  });
+  // Create the API router using our new service-based implementation
+  const apiRouter = createApiRouter();
+  
+  // Legacy API routes below will be gradually migrated to the new service-based implementation
 
   // Get dashboard summary data
   apiRouter.get("/summary", async (req, res) => {
@@ -1653,8 +1637,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Register the API router
   app.use("/api", apiRouter);
 
+  // Create HTTP server and return it
   const httpServer = createServer(app);
   return httpServer;
 }
