@@ -12,12 +12,14 @@
   }
 
   :root {
-    --chart-1: 223 89% 51%; /* Blue - primary */
-    --chart-2: 358 75% 59%; /* Red for gift cards */
+    --chart-1: 0 74% 42%; /* Red-600 */
+    --chart-2: 0 0% 0%; /* Black */
+    --background: 0 0% 0%; /* Black background */
   }
 
   .dark {
-    --chart-1: 223 89% 51%; /* Blue - primary */
-    --chart-2: 358 75% 59%; /* Red for gift cards */
+    --chart-1: 0 74% 42%; /* Red-600 */
+    --chart-2: 0 0% 0%; /* Black */
+    --background: 0 0% 0%; /* Black background */
   }
 }
