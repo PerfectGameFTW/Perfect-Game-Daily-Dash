@@ -192,29 +192,32 @@ export class GiftCardService {
     
     console.log(`Getting gift card summary with UTC dates: ${start.toISOString()} to ${end.toISOString()}`);
     
-    // Query the database for gift card activations
-    const activationsResult = await db.select({
-      soldCount: sql<number>`COUNT(*)`,
-      soldAmount: sql<number>`COALESCE(SUM(${giftCards.activationAmount}), 0)`
-    }).from(giftCards)
-      .where(
-        and(
-          between(giftCards.createdAt, start, end),
-          gt(giftCards.activationAmount, 0)
-        )
-      );
+    // Query the database for gift card activations with direct SQL queries
+    // to ensure full control over query construction
+    const activationsResult = await db.execute<{ sold_count: number, sold_amount: number }>(`
+      SELECT 
+        COUNT(*) as sold_count,
+        COALESCE(SUM(activation_amount), 0) as sold_amount
+      FROM gift_cards
+      WHERE purchase_date BETWEEN $1 AND $2
+        AND activation_amount > 0
+    `, [start, end]);
     
-    // Query the database for gift card redemptions
-    const redemptionsResult = await db.select({
-      redeemedCount: sql<number>`COUNT(*)`,
-      redeemedAmount: sql<number>`COALESCE(SUM(${giftCardRedemptions.amount}), 0)`
-    }).from(giftCardRedemptions)
-      .where(between(giftCardRedemptions.timestamp, start, end));
+    // Query the database for gift card redemptions with direct SQL queries
+    // to ensure full control over query construction
+    const redemptionsResult = await db.execute<{ redeemed_count: number, redeemed_amount: number }>(`
+      SELECT 
+        COUNT(*) as redeemed_count,
+        COALESCE(SUM(amount), 0) as redeemed_amount
+      FROM gift_card_redemptions
+      WHERE timestamp BETWEEN $1 AND $2
+    `, [start, end]);
     
-    const soldCount = activationsResult[0]?.soldCount || 0;
-    const soldAmount = activationsResult[0]?.soldAmount || 0;
-    const redeemedCount = redemptionsResult[0]?.redeemedCount || 0;
-    const redeemedAmount = redemptionsResult[0]?.redeemedAmount || 0;
+    // Access the result properly from the raw SQL query results
+    const soldCount = activationsResult.rows?.[0]?.sold_count || 0;
+    const soldAmount = activationsResult.rows?.[0]?.sold_amount || 0;
+    const redeemedCount = redemptionsResult.rows?.[0]?.redeemed_count || 0;
+    const redeemedAmount = redemptionsResult.rows?.[0]?.redeemed_amount || 0;
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
     
     return {
@@ -250,15 +253,16 @@ export class GiftCardService {
   endDate: ${endDate ? `'${endDate.toISOString()}'` : 'undefined'}
 }`);
     
-    // Query the database for gift card sales
-    const result = await db.execute<{ gift_card_sales: number, gift_card_count: number }>(sql`
+    // Query the database for gift card sales with direct SQL
+    // to ensure full control over query construction
+    const result = await db.execute<{ gift_card_sales: number, gift_card_count: number }>(`
       SELECT 
-        COALESCE(SUM(${giftCards.activationAmount}), 0) as gift_card_sales,
+        COALESCE(SUM(activation_amount), 0) as gift_card_sales,
         COUNT(*) as gift_card_count
-      FROM ${giftCards}
-      WHERE ${giftCards.purchaseDate} BETWEEN ${start} AND ${end}
-        AND ${giftCards.activationAmount} > 0
-    `);
+      FROM gift_cards
+      WHERE purchase_date BETWEEN $1 AND $2
+        AND activation_amount > 0
+    `, [start, end]);
     
     // Access the result properly from the raw SQL query result
     const giftCardSales = result.rows?.[0]?.gift_card_sales || 0;
@@ -298,24 +302,24 @@ export class GiftCardService {
     // We need to use a raw query here to properly reference the related gift card
     // Note: The transactions table doesn't have a direct giftCardId column in schema
     // So we're using a subquery to extract gift card ID from the square_data JSON
-    const result = await db.execute(sql`
-      UPDATE ${giftCards} gc
+    const result = await db.execute(`
+      UPDATE gift_cards gc
       SET 
-        ${giftCards.activationAmount} = GREATEST(
-          COALESCE(${giftCards.amount}, 0) + COALESCE(${giftCards.redeemedAmount}, 0),
+        activation_amount = GREATEST(
+          COALESCE(gc.amount, 0) + COALESCE(gc.redeemed_amount, 0),
           COALESCE((
-            SELECT ${transactions.amount}
-            FROM ${transactions}
-            WHERE ${transactions.categoryId} = 'giftCard'
-              AND ${transactions.status} = 'completed'
-              AND ${transactions.squareId} = gc.${giftCards.squareId}
-            ORDER BY ${transactions.timestamp}
+            SELECT amount
+            FROM transactions
+            WHERE category_id = 'giftCard'
+              AND status = 'completed'
+              AND square_id = gc.square_id
+            ORDER BY timestamp
             LIMIT 1
           ), 0)
         )
       WHERE 
-        (${giftCards.activationAmount} IS NULL OR ${giftCards.activationAmount} = 0)
-        AND ${giftCards.isActive} = TRUE
+        (gc.activation_amount IS NULL OR gc.activation_amount = 0)
+        AND gc.is_active = TRUE
     `);
     
     return result.rowCount || 0;
