@@ -253,7 +253,10 @@ async function migrateData(pool) {
     )
     SELECT 
       square_id, status, amount, timestamp, 'USD', NULL,
-      square_order_id, is_gift_card, gift_card_id, square_data
+      square_data->>'order_id' as square_order_id, 
+      (category_id = 'giftCard') as is_gift_card, 
+      (square_data->>'gift_card_id')::integer as gift_card_id, 
+      square_data
     FROM transactions
     WHERE NOT EXISTS (
       SELECT 1 FROM payments WHERE payments.square_id = transactions.square_id
@@ -271,10 +274,10 @@ async function migrateData(pool) {
         t.square_data->>'card_brand' as brand,
         t.square_data->>'card_last_4' as last4,
         CASE 
-          WHEN t.is_gift_card THEN 'gift_card'
+          WHEN t.category_id = 'giftCard' THEN 'gift_card'
           ELSE 'credit_card'
         END as type,
-        t.gift_card_id
+        (t.square_data->>'gift_card_id')::integer as gift_card_id
       FROM transactions t
       WHERE t.square_data->>'card_id' IS NOT NULL
     )
@@ -284,7 +287,8 @@ async function migrateData(pool) {
     SELECT 
       card_id, type, brand, last4, gift_card_id
     FROM card_data
-    WHERE NOT EXISTS (
+    WHERE card_id IS NOT NULL
+    AND NOT EXISTS (
       SELECT 1 FROM payment_sources WHERE payment_sources.square_id = card_data.card_id
     )
     RETURNING id
@@ -314,7 +318,7 @@ async function fixGiftCardActivationAmounts(pool) {
   const updateGiftCardActivationAmounts = await pool.query(`
     UPDATE gift_cards gc
     SET activation_amount = GREATEST(
-      COALESCE(gc.current_balance, 0) + COALESCE(gc.redeemed_amount, 0),
+      COALESCE(gc.amount, 0) + COALESCE(gc.redeemed_amount, 0),
       COALESCE((
         SELECT MAX(p.amount)
         FROM payments p
@@ -322,7 +326,7 @@ async function fixGiftCardActivationAmounts(pool) {
         AND p.is_gift_card_activation = TRUE
       ), 0)
     )
-    WHERE gc.activation_amount = 0
+    WHERE activation_amount IS NULL OR activation_amount = 0
     RETURNING gc.id
   `);
   

@@ -204,16 +204,17 @@ async function validateSampleData(pool) {
   
   // Check transaction data integrity
   const transactionSample = await pool.query(`
-    SELECT id, square_id, status, amount, is_gift_card, gift_card_id
+    SELECT id, square_id, status, amount, category_id, 
+           (square_data->>'gift_card_id')::integer as gift_card_id
     FROM transactions 
-    WHERE is_gift_card = TRUE
+    WHERE category_id = 'giftCard'
     ORDER BY id 
     LIMIT 5
   `);
   
   console.log('\nSample Gift Card Transactions:');
   transactionSample.rows.forEach(tx => {
-    console.log(`  - ID: ${tx.id}, Square ID: ${tx.square_id}, Status: ${tx.status}, Amount: $${tx.amount}, Gift Card ID: ${tx.gift_card_id}`);
+    console.log(`  - ID: ${tx.id}, Square ID: ${tx.square_id}, Status: ${tx.status}, Amount: $${tx.amount}, Category: ${tx.category_id}, Gift Card ID: ${tx.gift_card_id}`);
   });
   
   // Test the extraction of transaction data that will be used for payments
@@ -239,7 +240,7 @@ async function validateSampleData(pool) {
   
   // Count expected migration results
   const transactionCount = await pool.query(`SELECT COUNT(*) FROM transactions`);
-  const giftCardTransactions = await pool.query(`SELECT COUNT(*) FROM transactions WHERE is_gift_card = TRUE`);
+  const giftCardTransactions = await pool.query(`SELECT COUNT(*) FROM transactions WHERE category_id = 'giftCard'`);
   const uniqueCardIds = await pool.query(`
     SELECT COUNT(DISTINCT square_data->>'card_id') 
     FROM transactions 

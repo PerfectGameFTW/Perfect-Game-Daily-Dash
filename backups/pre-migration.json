@@ -1,0 +1,26 @@
+{
+  "timestamp": "2025-03-06T07:21:55.529Z",
+  "name": "pre-migration",
+  "tables": [
+    "users",
+    "transactions",
+    "gift_cards",
+    "gift_card_redemptions",
+    "sync_state",
+    "orders",
+    "order_line_items",
+    "order_modifiers",
+    "order_discounts"
+  ],
+  "results": {
+    "users": 0,
+    "transactions": 24021,
+    "gift_cards": 2328,
+    "gift_card_redemptions": 7,
+    "sync_state": 9,
+    "orders": 200,
+    "order_line_items": 376,
+    "order_modifiers": 145,
+    "order_discounts": 25
+  }
+}
