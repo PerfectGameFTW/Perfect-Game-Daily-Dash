@@ -251,19 +251,18 @@ export class GiftCardService {
 }`);
     
     // Query the database for gift card sales
-    const result = await db.select({
-      giftCardSales: sql<number>`COALESCE(SUM(${giftCards.activationAmount}), 0)`,
-      giftCardCount: sql<number>`COUNT(*)`
-    }).from(giftCards)
-      .where(
-        and(
-          between(giftCards.createdAt, start, end),
-          gt(giftCards.activationAmount, 0)
-        )
-      );
+    const result = await db.execute<{ gift_card_sales: number, gift_card_count: number }>(sql`
+      SELECT 
+        COALESCE(SUM(${giftCards.activationAmount}), 0) as gift_card_sales,
+        COUNT(*) as gift_card_count
+      FROM ${giftCards}
+      WHERE ${giftCards.createdAt} BETWEEN ${start} AND ${end}
+        AND ${giftCards.activationAmount} > 0
+    `);
     
-    const giftCardSales = result[0]?.giftCardSales || 0;
-    const giftCardCount = result[0]?.giftCardCount || 0;
+    // Access the result properly from the raw SQL query result
+    const giftCardSales = result.rows?.[0]?.gift_card_sales || 0;
+    const giftCardCount = result.rows?.[0]?.gift_card_count || 0;
     
     console.log(`Gift card sales calculated from database using UTC: {
   dateRange: '${dateRange}',
@@ -302,11 +301,11 @@ export class GiftCardService {
         ${giftCards.activationAmount} = GREATEST(
           COALESCE(${giftCards.amount}, 0) + COALESCE(${giftCards.redeemedAmount}, 0),
           COALESCE((
-            SELECT ${payments.amount}
-            FROM ${payments}
-            WHERE ${payments.giftCardId} = ${giftCards.id}
-              AND ${payments.isGiftCardActivation} = TRUE
-            ORDER BY ${payments.timestamp}
+            SELECT ${transactions.amount}
+            FROM ${transactions}
+            WHERE ${transactions.giftCardId} = ${giftCards.id}
+              AND ${transactions.status} = 'completed'
+            ORDER BY ${transactions.timestamp}
             LIMIT 1
           ), 0)
         )

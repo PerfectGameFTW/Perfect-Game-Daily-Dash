@@ -291,15 +291,17 @@ export class OrderService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Query the database for category revenue
-    const result = await db.select({
-      category: orderLineItems.category,
-      amount: sql<number>`COALESCE(SUM(${orderLineItems.totalMoney}), 0)`
-    }).from(orderLineItems)
-      .innerJoin(orders, eq(orderLineItems.orderId, orders.id))
-      .where(between(orders.createdAt, start, end))
-      .groupBy(orderLineItems.category)
-      .orderBy(desc(sql`amount`));
+    // Use a raw SQL query to ensure consistent column naming and ordering
+    const result = await db.execute<{ category: string, sum_amount: number }>(sql`
+      SELECT 
+        ${orderLineItems.category} as category,
+        COALESCE(SUM(${orderLineItems.totalMoney}), 0) as sum_amount
+      FROM ${orderLineItems}
+      INNER JOIN ${orders} ON ${orderLineItems.orderId} = ${orders.id}
+      WHERE ${orders.createdAt} BETWEEN ${start} AND ${end}
+      GROUP BY ${orderLineItems.category}
+      ORDER BY sum_amount DESC
+    `);
     
     // Category colors mapping
     const colorMap: Record<string, string> = {
@@ -320,9 +322,10 @@ export class OrderService {
     const defaultColor = '#999999';
     
     // Map the results to include colors
-    return result.map(item => ({
+    // Since we're using raw SQL with execute, we need to access rows
+    return (result.rows || []).map(item => ({
       category: item.category || 'other',
-      amount: item.amount,
+      amount: item.sum_amount,
       color: colorMap[item.category || 'other'] || defaultColor
     }));
   }
