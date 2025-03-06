@@ -8,10 +8,6 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db"; // Import db directly
 import { pgStorage } from "./pgStorage"; // Keep this for other storage operations
-import { fixGiftCardActivationAmounts } from "./fixGiftCardActivationAmounts";
-import { updateGiftCardActivationFromOrders } from "./updateGiftCardActivationFromOrders";
-import { updateGiftCardAmountsFromOrders } from "./updateGiftCardAmountsFromOrders";
-import { updateGiftCardActivationFromTransactions } from "./updateGiftCardActivationFromTransactions";
 import {
   dateRangeSchema,
   transactions,
