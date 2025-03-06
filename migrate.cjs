@@ -184,42 +184,39 @@ async function migrateDatabase(pool) {
 }
 
 async function createNewTables(pool) {
-  // Define schema creation SQL
-  const createPaymentSourcesTable = `
+  // Create the payment_sources table first without any foreign key constraints
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS payment_sources (
       id SERIAL PRIMARY KEY,
-      square_id TEXT UNIQUE NOT NULL,
-      type TEXT NOT NULL,
+      square_id TEXT,
+      type TEXT,
       brand TEXT,
       last4 TEXT,
       gift_card_id INTEGER,
       metadata JSONB DEFAULT '{}'::jsonb
     )
-  `;
+  `);
   
-  const createPaymentsTable = `
+  // Create the payments table without any foreign key constraints
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS payments (
       id SERIAL PRIMARY KEY,
-      square_id TEXT UNIQUE NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      amount REAL NOT NULL DEFAULT 0,
-      tip_amount REAL NOT NULL DEFAULT 0,
-      tax_amount REAL NOT NULL DEFAULT 0,
-      timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      currency TEXT NOT NULL DEFAULT 'USD',
+      square_id TEXT,
+      status TEXT DEFAULT 'pending',
+      amount REAL DEFAULT 0,
+      tip_amount REAL DEFAULT 0,
+      tax_amount REAL DEFAULT 0,
+      timestamp TIMESTAMPTZ DEFAULT NOW(),
+      currency TEXT DEFAULT 'USD',
       order_id INTEGER,
-      source_id INTEGER REFERENCES payment_sources(id),
+      source_id INTEGER,
       square_order_id TEXT,
       receipt_url TEXT,
       is_gift_card_activation BOOLEAN DEFAULT FALSE,
       gift_card_id INTEGER,
       metadata JSONB DEFAULT '{}'::jsonb
     )
-  `;
-  
-  // Execute schema creation
-  await pool.query(createPaymentSourcesTable);
-  await pool.query(createPaymentsTable);
+  `);
   
   // Add new columns to existing tables first
   await pool.query(`
@@ -237,30 +234,9 @@ async function createNewTables(pool) {
     ADD COLUMN IF NOT EXISTS total_count INTEGER DEFAULT 0
   `);
   
-  // After tables exist, add foreign key constraints one by one
-  await pool.query(`
-    ALTER TABLE payment_sources 
-    ADD CONSTRAINT fk_payment_source_gift_card 
-    FOREIGN KEY (gift_card_id) REFERENCES gift_cards(id)
-  `);
-  
-  await pool.query(`
-    ALTER TABLE payments 
-    ADD CONSTRAINT fk_payment_order
-    FOREIGN KEY (order_id) REFERENCES orders(id)
-  `);
-  
-  await pool.query(`
-    ALTER TABLE payments 
-    ADD CONSTRAINT fk_payment_gift_card
-    FOREIGN KEY (gift_card_id) REFERENCES gift_cards(id)
-  `);
-  
-  await pool.query(`
-    ALTER TABLE gift_cards 
-    ADD CONSTRAINT fk_gift_card_payment 
-    FOREIGN KEY (activation_payment_id) REFERENCES payments(id)
-  `);
+  // Let's not add foreign key constraints in the initial migration to avoid
+  // potential circular reference issues. We'll add them after data
+  // has been migrated.
   
   // Add new columns to existing tables if needed
   // Already added columns earlier
