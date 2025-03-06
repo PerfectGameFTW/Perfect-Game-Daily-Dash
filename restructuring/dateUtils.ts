@@ -4,7 +4,7 @@
  * Provides consistent handling of dates and times throughout the application
  * with clear separation between storage (UTC) and display (Eastern Time)
  */
-import { format, utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
+import { format, toZonedTime } from 'date-fns-tz';
 import { startOfDay, endOfDay, subDays, addDays, isSameDay } from 'date-fns';
 import { DateRange } from './schema';
 
@@ -57,23 +57,15 @@ export function getDateRangeBoundaries(
         end = setUTCEndOfDay(yesterday);
         break;
         
-      case 'this_week':
-        // Start from Sunday or Monday of current week
-        const dayOfWeek = now.getUTCDay(); // 0 = Sunday, 1 = Monday, ...
-        const daysFromStartOfWeek = dayOfWeek === 0 ? 0 : dayOfWeek;
-        start = setUTCStartOfDay(subDays(now, daysFromStartOfWeek));
+      case 'last7days':
+        start = setUTCStartOfDay(subDays(now, 7));
         break;
         
-      case 'last_week':
-        // Last week (previous Sunday to Saturday)
-        const daysFromLastSunday = now.getUTCDay() === 0 
-          ? 7 // If today is Sunday, go back to last Sunday
-          : now.getUTCDay() + 7;
-        start = setUTCStartOfDay(subDays(now, daysFromLastSunday));
-        end = setUTCEndOfDay(addDays(start, 6)); // End on Saturday
+      case 'last30days':
+        start = setUTCStartOfDay(subDays(now, 30));
         break;
         
-      case 'this_month':
+      case 'thisMonth':
         // Start from 1st of current month
         start = setUTCStartOfDay(new Date(Date.UTC(
           now.getUTCFullYear(), 
@@ -82,7 +74,7 @@ export function getDateRangeBoundaries(
         )));
         break;
         
-      case 'last_month':
+      case 'lastMonth':
         // Last month (1st to last day of previous month)
         start = setUTCStartOfDay(new Date(Date.UTC(
           now.getUTCFullYear(), 
@@ -96,14 +88,6 @@ export function getDateRangeBoundaries(
           now.getUTCMonth(), 
           0
         )));
-        break;
-        
-      case 'last_30_days':
-        start = setUTCStartOfDay(subDays(now, 30));
-        break;
-        
-      case 'last_90_days':
-        start = setUTCStartOfDay(subDays(now, 90));
         break;
         
       default:
@@ -163,7 +147,7 @@ function setUTCEndOfDay(date: Date): Date {
  */
 export function formatEasternDate(date: Date, formatStr: string = 'yyyy-MM-dd'): string {
   // Convert date to Eastern Time
-  const easternDate = utcToZonedTime(date, EASTERN_TIMEZONE);
+  const easternDate = toZonedTime(date, EASTERN_TIMEZONE);
   
   // Format the date in Eastern Time
   return format(easternDate, formatStr, { timeZone: EASTERN_TIMEZONE });
@@ -174,7 +158,7 @@ export function formatEasternDate(date: Date, formatStr: string = 'yyyy-MM-dd'):
  * Used for display purposes
  */
 export function getNowInEastern(): Date {
-  return utcToZonedTime(new Date(), EASTERN_TIMEZONE);
+  return toZonedTime(new Date(), EASTERN_TIMEZONE);
 }
 
 /**
