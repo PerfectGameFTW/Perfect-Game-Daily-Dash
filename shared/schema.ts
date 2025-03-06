@@ -90,6 +90,9 @@ export const orderLineItems = pgTable("order_line_items", {
   quantity: integer("quantity").notNull(),
   basePriceMoney: real("base_price_money").notNull(),
   totalMoney: real("total_money").notNull(),
+  category: text("category"),
+  productId: text("product_id"),
+  isGiftCard: boolean("is_gift_card"),
   squareData: jsonb("square_data"),
 });
 
