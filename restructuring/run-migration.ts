@@ -7,74 +7,63 @@
  * - apply: Apply the migration
  * - verify: Verify the state of the database
  */
-import { implementImprovements } from './implementImprovements';
 import { migrateDatabase } from './migration';
-import { fixGiftCardActivationAmounts, verifyGiftCardData } from './giftCardImprovement';
-import fs from 'fs';
-import path from 'path';
-
-// CLI Arguments
-const args = process.argv.slice(2);
-const mode = args[0] || 'dry-run';
-const outputPath = args[1] || './migration-report.json';
+import { fixGiftCardActivationAmounts } from './giftCardImprovement';
+import { implementImprovements } from './implementImprovements';
 
 async function main() {
+  // Parse command-line arguments
+  const args = process.argv.slice(2);
+  const command = args[0] || 'help';
+  
+  console.log(`Migration Runner - Command: ${command}`);
+  
   try {
-    console.log(`Running migration in ${mode} mode...`);
-    
-    let result;
-    
-    switch (mode) {
+    switch (command) {
       case 'dry-run':
-        // In dry-run mode, we check what would happen but don't make changes
-        console.log('Performing dry run of database migration...');
-        // Implement a dry-run version that doesn't actually change the database
-        result = await dryRunMigration();
+        await dryRunMigration();
         break;
         
       case 'apply':
-        // In apply mode, we actually perform the migration
-        console.log('Applying database migration...');
-        result = await implementImprovements();
+        console.log('⚠️ APPLYING MIGRATION - This will modify the database');
+        console.log('Press Ctrl+C in the next 5 seconds to cancel...');
+        
+        // Wait 5 seconds to allow cancellation
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        console.log('Applying migration...');
+        const result = await implementImprovements();
+        
+        console.log('Migration completed successfully');
+        console.log('Results:', JSON.stringify(result, null, 2));
         break;
         
       case 'verify':
-        // In verify mode, we just check the current state
         console.log('Verifying database state...');
-        result = await verifyDatabase();
+        const verification = await verifyDatabase();
+        
+        console.log('Verification complete:');
+        console.log(JSON.stringify(verification, null, 2));
         break;
         
       case 'fix-gift-cards':
-        // In fix-gift-cards mode, we just fix gift card data
-        console.log('Fixing gift card data...');
+        console.log('Fixing gift card activation amounts...');
         const fixResult = await fixGiftCardActivationAmounts();
-        await verifyGiftCardData();
-        result = { success: true, message: 'Gift card fix completed', details: fixResult };
+        
+        console.log('Gift card fix completed:');
+        console.log(`Processed ${fixResult.totalProcessed} gift cards`);
+        console.log(`Updated ${fixResult.updated} cards`);
+        console.log(`${fixResult.alreadyCorrect} cards were already correct`);
+        console.log(`${fixResult.withoutActivation} cards without activation`);
         break;
         
+      case 'help':
       default:
-        console.error(`Unknown mode: ${mode}`);
-        console.log('Available modes: dry-run, apply, verify, fix-gift-cards');
-        process.exit(1);
-    }
-    
-    // Write the result to a JSON file
-    fs.writeFileSync(
-      path.resolve(outputPath),
-      JSON.stringify(result, null, 2)
-    );
-    
-    console.log(`Report written to ${outputPath}`);
-    
-    if (result.success) {
-      console.log('Operation completed successfully');
-      process.exit(0);
-    } else {
-      console.error('Operation failed:', result.message);
-      process.exit(1);
+        printHelp();
+        break;
     }
   } catch (error) {
-    console.error('Unexpected error:', error);
+    console.error('Error during migration:', error);
     process.exit(1);
   }
 }
@@ -83,155 +72,103 @@ async function main() {
  * Perform a dry run of the migration
  */
 async function dryRunMigration(): Promise<{
-  success: boolean;
-  message: string;
-  details: Record<string, any>;
+  migrationPlan: Record<string, any>;
+  affectedTables: string[];
+  dataImpact: Record<string, any>;
 }> {
-  // We can't actually perform a full dry run without additional logic in the migration code
-  // So instead, we'll just analyze the database and report on what would change
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
-  });
+  console.log('Performing dry run migration (no changes will be made)...');
   
-  try {
-    // Check if new tables already exist
-    const tablesResult = await pool.query(`
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-      AND table_name IN ('payment_sources', 'payments')
-    `);
-    
-    const existingTables = tablesResult.rows.map(row => row.table_name);
-    
-    // Check gift card data
-    const giftCardResult = await pool.query(`
-      SELECT 
-        COUNT(*) AS total,
-        SUM(CASE WHEN activation_amount > 0 THEN 1 ELSE 0 END) AS with_activation,
-        SUM(CASE WHEN activation_amount = 0 THEN 1 ELSE 0 END) AS without_activation
-      FROM gift_cards
-    `);
-    
-    const giftCardStats = giftCardResult.rows[0];
-    
-    // Check transaction data
-    const transactionResult = await pool.query(`
-      SELECT COUNT(*) FROM transactions
-    `);
-    
-    const transactionCount = parseInt(transactionResult.rows[0].count);
-    
-    return {
-      success: true,
-      message: 'Dry run completed',
-      details: {
-        existingTables,
-        newTablesToCreate: ['payment_sources', 'payments'].filter(t => !existingTables.includes(t)),
-        giftCardStats: {
-          total: parseInt(giftCardStats.total),
-          withActivation: parseInt(giftCardStats.with_activation),
-          withoutActivation: parseInt(giftCardStats.without_activation),
-          percentComplete: (parseInt(giftCardStats.with_activation) / parseInt(giftCardStats.total) * 100).toFixed(2) + '%'
-        },
-        transactionsToMigrate: transactionCount,
-        estimatedTimeInSeconds: 10 + transactionCount * 0.01 // Rough estimate based on transaction count
-      }
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: `Dry run failed: ${error instanceof Error ? error.message : String(error)}`,
-      details: { error }
-    };
-  } finally {
-    await pool.end();
+  // Get migration plan
+  const migrationPlan = await migrateDatabase();
+  
+  // Show what would happen
+  console.log('Migration dry run complete:');
+  console.log('Tables that would be affected:');
+  
+  const affectedTables = Object.keys(migrationPlan.tableResults || {});
+  
+  for (const table of affectedTables) {
+    console.log(` - ${table}`);
   }
+  
+  console.log('\nData changes that would occur:');
+  for (const [table, data] of Object.entries(migrationPlan.tableResults || {})) {
+    console.log(` - ${table}: ${JSON.stringify(data)}`);
+  }
+  
+  console.log('\nGift card fixes that would be applied:');
+  const giftCardFixes = await fixGiftCardActivationAmounts();
+  
+  console.log(` - ${giftCardFixes.totalProcessed} gift cards would be processed`);
+  console.log(` - ${giftCardFixes.updated} would have activation amounts updated`);
+  console.log(` - ${giftCardFixes.alreadyCorrect} already have correct amounts`);
+  
+  return {
+    migrationPlan,
+    affectedTables,
+    dataImpact: {
+      giftCardFixes,
+      tableResults: migrationPlan.tableResults
+    }
+  };
 }
 
 /**
  * Verify the current state of the database
  */
 async function verifyDatabase(): Promise<{
-  success: boolean;
-  message: string;
-  details: Record<string, any>;
+  status: 'ok' | 'issues';
+  issues: Record<string, any>[];
+  giftCardStatus: Record<string, any>;
 }> {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
-  });
+  // Call verification functions
+  const giftCardFixResult = await fixGiftCardActivationAmounts();
   
-  try {
-    // Check if new tables exist
-    const tablesResult = await pool.query(`
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-      AND table_name IN ('payment_sources', 'payments', 'gift_cards', 'gift_card_redemptions', 'transactions')
-    `);
-    
-    const existingTables = tablesResult.rows.map(row => row.table_name);
-    
-    // Check if transactions have been migrated to payments
-    let transactionsMigrated = false;
-    let migrationProgress = 0;
-    
-    if (existingTables.includes('payments') && existingTables.includes('transactions')) {
-      const transactionCount = await pool.query(`SELECT COUNT(*) FROM transactions`);
-      const paymentCount = await pool.query(`SELECT COUNT(*) FROM payments`);
-      
-      transactionsMigrated = parseInt(paymentCount.rows[0].count) >= parseInt(transactionCount.rows[0].count);
-      migrationProgress = parseInt(transactionCount.rows[0].count) > 0 
-        ? (parseInt(paymentCount.rows[0].count) / parseInt(transactionCount.rows[0].count) * 100).toFixed(2) + '%'
-        : '0%';
-    }
-    
-    // Check gift card data
-    let giftCardStats = null;
-    
-    if (existingTables.includes('gift_cards')) {
-      const giftCardResult = await pool.query(`
-        SELECT 
-          COUNT(*) AS total,
-          SUM(CASE WHEN activation_amount > 0 THEN 1 ELSE 0 END) AS with_activation,
-          SUM(CASE WHEN activation_amount = 0 THEN 1 ELSE 0 END) AS without_activation
-        FROM gift_cards
-      `);
-      
-      giftCardStats = {
-        total: parseInt(giftCardResult.rows[0].total),
-        withActivation: parseInt(giftCardResult.rows[0].with_activation),
-        withoutActivation: parseInt(giftCardResult.rows[0].without_activation),
-        percentComplete: (parseInt(giftCardResult.rows[0].with_activation) / parseInt(giftCardResult.rows[0].total) * 100).toFixed(2) + '%'
-      };
-    }
-    
-    return {
-      success: true,
-      message: 'Database verification completed',
-      details: {
-        existingTables,
-        transactionsMigrated,
-        migrationProgress,
-        giftCardStats
-      }
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: `Verification failed: ${error instanceof Error ? error.message : String(error)}`,
-      details: { error }
-    };
-  } finally {
-    await pool.end();
+  // Analyze results to find issues
+  const issues: Record<string, any>[] = [];
+  
+  if (giftCardFixResult.updated > 0) {
+    issues.push({
+      type: 'gift_card_activation',
+      description: 'Some gift cards have incorrect activation amounts',
+      affected: giftCardFixResult.updated,
+      details: giftCardFixResult
+    });
   }
+  
+  return {
+    status: issues.length > 0 ? 'issues' : 'ok',
+    issues,
+    giftCardStatus: giftCardFixResult
+  };
 }
 
-// Import Pool from pg - we need to add this import at the top
-import { Pool } from 'pg';
+function printHelp() {
+  console.log(`
+Migration Runner - Help
+======================
+
+This tool helps you migrate to the new database structure.
+
+Commands:
+  dry-run        Run the migration in dry-run mode (no changes)
+  apply          Apply the migration to the database
+  verify         Verify the current database state
+  fix-gift-cards Fix gift card activation amounts only
+  help           Show this help message
+
+Examples:
+  ts-node run-migration.ts dry-run
+  ts-node run-migration.ts apply
+  ts-node run-migration.ts verify
+  ts-node run-migration.ts fix-gift-cards
+  `);
+}
 
 // Run the main function
-main().catch(error => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error('Error:', error);
+    process.exit(1);
+  });
+}

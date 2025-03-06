@@ -5,8 +5,9 @@
  * in the right order, with proper validation at each step.
  */
 import { migrateDatabase } from './migration';
-import { fixGiftCardActivationAmounts, verifyGiftCardData } from './giftCardImprovement';
-import { Pool } from 'pg';
+import { fixGiftCardActivationAmounts } from './giftCardImprovement';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * Main implementation function
@@ -19,101 +20,99 @@ import { Pool } from 'pg';
  */
 export async function implementImprovements(): Promise<{
   success: boolean;
-  message: string;
-  details: Record<string, any>;
+  migrationResults: any;
+  giftCardFixResults: any;
+  cleanupResults: any;
 }> {
+  console.log('Starting improvements implementation...');
+  
   try {
-    console.log('Starting implementation of improvements...');
+    // Step 1: Database migration
+    console.log('Step 1: Executing database migration...');
+    const migrationResults = await migrateDatabase();
     
-    // 1. Execute database migration
-    console.log('Step 1: Database migration');
-    const migrationResult = await migrateDatabase();
+    // Step 2: Fix gift card data
+    console.log('Step 2: Fixing gift card activation amounts...');
+    const giftCardFixResults = await fixGiftCardActivationAmounts();
     
-    if (!migrationResult.success) {
-      return {
-        success: false,
-        message: `Migration failed: ${migrationResult.message}`,
-        details: migrationResult.details
-      };
-    }
+    // Step 3: Clean up legacy scripts
+    console.log('Step 3: Cleaning up legacy scripts...');
+    const cleanupResults = await cleanupOldScripts();
     
-    console.log('Migration completed successfully');
-    
-    // 2. Fix gift card data
-    console.log('Step 2: Fix gift card activation amounts');
-    const giftCardFixResult = await fixGiftCardActivationAmounts();
-    
-    console.log(`Fixed ${giftCardFixResult.updated} gift cards`);
-    console.log(`${giftCardFixResult.alreadyCorrect} gift cards were already correct`);
-    console.log(`${giftCardFixResult.withoutActivation} gift cards remain without activation amount`);
-    
-    // 3. Verify the results
-    console.log('Step 3: Verifying gift card data');
-    const verificationResult = await verifyGiftCardData();
-    
-    // 4. Remove any old scripts that are no longer needed
-    await cleanupOldScripts();
-    
+    // Return comprehensive report
     return {
       success: true,
-      message: 'Implementation completed successfully',
-      details: {
-        migration: migrationResult.details,
-        giftCardFix: giftCardFixResult,
-        verification: verificationResult
-      }
+      migrationResults,
+      giftCardFixResults,
+      cleanupResults
     };
   } catch (error) {
-    console.error('Implementation failed:', error);
-    
-    return {
-      success: false,
-      message: `Implementation failed: ${error instanceof Error ? error.message : String(error)}`,
-      details: { error }
-    };
+    console.error('Error during implementation:', error);
+    throw error;
   }
 }
 
 /**
  * Clean up old scripts that are no longer needed
  */
-async function cleanupOldScripts(): Promise<void> {
-  // This function would normally create a PR that removes the old scripts
-  // For now, let's just log what would be removed
-  const scriptsToRemove = [
-    'server/fixGiftCardActivationAmounts.ts',
-    'server/fixGiftCardActivationsFromOrders.ts',
-    'server/fixGiftCardPaymentLink.ts',
-    'server/updateGiftCardActivationFromOrders.ts',
-    'server/updateGiftCardActivationFromTransactions.ts',
-    'server/updateGiftCardAmountsFromOrders.ts',
-    'server/updateRedemptionData.ts',
-    'server/checkGiftCardTotals.ts',
-    'server/testGiftCardUpdate.ts'
+async function cleanupOldScripts(): Promise<{
+  oldScripts: string[];
+  archivedScripts: string[];
+}> {
+  // List of old scripts that are no longer needed
+  const oldScripts = [
+    'fixGiftCardActivationAmounts.ts',
+    'fixGiftCardActivationsFromOrders.ts',
+    'fixGiftCardPaymentLink.ts',
+    'updateGiftCardActivationFromOrders.ts',
+    'updateGiftCardActivationFromTransactions.ts',
+    'updateGiftCardAmountsFromOrders.ts',
+    'updateRedemptionData.ts',
+    'checkGiftCardTotals.ts',
+    'testGiftCardUpdate.ts'
   ];
   
-  console.log('The following scripts are no longer needed and can be removed:');
-  for (const script of scriptsToRemove) {
-    console.log(`- ${script}`);
+  // Create backup directory
+  const archiveDir = path.join('server', 'archived_scripts');
+  if (!fs.existsSync(archiveDir)) {
+    fs.mkdirSync(archiveDir, { recursive: true });
   }
+  
+  // Archive each script
+  const archivedScripts: string[] = [];
+  
+  for (const script of oldScripts) {
+    const oldPath = path.join('server', script);
+    
+    // Skip if file doesn't exist
+    if (!fs.existsSync(oldPath)) {
+      continue;
+    }
+    
+    // Archive the file
+    const archivePath = path.join(archiveDir, script);
+    fs.copyFileSync(oldPath, archivePath);
+    fs.unlinkSync(oldPath);
+    
+    console.log(`Archived script: ${script}`);
+    archivedScripts.push(script);
+  }
+  
+  return {
+    oldScripts,
+    archivedScripts
+  };
 }
 
-// Provide a command-line interface if this script is run directly
+// Run directly if called from command line
 if (require.main === module) {
   implementImprovements()
-    .then(result => {
-      if (result.success) {
-        console.log('Implementation completed successfully');
-        console.log(JSON.stringify(result.details, null, 2));
-        process.exit(0);
-      } else {
-        console.error('Implementation failed:', result.message);
-        console.error(JSON.stringify(result.details, null, 2));
-        process.exit(1);
-      }
+    .then(results => {
+      console.log('Implementation completed successfully!');
+      console.log(JSON.stringify(results, null, 2));
     })
     .catch(error => {
-      console.error('Unexpected error:', error);
+      console.error('Implementation failed:', error);
       process.exit(1);
     });
 }
