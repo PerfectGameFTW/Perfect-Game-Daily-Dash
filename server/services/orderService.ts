@@ -202,12 +202,7 @@ export class OrderService {
     
     // Build query with proper filters
     let query = db.select().from(orders)
-      .where(
-        and(
-          between(orders.createdAt, start, end),
-          eq(orders.isDeleted, false)
-        )
-      )
+      .where(between(orders.createdAt, start, end))
       .orderBy(desc(orders.createdAt));
     
     // Add limit if provided
@@ -241,24 +236,14 @@ export class OrderService {
       taxTotal: sql<number>`COALESCE(SUM(${orders.totalTax}), 0)`,
       discountTotal: sql<number>`COALESCE(SUM(${orders.totalDiscount}), 0)`
     }).from(orders)
-      .where(
-        and(
-          between(orders.createdAt, start, end),
-          eq(orders.isDeleted, false)
-        )
-      );
+      .where(between(orders.createdAt, start, end));
     
     // Query the database for item data
     const itemsResult = await db.select({
       itemsSold: count(orderLineItems.id),
     }).from(orderLineItems)
       .innerJoin(orders, eq(orderLineItems.orderId, orders.id))
-      .where(
-        and(
-          between(orders.createdAt, start, end),
-          eq(orders.isDeleted, false)
-        )
-      );
+      .where(between(orders.createdAt, start, end));
     
     // Query the database for top selling items
     const topSellingItemsResult = await db.select({
@@ -267,12 +252,7 @@ export class OrderService {
       revenue: sql<number>`COALESCE(SUM(${orderLineItems.totalMoney}), 0)`
     }).from(orderLineItems)
       .innerJoin(orders, eq(orderLineItems.orderId, orders.id))
-      .where(
-        and(
-          between(orders.createdAt, start, end),
-          eq(orders.isDeleted, false)
-        )
-      )
+      .where(between(orders.createdAt, start, end))
       .groupBy(orderLineItems.name)
       .orderBy(desc(sql`revenue`))
       .limit(5);
@@ -317,12 +297,7 @@ export class OrderService {
       amount: sql<number>`COALESCE(SUM(${orderLineItems.totalMoney}), 0)`
     }).from(orderLineItems)
       .innerJoin(orders, eq(orderLineItems.orderId, orders.id))
-      .where(
-        and(
-          between(orders.createdAt, start, end),
-          eq(orders.isDeleted, false)
-        )
-      )
+      .where(between(orders.createdAt, start, end))
       .groupBy(orderLineItems.category)
       .orderBy(desc(sql`amount`));
     
@@ -371,6 +346,7 @@ export class OrderService {
     // Query the database for hourly revenue
     // This complex query extracts the hour from the timestamp in Eastern time
     // and aggregates the revenue by hour
+    // Using a raw SQL query with proper type handling
     const result = await db.execute<{ hour: number, amount: number }>(sql`
       SELECT 
         EXTRACT(HOUR FROM ${orders.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') AS hour,
@@ -383,11 +359,15 @@ export class OrderService {
     
     // Format hours as strings like "12 AM", "1 PM", etc.
     const hourlyRevenue: HourlyRevenue[] = [];
-    for (const row of result) {
-      hourlyRevenue.push({
-        hour: formatHour(row.hour),
-        amount: row.amount
-      });
+    
+    // Check if result has rows property (standard PG result format)
+    if (result && Array.isArray(result.rows)) {
+      for (const row of result.rows) {
+        hourlyRevenue.push({
+          hour: formatHour(row.hour),
+          amount: row.amount
+        });
+      }
     }
     return hourlyRevenue;
   }
