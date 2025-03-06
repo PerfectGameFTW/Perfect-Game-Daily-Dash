@@ -7,15 +7,13 @@ import {
   CartesianGrid, 
   XAxis,
   YAxis,
-  ResponsiveContainer,
-  Legend 
+  ResponsiveContainer
 } from "recharts"
 import { Clock, TrendingUp } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { fetchHourlyRevenue } from "@/lib/squareApi"
 import { DateRange, HourlyRevenue } from "@shared/schema"
 import { formatCurrency } from "@/lib/dateUtils"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ChartConfig,
@@ -58,8 +56,6 @@ export default function HourlyRevenueChart({
   customStartDate, 
   customEndDate 
 }: HourlyRevenueChartProps) {
-  // No longer need to track active chart type since we only have one type of data
-  
   const { data, isLoading } = useQuery({
     queryKey: ['/api/hourly-revenue', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchHourlyRevenue(dateRange, customStartDate, customEndDate),
@@ -77,28 +73,32 @@ export default function HourlyRevenueChart({
   }, [data]);
 
   return (
-    <Card className="overflow-hidden dashboard-card transition-all duration-200 border border-border/40 bg-card/50 backdrop-blur-sm">
-      <CardHeader className="px-6 py-5 flex flex-row items-center justify-between space-y-0">
+    <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
+      <div className="flex flex-row items-center justify-between">
         <div className="space-y-1">
-          <CardTitle className="text-xl font-semibold flex items-center">
+          <h2 className="text-xl font-bold flex items-center text-white">
             <Clock size={20} className="mr-2 text-primary" />
             <span>Hourly Revenue</span>
-          </CardTitle>
+          </h2>
           {peakHour && !isLoading && (
-            <CardDescription className="flex items-center">
-              <TrendingUp size={16} className="mr-1 text-green-500" />
+            <div className="flex items-center text-white/70 text-sm">
+              <TrendingUp size={16} className="mr-1 text-green-400" />
               <span>Peak: {peakHour.hour} ({formatCurrency(peakHour.amount)})</span>
-            </CardDescription>
+            </div>
           )}
         </div>
-      </CardHeader>
-      <CardContent className="px-6 pb-6">
+        <div className="flex items-center px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-sm font-medium">
+          <TrendingUp size={14} className="mr-1.5" />
+          <span>Hourly Pattern</span>
+        </div>
+      </div>
+      <div className="mt-4">
         {isLoading ? (
-          <div className="h-72 flex items-center justify-center">
-            <Skeleton className="h-4/5 w-full" />
+          <div className="h-80 flex items-center justify-center">
+            <Skeleton className="h-4/5 w-full rounded-lg" />
           </div>
         ) : (
-          <div className="h-72">
+          <div className="h-80">
             <ChartContainer
               config={chartConfig}
               className="aspect-auto h-full w-full"
@@ -115,24 +115,26 @@ export default function HourlyRevenueChart({
                   barGap={0}
                   barCategoryGap={8}
                 >
-                  <CartesianGrid vertical={false} opacity={0.1} />
+                  <CartesianGrid vertical={false} horizontal={true} opacity={0.1} />
                   <XAxis
                     dataKey="hour"
                     tickLine={false}
                     axisLine={false}
                     tickMargin={8}
                     fontSize={12}
+                    stroke="#ffffff50"
                   />
                   <YAxis 
                     tickLine={false}
                     axisLine={false}
                     tickFormatter={(value) => `$${value}`}
                     fontSize={12}
+                    stroke="#ffffff50"
                   />
                   <ChartTooltip
                     content={
                       <ChartTooltipContent
-                        className="w-[150px]"
+                        className="w-[150px] bg-black/80 border border-white/10 shadow-lg backdrop-blur-sm"
                         labelFormatter={(value) => {
                           return `${value}`;
                         }}
@@ -151,7 +153,7 @@ export default function HourlyRevenueChart({
             </ChartContainer>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

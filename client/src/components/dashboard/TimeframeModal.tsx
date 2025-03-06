@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { DateRange } from "@shared/schema";
-import { ChevronRight, Calendar } from "lucide-react";
+import { ChevronRight, Calendar, ArrowLeft, CheckCircle } from "lucide-react";
 import { format, addDays, isAfter, isBefore, isSameDay } from "date-fns";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -118,12 +118,12 @@ export default function TimeframeModal({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="bg-black border-t border-zinc-800 rounded-t-xl overflow-y-auto" aria-describedby="timeframe-description">
+      <DrawerContent className="bg-gradient-to-b from-gray-900 to-black border-t border-white/10 rounded-t-xl overflow-y-auto backdrop-blur-sm" aria-describedby="timeframe-description">
         <DrawerHeader>
-          <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
-            <DrawerTitle className="text-xl font-semibold text-white">Timeframe</DrawerTitle>
+          <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+            <DrawerTitle className="text-xl font-semibold text-white">Select Timeframe</DrawerTitle>
             <DrawerClose asChild>
-              <Button variant="outline" className="bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700 px-4 py-1 h-auto">
+              <Button variant="outline" className="bg-black/30 border-white/20 text-white hover:bg-white/10 px-4 py-1 h-auto">
                 Done
               </Button>
             </DrawerClose>
@@ -136,33 +136,38 @@ export default function TimeframeModal({
           {/* Predefined timeframes */}
           {!calendarOpen && (
             <>
-              {timeframes.map((timeframe) => (
-                <div 
-                  key={timeframe.value}
-                  className="py-3 border-b border-zinc-800 flex items-center justify-between cursor-pointer"
-                  onClick={() => handleSelectRange(timeframe.value)}
-                >
-                  <span className="text-white">{timeframe.label}</span>
-                  {selectedRange === timeframe.value && (
-                    <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
-                      <div className="w-2 h-2 rounded-full bg-white"></div>
-                    </div>
-                  )}
-                  {selectedRange !== timeframe.value && (
-                    <div className="w-5 h-5 rounded-full border border-zinc-600 flex items-center justify-center">
-                    </div>
-                  )}
-                </div>
-              ))}
+              <div className="space-y-2 mt-2">
+                {timeframes.map((timeframe) => (
+                  <div 
+                    key={timeframe.value}
+                    className={`p-3 rounded-lg flex items-center justify-between cursor-pointer transition-all ${
+                      selectedRange === timeframe.value 
+                        ? "bg-primary text-white shadow-lg shadow-primary/20" 
+                        : "bg-white/5 hover:bg-white/10 text-white border border-white/5"
+                    }`}
+                    onClick={() => handleSelectRange(timeframe.value)}
+                  >
+                    <span className="font-medium">{timeframe.label}</span>
+                    {selectedRange === timeframe.value && (
+                      <CheckCircle className="h-5 w-5" />
+                    )}
+                  </div>
+                ))}
+              </div>
 
-              <div className="mt-4 border border-zinc-800 rounded-lg bg-zinc-900">
-                <div className="p-3 flex items-center justify-between">
-                  <span className="font-medium text-white">Reporting hours</span>
+              <div className="mt-6 border border-white/10 rounded-xl bg-black/30 overflow-hidden transition-all hover:border-primary/30">
+                <div className="p-4 flex items-center justify-between cursor-pointer">
                   <div className="flex items-center">
-                    <span className="text-xs text-zinc-400 mr-2">
+                    <div className="h-10 w-10 rounded-lg bg-indigo-500/10 flex items-center justify-center mr-3">
+                      <Calendar className="h-5 w-5 text-indigo-400" />
+                    </div>
+                    <span className="font-medium text-white">Reporting hours</span>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-sm text-white/60 mr-2">
                       {reportingHours}
                     </span>
-                    <ChevronRight className="h-3 w-3 text-zinc-400" />
+                    <ChevronRight className="h-4 w-4 text-white/40" />
                   </div>
                 </div>
               </div>
@@ -174,26 +179,29 @@ export default function TimeframeModal({
             <div className="mt-2">
               <Button 
                 variant="ghost" 
-                className="mb-4 text-zinc-400 hover:text-white"
+                className="mb-6 text-white/70 hover:text-white flex items-center gap-2"
                 onClick={() => setCalendarOpen(false)}
               >
-                ← Back to timeframes
+                <ArrowLeft className="h-4 w-4" />
+                <span>Back to timeframes</span>
               </Button>
               
-              <div className="mb-4">
-                <h3 className="text-lg font-medium text-white mb-1">Custom date range</h3>
-                <p className="text-zinc-400 text-sm mb-2">
-                  {!endDate ? "Select start and end dates" : ""}
+              <div className="mb-6">
+                <h3 className="text-lg font-bold text-white mb-2">Custom date range</h3>
+                <p className="text-white/60 text-sm mb-3">
+                  {!endDate ? "Select start and end dates for your data view" : ""}
                 </p>
-                <div className="bg-zinc-900 p-3 rounded-md border border-zinc-800">
+                <div className="bg-white/5 p-4 rounded-xl border border-white/10 shadow-lg">
                   <div className="flex items-center gap-2">
-                    <Calendar className="h-5 w-5 text-blue-400" />
-                    <span className="text-white">{getDateRangePreview()}</span>
+                    <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                      <Calendar className="h-5 w-5 text-primary" />
+                    </div>
+                    <span className="text-white font-medium">{getDateRangePreview()}</span>
                   </div>
                 </div>
               </div>
               
-              <div className="bg-zinc-900 p-4 rounded-lg border border-zinc-800">
+              <div className="bg-black/40 p-6 rounded-xl border border-white/10 shadow-lg">
                 <CalendarComponent
                   mode="range"
                   selected={{
@@ -211,9 +219,9 @@ export default function TimeframeModal({
                 />
               </div>
               
-              <div className="mt-4 flex justify-end">
+              <div className="mt-6 flex justify-end">
                 <Button 
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                  className="bg-primary hover:bg-primary/90 text-white font-medium py-2 px-6 shadow-lg shadow-primary/30"
                   onClick={handleApplyCustomDates}
                   disabled={!startDate || !endDate}
                 >

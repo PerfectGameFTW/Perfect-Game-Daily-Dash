@@ -237,7 +237,7 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {isMobile && <BottomNavigation />}
+      {isMobile && <BottomNavigation activeTab={activeTab} onTabChange={setActiveTab} />}
 
       <TimeframeModal 
         open={timeframeModalOpen}
