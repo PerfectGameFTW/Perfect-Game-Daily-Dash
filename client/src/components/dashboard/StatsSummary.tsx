@@ -149,8 +149,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <h3 className="text-sm font-medium text-white/70">Net Sales</h3>
               <p className="text-3xl font-bold mt-2 text-white">{formatCurrency(calculatedNetRevenue)}</p>
             </div>
-            <div className="h-12 w-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-              <Wallet className="h-6 w-6 text-emerald-400" />
+            <div className="h-12 w-12 rounded-xl bg-red-600/10 flex items-center justify-center">
+              <Wallet className="h-6 w-6 text-red-600" />
             </div>
           </div>
           
@@ -204,8 +204,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 {/* Partywirks */}
                 <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-purple-500/10 flex items-center justify-center mr-3">
-                      <Users className="h-4 w-4 text-purple-400" />
+                    <div className="h-8 w-8 rounded-lg bg-red-600/10 flex items-center justify-center mr-3">
+                      <Users className="h-4 w-4 text-red-600" />
                     </div>
                     <span className="text-sm text-white">Partywirks</span>
                   </div>
@@ -215,8 +215,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 {/* Tripleseat */}
                 <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center mr-3">
-                      <Receipt className="h-4 w-4 text-blue-400" />
+                    <div className="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center mr-3">
+                      <Receipt className="h-4 w-4 text-white" />
                     </div>
                     <span className="text-sm text-white">Tripleseat</span>
                   </div>
@@ -233,8 +233,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 {/* Service Charges */}
                 <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-amber-500/10 flex items-center justify-center mr-3">
-                      <Tag className="h-4 w-4 text-amber-400" />
+                    <div className="h-8 w-8 rounded-lg bg-red-600/10 flex items-center justify-center mr-3">
+                      <Tag className="h-4 w-4 text-red-600" />
                     </div>
                     <span className="text-sm text-white">Service Charges</span>
                   </div>
@@ -244,8 +244,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 {/* Taxes */}
                 <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-green-500/10 flex items-center justify-center mr-3">
-                      <CreditCard className="h-4 w-4 text-green-400" />
+                    <div className="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center mr-3">
+                      <CreditCard className="h-4 w-4 text-white" />
                     </div>
                     <span className="text-sm text-white">Taxes</span>
                   </div>
@@ -262,8 +262,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 {/* Refunds */}
                 <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-red-500/10 flex items-center justify-center mr-3">
-                      <Award className="h-4 w-4 text-red-400" />
+                    <div className="h-8 w-8 rounded-lg bg-red-600/10 flex items-center justify-center mr-3">
+                      <Award className="h-4 w-4 text-red-600" />
                     </div>
                     <span className="text-sm text-white">Refunds</span>
                   </div>
@@ -273,8 +273,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 {/* Discounts & Comps */}
                 <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-pink-500/10 flex items-center justify-center mr-3">
-                      <Percent className="h-4 w-4 text-pink-400" />
+                    <div className="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center mr-3">
+                      <Percent className="h-4 w-4 text-white" />
                     </div>
                     <span className="text-sm text-white">Discounts & Comps</span>
                   </div>
