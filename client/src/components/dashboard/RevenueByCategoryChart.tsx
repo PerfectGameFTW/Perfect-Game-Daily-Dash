@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
 import { fetchCategoryRevenue } from "@/lib/squareApi";
 import { DateRange } from "@shared/schema";
 import { formatCurrency } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ChartPie, PieChart } from "lucide-react";
 import Chart from "chart.js/auto";
 
 interface RevenueByCategoryChartProps {
@@ -22,7 +22,7 @@ export default function RevenueByCategoryChart({
   const chartInstance = useRef<Chart | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['/api/revenue-by-category', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
+    queryKey: ['/api/category-revenue', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchCategoryRevenue(dateRange, customStartDate, customEndDate),
   });
 
@@ -39,31 +39,69 @@ export default function RevenueByCategoryChart({
     if (!ctx) return;
 
     chartInstance.current = new Chart(ctx, {
-      type: 'bar',
+      type: 'doughnut',
       data: {
         labels: data.map(item => item.category),
         datasets: [{
           label: 'Revenue by Category',
           data: data.map(item => item.amount),
           backgroundColor: data.map(item => item.color),
-          borderWidth: 1
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          borderWidth: 2,
+          hoverOffset: 6,
+          borderRadius: 4,
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        cutout: '65%',
         plugins: {
           legend: {
-            display: false
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: {
-              callback: function(value) {
-                return formatCurrency(value as number);
+            position: 'right',
+            labels: {
+              color: 'rgba(255, 255, 255, 0.7)',
+              padding: 15,
+              font: {
+                size: 12
+              },
+              generateLabels: (chart) => {
+                const data = chart.data;
+                if (data.labels?.length && data.datasets.length) {
+                  return data.labels.map((label, i) => {
+                    const value = data.datasets[0].data[i] as number;
+                    const backgroundColor = Array.isArray(data.datasets[0].backgroundColor) 
+                      ? data.datasets[0].backgroundColor[i] 
+                      : undefined;
+                    
+                    return {
+                      text: `${label}: ${formatCurrency(value)}`,
+                      fillStyle: backgroundColor,
+                      strokeStyle: '#ffffff20',
+                      lineWidth: 1,
+                      hidden: false,
+                      index: i
+                    };
+                  });
+                }
+                return [];
               }
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const label = context.label || '';
+                const value = context.raw as number;
+                return `${label}: ${formatCurrency(value)}`;
+              }
+            },
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            borderWidth: 1,
+            padding: 10,
+            bodyFont: {
+              size: 12
             }
           }
         }
@@ -78,22 +116,42 @@ export default function RevenueByCategoryChart({
     };
   }, [data, isLoading, dateRange]);
 
+  const totalRevenue = data ? data.reduce((sum, item) => sum + item.amount, 0) : 0;
+  const topCategory = data ? 
+    [...data].sort((a, b) => b.amount - a.amount)[0]?.category : 
+    'No data';
+
   return (
-    <Card className="overflow-hidden shadow dashboard-card hover:shadow-lg transition-all duration-200 transform hover:-translate-y-1">
-      <CardHeader className="px-4 py-5 sm:px-6">
-        <CardTitle className="text-lg leading-6 font-medium text-gray-900">Revenue by Category</CardTitle>
-      </CardHeader>
-      <CardContent className="px-4 pb-5 sm:px-6">
+    <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
+      <div className="flex flex-row items-center justify-between">
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold flex items-center text-white">
+            <ChartPie size={20} className="mr-2 text-primary" />
+            <span>Revenue by Category</span>
+          </h2>
+          {data && !isLoading && (
+            <div className="flex items-center text-white/70 text-sm">
+              <PieChart size={16} className="mr-1 text-green-400" />
+              <span>Top: {topCategory} ({formatCurrency(totalRevenue)})</span>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-sm font-medium">
+          <PieChart size={14} className="mr-1.5" />
+          <span>Category Split</span>
+        </div>
+      </div>
+      <div className="mt-4">
         {isLoading ? (
-          <div className="mt-4 h-72 flex items-center justify-center">
-            <Skeleton className="h-4/5 w-full" />
+          <div className="h-80 flex items-center justify-center">
+            <Skeleton className="h-4/5 w-full rounded-lg" />
           </div>
         ) : (
-          <div className="mt-4 h-72">
+          <div className="h-80">
             <canvas ref={chartRef}></canvas>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
