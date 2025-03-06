@@ -21,8 +21,8 @@ export default function SimpleHourlyChart({
   
   if (isLoading) {
     return (
-      <div className="relative h-36 w-full mb-8 bg-black border-t border-b border-zinc-800">
-        <Skeleton className="h-full w-full" />
+      <div className="relative h-52 w-full">
+        <Skeleton className="h-full w-full rounded-lg" />
       </div>
     );
   }
@@ -30,8 +30,8 @@ export default function SimpleHourlyChart({
   // In case there's no data
   if (!data || data.length === 0) {
     return (
-      <div className="relative h-36 w-full mb-8 bg-black border-t border-b border-zinc-800 flex items-center justify-center">
-        <p className="text-zinc-500 text-sm">No data available</p>
+      <div className="relative h-52 w-full bg-white/5 rounded-lg flex items-center justify-center">
+        <p className="text-white/50 text-sm">No data available</p>
       </div>
     );
   }
@@ -47,8 +47,8 @@ export default function SimpleHourlyChart({
   // If no hours have activity, show the no data message
   if (hoursWithActivity.length === 0) {
     return (
-      <div className="relative h-36 w-full mb-8 bg-black border-t border-b border-zinc-800 flex items-center justify-center">
-        <p className="text-zinc-500 text-sm">No sales activity in this period</p>
+      <div className="relative h-52 w-full bg-white/5 rounded-lg flex items-center justify-center">
+        <p className="text-white/50 text-sm">No sales activity in this period</p>
       </div>
     );
   }
@@ -74,12 +74,19 @@ export default function SimpleHourlyChart({
   const displayData = hoursWithActivity.length <= 12 ? data : hoursWithActivity;
 
   return (
-    <div className="relative h-36 w-full mb-8 bg-black border-t border-b border-zinc-800">
-      <div className="absolute left-0 text-xs text-zinc-500">${roundedMax}</div>
-      <div className="absolute left-0 top-1/2 text-xs text-zinc-500">${halfValue}</div>
-      <div className="absolute left-0 bottom-0 text-xs text-zinc-500">$0</div>
+    <div className="relative h-52 w-full pb-8">
+      {/* Y-axis labels with prettier formatting */}
+      <div className="absolute -left-1 top-0 text-xs text-white/40 font-medium">${roundedMax}</div>
+      <div className="absolute -left-1 top-1/2 text-xs text-white/40 font-medium">${halfValue}</div>
+      <div className="absolute -left-1 bottom-8 text-xs text-white/40 font-medium">$0</div>
       
-      <div className="flex justify-between items-end h-full px-5 pt-6 pb-2">
+      {/* Grid lines for better readability */}
+      <div className="absolute left-0 right-0 top-0 border-t border-dashed border-white/10 h-[1px]" />
+      <div className="absolute left-0 right-0 top-1/2 border-t border-dashed border-white/10 h-[1px]" />
+      <div className="absolute left-0 right-0 bottom-8 border-t border-dashed border-white/10 h-[1px]" />
+      
+      {/* Bars container */}
+      <div className="flex justify-between items-end h-full px-5 pt-6 pb-10">
         {displayData.map((hour, index) => {
           // Calculate height as percentage of max value (with a minimum of 5% for visibility)
           const heightPercent = hour.amount > 0 
@@ -89,22 +96,35 @@ export default function SimpleHourlyChart({
           return (
             <div 
               key={index} 
-              className="relative w-1 bg-blue-500"
-              style={{ height: `${heightPercent}%` }}
-              title={`${hour.hour}: $${hour.amount.toFixed(2)}`}
-            />
+              className="group relative"
+            >
+              {/* Bar itself with gradient */}
+              <div
+                className="relative w-5 rounded-t-md bg-gradient-to-t from-primary/70 to-primary cursor-pointer transition-all hover:from-primary/90 hover:to-primary hover:w-6"
+                style={{ height: `${heightPercent}%` }}
+              />
+              
+              {/* Tooltip on hover */}
+              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 -translate-y-2 opacity-0 group-hover:opacity-100 bg-black/80 backdrop-blur-sm text-white p-2 rounded text-xs whitespace-nowrap transition-all z-10">
+                {hour.hour}: {formatCurrency(hour.amount)}
+              </div>
+              
+              {/* Help with spacing for the x-axis labels */}
+              <div className="absolute bottom-0 left-0 w-full h-8"></div>
+            </div>
           );
         })}
       </div>
       
-      <div className="flex justify-between px-3 text-xs text-zinc-500 mt-1">
+      {/* X-axis labels */}
+      <div className="flex justify-between px-3 text-xs text-white/40 mt-2 absolute bottom-0 left-0 right-0">
         {displayData.map((hour, index) => {
           // Only show every other label if we have many hours, to prevent overlap
           if (displayData.length > 8 && index % 2 !== 0 && index !== 0 && index !== displayData.length - 1) {
             return <span key={index} className="opacity-0">{hour.hour.replace(/\s[AP]M$/, '')}</span>;
           }
           return (
-            <span key={index}>
+            <span key={index} className="font-medium">
               {hour.hour.replace(/\s[AP]M$/, '')}
             </span>
           );
@@ -112,4 +132,14 @@ export default function SimpleHourlyChart({
       </div>
     </div>
   );
+}
+
+// Helper function for formatting currency in tooltips
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(value);
 }
