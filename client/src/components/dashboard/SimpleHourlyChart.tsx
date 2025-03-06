@@ -100,7 +100,7 @@ export default function SimpleHourlyChart({
             >
               {/* Bar itself with gradient */}
               <div
-                className="relative w-5 rounded-t-md bg-gradient-to-t from-primary/70 to-primary cursor-pointer transition-all hover:from-primary/90 hover:to-primary hover:w-6"
+                className="relative w-5 rounded-t-md bg-gradient-to-t from-red-600/70 to-red-600 cursor-pointer transition-all hover:from-red-600/90 hover:to-red-600 hover:w-6"
                 style={{ height: `${heightPercent}%` }}
               />
               

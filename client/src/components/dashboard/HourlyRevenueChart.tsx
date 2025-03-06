@@ -47,7 +47,7 @@ const chartConfig = {
   },
   amount: {
     label: "Revenue",
-    color: "hsl(var(--chart-1))", // Blue
+    color: "#DC2626", // Red (red-600)
   },
 } satisfies ChartConfig;
 
@@ -77,17 +77,17 @@ export default function HourlyRevenueChart({
       <div className="flex flex-row items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-bold flex items-center text-white">
-            <Clock size={20} className="mr-2 text-primary" />
+            <Clock size={20} className="mr-2 text-red-600" />
             <span>Hourly Revenue</span>
           </h2>
           {peakHour && !isLoading && (
             <div className="flex items-center text-white/70 text-sm">
-              <TrendingUp size={16} className="mr-1 text-green-400" />
+              <TrendingUp size={16} className="mr-1 text-white" />
               <span>Peak: {peakHour.hour} ({formatCurrency(peakHour.amount)})</span>
             </div>
           )}
         </div>
-        <div className="flex items-center px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-sm font-medium">
+        <div className="flex items-center px-3 py-1.5 bg-red-600/10 text-red-600 rounded-lg text-sm font-medium">
           <TrendingUp size={14} className="mr-1.5" />
           <span>Hourly Pattern</span>
         </div>
