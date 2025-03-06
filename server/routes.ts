@@ -651,39 +651,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Fix gift cards endpoint with comprehensive activation amount fix
-  apiRouter.get("/fix-gift-cards", async (req, res) => {
-    try {
-      console.log("Starting comprehensive gift card activation amount fix...");
-      
-      // Use our improved fixGiftCardActivationAmounts function
-      const { fixGiftCardActivationAmounts } = await import('./fixGiftCardActivationAmounts');
-      
-      // Run the improved fix function which properly handles activation amounts
-      const result = await fixGiftCardActivationAmounts();
-      
-      // Process the result to make it safe for JSON response
-      const response = processSafeSquareData({
-        success: true,
-        message: "Gift card activation amounts have been fixed",
-        result: {
-          totalCards: result.total,
-          updatedCards: result.updated,
-          cardsWithNoChange: result.noChange,
-          zeroBalanceCards: result.zeroBalance,
-          errors: result.errors
-        }
-      });
-      
-      return res.json(response);
-    } catch (error) {
-      console.error("Error fixing gift cards:", error);
-      res.status(500).json({
-        error: "Failed to fix gift cards",
-        message: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
-  });
+  // Fix gift cards endpoint - REMOVED (migrated to gift card service)
   // Endpoint to sync orders from Square API
   apiRouter.get("/sync-orders", async (req, res) => {
     try {
@@ -743,77 +711,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // New endpoint using Orders API to correctly identify gift card activations
-  apiRouter.get("/fix-gift-cards-from-orders", async (req, res) => {
-    try {
-      console.log("Starting gift card activation fix using Orders API...");
-      
-      // Parse optional dateRange from query parameters
-      const dateRange = req.query.dateRange as string | undefined;
-      let parsedDateRange: string = 'all_time'; // Default to all time if not specified
-      
-      // Optional custom date range parameters
-      let startDate: Date | undefined = undefined;
-      let endDate: Date | undefined = undefined;
-      
-      // If dateRange is provided, validate it
-      if (dateRange) {
-        try {
-          const validatedRange = dateRangeSchema.safeParse(dateRange);
-          if (validatedRange.success) {
-            parsedDateRange = validatedRange.data;
-          } else {
-            return res.status(400).json({ error: "Invalid date range" });
-          }
-        } catch (error) {
-          return res.status(400).json({ error: "Invalid date range parameter" });
-        }
-      }
-      
-      // Parse custom date range if provided
-      if (req.query.startDate && req.query.endDate) {
-        try {
-          startDate = new Date(req.query.startDate as string);
-          endDate = new Date(req.query.endDate as string);
-        } catch (error) {
-          return res.status(400).json({ error: "Invalid custom date format" });
-        }
-      }
-      
-      console.log(`Using date range: ${parsedDateRange}`);
-      
-      // Import the Orders API-based fix function
-      const { fixGiftCardActivationsFromOrders } = await import('./fixGiftCardActivationsFromOrders');
-      
-      // Run the fix function
-      const result = await fixGiftCardActivationsFromOrders(parsedDateRange as any, startDate, endDate);
-      
-      // Return results
-      return res.json({
-        success: true,
-        message: "Gift card activation amounts updated from Orders API",
-        dateRange: parsedDateRange,
-        customRange: startDate && endDate ? {
-          start: startDate.toISOString(),
-          end: endDate.toISOString()
-        } : null,
-        result: {
-          totalCards: result.total,
-          updatedCards: result.updated,
-          cardsWithNoChange: result.noChange,
-          noMatchFound: result.noMatch,
-          zeroAmountIssues: result.zeroAmount,
-          errors: result.errors
-        }
-      });
-    } catch (error) {
-      console.error("Error fixing gift cards from orders:", error);
-      res.status(500).json({
-        error: "Failed to fix gift cards using Orders API",
-        message: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
-  });
+  // Fix gift cards endpoint - REMOVED (migrated to gift card service)
 
   // Add diagnostic endpoint for Square API connection
   apiRouter.get("/test-square-connection", async (req, res) => {
