@@ -57,6 +57,33 @@ class PgStorage implements IStorage {
       ORDER BY timestamp DESC
     `);
     
+    // Debug: Log count and first/last timestamps to understand what's included
+    if (filteredTransactions.rows.length > 0) {
+      console.log(`Found ${filteredTransactions.rows.length} transactions in range`);
+      const firstRow = filteredTransactions.rows[filteredTransactions.rows.length - 1]; // First chronologically
+      const lastRow = filteredTransactions.rows[0]; // Last chronologically (since DESC order)
+      
+      console.log('First transaction:', {
+        id: firstRow.id,
+        timestamp: firstRow.timestamp,
+        amount: firstRow.amount,
+        eastern: formatInTimeZone(new Date(firstRow.timestamp), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
+      });
+      
+      console.log('Last transaction:', {
+        id: lastRow.id,
+        timestamp: lastRow.timestamp,
+        amount: lastRow.amount,
+        eastern: formatInTimeZone(new Date(lastRow.timestamp), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
+      });
+      
+      // Calculate total
+      const total = filteredTransactions.rows.reduce((sum, row) => sum + Number(row.amount), 0);
+      console.log(`Total amount for ${dateRange}: ${total}`);
+    } else {
+      console.log(`No transactions found in range: ${startUTC} to ${endUTC}`);
+    }
+    
     // Map the raw results to Transaction objects
     return filteredTransactions.rows.map(row => ({
       id: Number(row.id),
