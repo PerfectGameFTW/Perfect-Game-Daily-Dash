@@ -342,9 +342,13 @@ export class SyncService {
               for (const squareLineItem of squareOrder.lineItems) {
                 // Safely extract order ID with fallback
                 let orderId = 0;
-                if (existingOrder && typeof existingOrder === 'object' && 'id' in existingOrder) {
+                
+                // Type safe way to access order ID
+                if (existingOrder) {
+                  // existingOrder is an Order type from getOrderBySquareId
                   orderId = existingOrder.id;
-                } else if (typeof orderData === 'object' && 'id' in orderData) {
+                } else if (orderData && 'id' in orderData && typeof orderData.id === 'number') {
+                  // orderData is from createOrder which returns an Order
                   orderId = orderData.id;
                 }
                 const lineItemData = squareClient.convertSquareLineItemToOrderLineItem(
@@ -373,9 +377,13 @@ export class SyncService {
               for (const squareDiscount of squareOrder.discounts) {
                 // Safely extract order ID with fallback
                 let orderId = 0;
-                if (existingOrder && typeof existingOrder === 'object' && 'id' in existingOrder) {
+                
+                // Type safe way to access order ID
+                if (existingOrder) {
+                  // existingOrder is an Order type from getOrderBySquareId
                   orderId = existingOrder.id;
-                } else if (typeof orderData === 'object' && 'id' in orderData) {
+                } else if (orderData && 'id' in orderData && typeof orderData.id === 'number') {
+                  // orderData is from createOrder which returns an Order
                   orderId = orderData.id;
                 }
                 const discountData = squareClient.convertSquareDiscountToOrderDiscount(
