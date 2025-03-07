@@ -143,22 +143,27 @@ export class PaymentService {
     
     console.log(`Filtering payments with UTC range: ${start.toISOString()} to ${end.toISOString()}`);
     
-    // Build query with proper filters
-    let query = db.select().from(transactions)
-      .where(and(
-        between(transactions.timestamp, start, end)
-      ))
-      .orderBy(desc(transactions.timestamp));
+    // Build base query
+    let query = db.select().from(transactions);
     
-    // Add status filter if provided
+    // If status is provided, use both conditions
     if (status) {
-      query = query.where(eq(transactions.status, status));
+      query = query.where(
+        and(
+          between(transactions.timestamp, start, end),
+          eq(transactions.status, status)
+        )
+      );
+    } else {
+      // Otherwise just use date range
+      query = query.where(between(transactions.timestamp, start, end));
     }
     
-    // Add limit if provided
-    if (limit && limit > 0) {
-      query = query.limit(limit);
-    }
+    // Add ordering and limit
+    query = query.orderBy(desc(transactions.timestamp));
+    
+    // Add limit with a reasonable default
+    const limitValue = limit && limit > 0 ? limit : 1000;
     
     return await query;
   }
