@@ -47,6 +47,49 @@ class PgStorage implements IStorage {
     
     console.log(`Filtering transactions with UTC range: ${startUTC} to ${endUTC}`);
     
+    // For direct SQL debugging when "today" is requested
+    if (dateRange === 'today') {
+      const debugResult = await db.execute(sql`
+        SELECT COUNT(*), SUM(amount) 
+        FROM transactions
+        WHERE timestamp >= ${startUTC}::timestamp
+          AND timestamp <= ${endUTC}::timestamp
+          ${status ? sql` AND status = ${status}` : sql``}
+      `);
+      
+      console.log('DEBUG SQL RESULT FOR TODAY:', {
+        count: debugResult.rows[0]?.count || 0,
+        sum: debugResult.rows[0]?.sum || 0,
+        dateRange,
+        startUTC,
+        endUTC
+      });
+      
+      // Get some sample transactions in this range to see what's included
+      const sampleResult = await db.execute(sql`
+        SELECT id, square_id, timestamp, amount, status
+        FROM transactions
+        WHERE timestamp >= ${startUTC}::timestamp
+          AND timestamp <= ${endUTC}::timestamp
+          ${status ? sql` AND status = ${status}` : sql``}
+        ORDER BY timestamp ASC
+        LIMIT 5
+      `);
+      
+      if (sampleResult.rows.length > 0) {
+        console.log('Sample transactions in range:');
+        for (const row of sampleResult.rows) {
+          console.log({
+            id: row.id,
+            timestamp: row.timestamp,
+            amount: row.amount,
+            status: row.status,
+            eastern: formatInTimeZone(new Date(row.timestamp as string), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
+          });
+        }
+      }
+    }
+    
     // Query directly using UTC timestamps
     const filteredTransactions = await db.execute(sql`
       SELECT * 
@@ -67,14 +110,14 @@ class PgStorage implements IStorage {
         id: firstRow.id,
         timestamp: firstRow.timestamp,
         amount: firstRow.amount,
-        eastern: formatInTimeZone(new Date(firstRow.timestamp), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
+        eastern: formatInTimeZone(new Date(firstRow.timestamp as string), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
       });
       
       console.log('Last transaction:', {
         id: lastRow.id,
         timestamp: lastRow.timestamp,
         amount: lastRow.amount,
-        eastern: formatInTimeZone(new Date(lastRow.timestamp), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
+        eastern: formatInTimeZone(new Date(lastRow.timestamp as string), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
       });
       
       // Calculate total
