@@ -181,9 +181,14 @@ export class SyncService {
               ? transaction.id 
               : (transaction.id ? parseInt(String(transaction.id), 10) : 0);
               
+            // Ensure amount is a number
+            const amount = typeof transaction.amount === 'number' 
+              ? transaction.amount 
+              : (transaction.amount ? parseFloat(String(transaction.amount)) : 0);
+              
             const redemptionResult = await giftCardService.processRedemptionFromSquare(
               sourceId,
-              transaction.amount,
+              amount,
               transactionId,
               squareData
             );
@@ -325,9 +330,16 @@ export class SyncService {
             // Extract and create line items
             if (squareOrder.lineItems) {
               for (const squareLineItem of squareOrder.lineItems) {
+                // Safely extract order ID with fallback
+                let orderId = 0;
+                if (existingOrder && typeof existingOrder === 'object' && 'id' in existingOrder) {
+                  orderId = existingOrder.id;
+                } else if (typeof orderData === 'object' && 'id' in orderData) {
+                  orderId = orderData.id;
+                }
                 const lineItemData = squareClient.convertSquareLineItemToOrderLineItem(
                   squareLineItem,
-                  existingOrder ? existingOrder.id : orderData.id
+                  orderId
                 );
                 
                 const lineItem = await orderService.createOrderItem(lineItemData);
@@ -349,9 +361,16 @@ export class SyncService {
             // Extract and create discounts if any
             if (squareOrder.discounts) {
               for (const squareDiscount of squareOrder.discounts) {
+                // Safely extract order ID with fallback
+                let orderId = 0;
+                if (existingOrder && typeof existingOrder === 'object' && 'id' in existingOrder) {
+                  orderId = existingOrder.id;
+                } else if (typeof orderData === 'object' && 'id' in orderData) {
+                  orderId = orderData.id;
+                }
                 const discountData = squareClient.convertSquareDiscountToOrderDiscount(
                   squareDiscount,
-                  existingOrder ? existingOrder.id : orderData.id
+                  orderId
                 );
                 
                 // Create discount (would need a createOrderDiscount method)
@@ -391,10 +410,9 @@ export class SyncService {
       
       if (state) {
         await this.updateSyncState(state.id, {
-          inProgress: false,
+          isComplete: true,
           status: 'error',
-          message: 'Error syncing orders',
-          error: error instanceof Error ? error.message : 'Unknown error'
+          errorMessage: error instanceof Error ? error.message : 'Unknown error'
         });
       }
       
@@ -512,10 +530,9 @@ export class SyncService {
       
       if (state) {
         await this.updateSyncState(state.id, {
-          inProgress: false,
+          isComplete: true,
           status: 'error',
-          message: 'Error syncing payments',
-          error: error instanceof Error ? error.message : 'Unknown error'
+          errorMessage: error instanceof Error ? error.message : 'Unknown error'
         });
       }
       
@@ -587,7 +604,11 @@ export class SyncService {
           // Check if gift card exists
           let existingGiftCard;
           try {
-            existingGiftCard = await giftCardService.getGiftCardByGAN(giftCardData.gan);
+            // Ensure gan is a string and not null/undefined
+            const gan = giftCardData.gan || '';
+            if (gan) {
+              existingGiftCard = await giftCardService.getGiftCardByGAN(gan);
+            }
           } catch (error) {
             // Gift card doesn't exist, which is fine
           }
@@ -634,10 +655,9 @@ export class SyncService {
       
       if (state) {
         await this.updateSyncState(state.id, {
-          inProgress: false,
+          isComplete: true,
           status: 'error',
-          message: 'Error syncing gift cards',
-          error: error instanceof Error ? error.message : 'Unknown error'
+          errorMessage: error instanceof Error ? error.message : 'Unknown error'
         });
       }
       
