@@ -77,10 +77,43 @@ export class PaymentService {
    * @returns The created payment
    */
   async createPayment(paymentData: InsertTransaction): Promise<Transaction> {
+    // First, insert into the transactions table as before
     const result = await db.insert(transactions).values(paymentData).returning();
     
     if (!result.length) {
       throw new PaymentError('Failed to create payment', 'DB_ERROR');
+    }
+    
+    // Now also insert into the payments table for the new system
+    try {
+      // Extract data from Square transaction to populate payments table
+      const squareData = paymentData.squareData || {};
+      
+      // Build payment record based on transaction data
+      await db.execute(sql`
+        INSERT INTO payments (
+          square_id, status, amount, tip_amount, tax_amount, timestamp, 
+          currency, square_order_id, receipt_url, is_gift_card_activation, metadata
+        ) VALUES (
+          ${paymentData.squareId},
+          ${paymentData.status},
+          ${paymentData.amount},
+          ${typeof squareData.tipMoney?.amount === 'string' ? parseFloat(squareData.tipMoney.amount) / 100 : 0},
+          ${typeof squareData.taxMoney?.amount === 'string' ? parseFloat(squareData.taxMoney.amount) / 100 : 0},
+          ${paymentData.timestamp},
+          ${squareData.currency || 'USD'},
+          ${squareData.orderId || null},
+          ${squareData.receiptUrl || null},
+          ${paymentData.categoryId === 'giftCard'},
+          ${JSON.stringify(squareData)}
+        )
+        ON CONFLICT (square_id) DO NOTHING
+      `);
+      
+      console.log(`Inserted payment ${paymentData.squareId} into both transactions and payments tables`);
+    } catch (error) {
+      // Log error but don't fail the transaction insert
+      console.error('Failed to insert into payments table:', error);
     }
     
     return result[0];
