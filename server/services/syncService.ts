@@ -103,6 +103,140 @@ export class SyncService {
   }
   
   /**
+   * Synchronize gift card redemptions from historical transactions
+   * This method scans past transactions to find gift card redemptions and records them
+   * 
+   * @param startDate Optional start date for the sync
+   * @param endDate Optional end date for the sync
+   * @returns Object with sync results
+   */
+  async syncGiftCardRedemptions(startDate?: Date, endDate?: Date): Promise<{
+    success: boolean;
+    processed: number;
+    matched: number;
+    created: number;
+    errors: any[];
+  }> {
+    console.log(`Starting gift card redemption sync from ${startDate?.toISOString() || 'beginning'} to ${endDate?.toISOString() || 'now'}`);
+    
+    try {
+      // Set default dates if not provided
+      const effectiveStartDate = startDate || new Date('2025-01-01');
+      const effectiveEndDate = endDate || new Date();
+      
+      // Step 1: Get all transactions that could be gift card redemptions
+      const query = sql`
+        SELECT t.* 
+        FROM transactions t
+        WHERE t.status = 'completed'
+          AND t.timestamp BETWEEN ${effectiveStartDate} AND ${effectiveEndDate}
+          AND (t.square_data->>'isGiftCardRedemption')::boolean IS TRUE
+          AND NOT EXISTS (
+            SELECT 1 FROM gift_card_redemptions gcr
+            WHERE gcr.transaction_id = t.id
+          )
+      `;
+      
+      const transactions = await db.execute(query);
+      
+      console.log(`Found ${transactions.rowCount} potential gift card redemptions to process`);
+      
+      // Initialize result counters
+      const result = {
+        success: true,
+        processed: 0,
+        matched: 0,
+        created: 0,
+        errors: [] as any[]
+      };
+      
+      // Step 2: Process each transaction
+      if (transactions.rows && transactions.rows.length > 0) {
+        for (const transaction of transactions.rows) {
+          try {
+            result.processed++;
+            
+            // Extract gift card ID (GAN) from Square data
+            const squareData = transaction.square_data || {};
+            const sourceId = squareData.sourceId || '';
+            
+            if (!sourceId) {
+              result.errors.push({
+                transactionId: transaction.id,
+                error: 'No sourceId (GAN) found in transaction data'
+              });
+              continue;
+            }
+            
+            // Process the redemption
+            const redemptionResult = await giftCardService.processRedemptionFromSquare(
+              sourceId,
+              transaction.amount,
+              transaction.id,
+              squareData
+            );
+            
+            if (redemptionResult) {
+              result.matched++;
+              result.created++;
+              console.log(`Created redemption record for transaction ${transaction.id}, gift card ${redemptionResult.id} (${redemptionResult.gan || sourceId})`);
+            } else {
+              result.errors.push({
+                transactionId: transaction.id,
+                sourceId,
+                error: 'Could not find matching gift card'
+              });
+            }
+          } catch (error) {
+            console.error(`Error processing transaction ${transaction.id}:`, error);
+            result.errors.push({
+              transactionId: transaction.id,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+      }
+      
+      // Step 3: Update sync state
+      try {
+        const syncState = await this.getSyncState('gift_card_redemptions');
+        
+        if (syncState) {
+          await this.updateSyncState(syncState.id, {
+            lastSynced: new Date(),
+            recordCount: result.created,
+            status: 'completed',
+            errorDetails: result.errors.length > 0 ? result.errors : undefined
+          });
+        } else {
+          await this.createSyncState({
+            syncType: 'gift_card_redemptions',
+            lastSynced: new Date(),
+            recordCount: result.created,
+            status: 'completed',
+            errorDetails: result.errors.length > 0 ? result.errors : undefined
+          });
+        }
+      } catch (syncError) {
+        console.error('Failed to update sync state:', syncError);
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Error synchronizing gift card redemptions:', error);
+      return {
+        success: false,
+        processed: 0,
+        matched: 0,
+        created: 0,
+        errors: [{
+          error: error instanceof Error ? error.message : String(error)
+        }]
+      };
+    }
+  }
+  
+  /**
    * Synchronize orders from Square API
    * 
    * @param startDate Optional start date for sync
