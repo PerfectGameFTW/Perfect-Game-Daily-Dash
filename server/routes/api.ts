@@ -192,7 +192,19 @@ export function createApiRouter(): Router {
   /**
    * Start Sync API
    * POST /api/sync
-   * Body: { type: "orders" | "payments" | "gift_cards" | "all" | "missing_payments", startDate?: string, endDate?: string }
+   * 
+   * Used to trigger various synchronization operations including the special
+   * reconciliation tool for missing payments from the March 6, 2025 gap.
+   * 
+   * Body: { 
+   *   type: "orders" | "payments" | "gift_cards" | "all" | "missing_payments", 
+   *   startDate?: string,  // Optional ISO date string, defaults to March 6, 2025 04:13:41 UTC for missing_payments
+   *   endDate?: string     // Optional ISO date string, defaults to current time
+   * }
+   * 
+   * The "missing_payments" type specifically addresses the architectural transition gap
+   * where payments records were missing since March 6, 2025. This is part of our
+   * dual-track strategy for maintaining data consistency during the transition.
    */
   router.post('/sync', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -234,12 +246,27 @@ export function createApiRouter(): Router {
           result = await syncService.syncGiftCards();
           break;
         case 'missing_payments':
-          // Sync missing payments from transactions table to payments table
-          const defaultStartDate = new Date('2025-03-06T04:13:41.000Z');
+          // Special reconciliation tool for the March 6, 2025 architectural transition gap
+          // This specifically addresses missing payment records since the transition began
+          console.log('Starting special payment reconciliation tool for architectural transition gap');
+          
+          // Use the specific known timestamp when the transition occurred
+          const transitionTimestamp = new Date('2025-03-06T04:13:41.000Z');
+          
+          // Allow overriding the start date but default to the transition time
+          const reconciliationStart = startDate || transitionTimestamp;
+          const reconciliationEnd = endDate || new Date();
+          
+          console.log(`Reconciliation period: ${reconciliationStart.toISOString()} to ${reconciliationEnd.toISOString()}`);
+          
+          // Execute the reconciliation
           result = await paymentService.syncMissingPayments(
-            startDate || defaultStartDate,
-            endDate || new Date()
+            reconciliationStart,
+            reconciliationEnd
           );
+          
+          // Log the results for monitoring
+          console.log(`Payment reconciliation completed: ${result.succeeded} records synchronized, ${result.failed} failures`);
           break;
         case 'all':
           // Run all sync operations in parallel
@@ -257,9 +284,15 @@ export function createApiRouter(): Router {
           break;
       }
       
+      // Create a response message based on the sync type
+      let message = 'Sync started successfully';
+      if (validatedBody.type === 'missing_payments') {
+        message = `Payment reconciliation completed successfully: ${result.succeeded} records synchronized, ${result.failed} failures`;
+      }
+      
       res.json({
         success: true,
-        message: 'Sync started successfully',
+        message,
         result
       });
     } catch (error) {
