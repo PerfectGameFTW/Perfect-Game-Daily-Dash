@@ -181,10 +181,20 @@ export class SyncService {
               ? transaction.id 
               : (transaction.id ? parseInt(String(transaction.id), 10) : 0);
               
-            // Ensure amount is a number
-            const amount = typeof transaction.amount === 'number' 
-              ? transaction.amount 
-              : (transaction.amount ? parseFloat(String(transaction.amount)) : 0);
+            // Explicitly type the transaction.amount from unknown to number
+            // Using type assertion after validation to ensure it's safe
+            let amount = 0;
+            if (transaction && 'amount' in transaction) {
+              if (typeof transaction.amount === 'number') {
+                amount = transaction.amount;
+              } else if (transaction.amount !== undefined && transaction.amount !== null) {
+                // Convert string/unknown to number if possible
+                const parsedAmount = parseFloat(String(transaction.amount));
+                if (!isNaN(parsedAmount)) {
+                  amount = parsedAmount;
+                }
+              }
+            }
               
             const redemptionResult = await giftCardService.processRedemptionFromSquare(
               sourceId,
