@@ -1,145 +1,84 @@
-# Timestamp Handling Strategy
+# Timezone Handling Guide
 
 ## Overview
-This project uses PostgreSQL's `timestamptz` type to store all timestamps in UTC while providing proper Eastern Time date boundary handling through SQL timezone conversions.
 
-## Database Structure
+This document explains how timezone conversions are handled throughout the application, with particular focus on the critical business day boundaries in Eastern Time.
 
-### Storage
-- All timestamps are stored as `timestamptz` (timestamp with time zone)
-- PostgreSQL internally stores these in UTC
-- Affected columns:
-  - transactions.timestamp
-  - orders.created_at, orders.closed_at
-  - gift_cards.purchase_date
-  - gift_card_redemptions.timestamp
+## Core Principles
 
-### Timezone Handling
-For accurate business day boundaries in Eastern Time, we use PostgreSQL's AT TIME ZONE operator:
-```sql
-SELECT created_at AT TIME ZONE 'America/New_York' as created_at_et
-FROM orders
-```
+1. **Database Storage**: All timestamps are stored in UTC (using PostgreSQL's `timestamptz` type).
+2. **Business Days**: Business days are defined in Eastern Time (America/New_York), regardless of UTC time.
+3. **Query Boundaries**: When querying for a business day, the UTC timestamps must align with Eastern Time boundaries.
+4. **Daylight Saving Time**: The system accounts for DST transitions automatically.
 
-This ensures that:
-1. Date boundaries align with Eastern Time business days
-2. DST transitions are handled automatically
-3. Queries can filter by local date using DATE()
+## Timezone Conversion Reference
 
-## Best Practices
+For Eastern Standard Time (EST), which is UTC-5:
+- Eastern midnight (00:00:00 ET) = 05:00:00 UTC (same day)
+- Eastern end of day (23:59:59.999 ET) = 04:59:59.999 UTC (next day)
 
-### Writing Data
+For Eastern Daylight Time (EDT), which is UTC-4:
+- Eastern midnight (00:00:00 ET) = 04:00:00 UTC (same day)
+- Eastern end of day (23:59:59.999 ET) = 03:59:59.999 UTC (next day)
+
+## Key Implementation Details
+
+### Business Day Calculation
+
+When calculating date ranges for "today", "yesterday" or other business periods, we:
+
+1. Determine the date range in Eastern Time for display purposes
+2. Convert the Eastern Time boundaries to precise UTC timestamps
+3. Use these UTC timestamps directly in database queries
+
 ```typescript
-// Always write timestamps in UTC
-const order = {
-  squareId: 'order_123',
-  createdAt: new Date(), // PostgreSQL will store this in UTC
-  // ...other fields
-};
-await pgStorage.createOrder(order);
+// Example from dateUtils.ts
+// For March 7th in Eastern Time:
+// Start: March 7 00:00:00 ET = March 7 05:00:00 UTC
+// End: March 7 23:59:59.999 ET = March 8 04:59:59.999 UTC
+const startWithTZ = `${startStr}T00:00:00-05:00`;  // -05:00 represents Eastern Standard Time
+const endWithTZ = `${endStr}T23:59:59.999-05:00`;
+
+// Parse them to get UTC Date objects
+const startDate = new Date(startWithTZ);
+const endDate = new Date(endWithTZ);
 ```
 
-### Reading Data by Date Ranges
-For date-based queries, use WITH clause and AT TIME ZONE:
-```sql
-WITH orders_in_et AS (
-  SELECT *, created_at AT TIME ZONE 'America/New_York' as created_at_et
-  FROM orders
-)
-SELECT *
-FROM orders_in_et
-WHERE DATE(created_at_et) = '2025-02-28'::date
+### Critical Functions
+
+1. **getEasternDateRange()**: Converts Eastern Time business day boundaries to UTC timestamps for database queries.
+2. **utcToEastern()**: Converts UTC timestamps to Eastern Time for display purposes.
+3. **getEasternHourFromUTC()**: Formats a UTC time as an Eastern Time hour for hourly reports.
+
+## Common Timezone Issues
+
+1. **Direction Error**: Always remember Eastern Time is behind UTC (subtract hours from UTC).
+2. **DST Transitions**: Dates around DST changes require extra care as the UTC offset changes.
+3. **Date Boundaries**: A single UTC day spans portions of two Eastern business days.
+
+## Debugging Timezone Conversions
+
+The application includes detailed logging for timezone conversions. Look for these log patterns:
+
+```
+Date range calculation: { ... }
+Converting Eastern business days to UTC timestamps: { ... }
 ```
 
-This ensures:
-- Consistent midnight-to-midnight boundaries in Eastern Time
-- Proper handling of DST transitions
-- Accurate business day reporting
+## Timezone Testing
 
-### Date Range Queries
-Use `getUTCDateRange` utility for consistent business day boundaries:
-```typescript
-const { start, end } = getUTCDateRange('today');
-// start will be midnight ET in UTC
-// end will be 11:59:59.999 PM ET in UTC
-```
+When testing timezone-specific functionality:
+1. Test dates in both standard time (winter) and daylight time (summer)
+2. Test dates around DST transitions (usually March and November)
+3. Verify late-night transactions (after 7pm ET) are attributed to the correct business day
 
-## Utility Functions
+## Technical Implementation
 
-### `toUTCStorage(date: Date)`
-Ensures a date is in UTC for storage:
-```typescript
-const timestamp = toUTCStorage(new Date()); // For storing in database
-```
+The implementation uses:
+- `date-fns` for basic date manipulation
+- `date-fns-tz` for timezone-aware formatting and parsing
+- Native JavaScript Date objects (which are always in UTC internally)
 
-### `formatInEasternTime(date: Date, format?: string)`
-Formats a UTC timestamp in Eastern Time for display:
-```typescript
-const display = formatInEasternTime(order.createdAt);
-// Returns e.g. "2025-02-28 07:00:00 EST"
-```
+## Previous Issues Fixed
 
-### `getUTCDateRange(dateRange: DateRange, startDate?: Date, endDate?: Date)`
-Gets UTC date range that corresponds to Eastern Time business days:
-```typescript
-const { start, end } = getUTCDateRange('today');
-// Returns timestamps aligned to ET midnight boundaries
-```
-
-## Testing
-Test files in `server/tests/timestamp.test.ts` verify:
-- Proper UTC storage
-- Eastern Time date boundary handling
-- DST transitions
-- Date range query accuracy
-
-## Common Scenarios
-
-### Creating Records
-```typescript
-const order = {
-  createdAt: new Date(), // Always use UTC
-  // ...other fields
-};
-await pgStorage.createOrder(order);
-```
-
-### Querying Date Ranges
-```typescript
-// For reporting, use AT TIME ZONE conversion
-const result = await db.execute(sql`
-  WITH orders_in_et AS (
-    SELECT *, created_at AT TIME ZONE 'America/New_York' as created_at_et
-    FROM orders
-  )
-  SELECT *
-  FROM orders_in_et
-  WHERE DATE(created_at_et) >= ${startDate}
-    AND DATE(created_at_et) <= ${endDate}
-`);
-```
-
-### Dashboard Data
-```typescript
-// OrderSummary uses Eastern Time conversion for accurate business day reporting
-const summary = await pgStorage.getOrderSummary('today');
-```
-
-## Troubleshooting
-
-### Common Issues
-1. Incorrect business day boundaries
-   - Ensure using AT TIME ZONE 'America/New_York' for date-based queries
-   - Use getUTCDateRange for consistent boundaries
-   - Always use DATE() on timezone-converted fields
-
-2. Timezone mismatches
-   - Store dates using `new Date()` or explicit UTC times
-   - Use AT TIME ZONE for display/reporting
-   - Never manually adjust timestamps before storage
-
-### Debugging
-Enable detailed logging:
-- Use dateUtils.ts logs showing timezone conversions
-- Log both UTC and ET representations when debugging
-- Verify date boundaries in queries match business requirements
+The current implementation fixes a critical issue where transactions after 7:00 PM Eastern Time were incorrectly attributed to the next business day. This affected approximately 104 transactions ($9,113.05) on March 6, 2025, which were showing up as March 7 transactions.

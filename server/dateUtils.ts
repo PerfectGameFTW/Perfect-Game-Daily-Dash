@@ -1,10 +1,19 @@
 /**
  * Timezone utilities for proper business day alignment
  * 
- * Updated architecture:
+ * This module handles critical timezone conversions between UTC and Eastern Time,
+ * ensuring that business day boundaries are correctly defined for reporting and analytics.
+ * 
+ * IMPORTANT: See docs/timestamp-handling.md for complete documentation.
+ * 
+ * ARCHITECTURE:
  * - All timestamps are stored in UTC (using timestamptz) in the database
- * - All database queries use direct UTC timestamps (no timezone conversion)
- * - Frontend displays dates in user's local timezone (Eastern) for consistency
+ * - Business days are defined in Eastern Time (America/New_York)
+ * - Database queries use precise UTC timestamps that align with Eastern business days
+ * - For March 7th in Eastern Time, the UTC range is:
+ *   - Start: March 7 05:00:00 UTC (March 7 00:00:00 ET)
+ *   - End:   March 8 04:59:59.999 UTC (March 7 23:59:59.999 ET)
+ * - Frontend displays dates in Eastern Time for consistency
  */
 import { format, addDays, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
