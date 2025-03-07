@@ -297,8 +297,8 @@ export class SyncService {
       
       // Update state with total items
       await this.updateSyncState(state.id, {
-        totalItems: squareOrders.length,
-        message: `Found ${squareOrders.length} orders to sync`
+        totalCount: squareOrders.length,
+        status: `Found ${squareOrders.length} orders to sync`
       });
       
       // Process each order
@@ -366,8 +366,8 @@ export class SyncService {
           // Update sync state progress
           if (processed % 10 === 0 || processed === squareOrders.length) {
             await this.updateSyncState(state.id, {
-              processedItems: processed,
-              message: `Processed ${processed} of ${squareOrders.length} orders`
+              processedCount: processed,
+              status: `Processed ${processed} of ${squareOrders.length} orders`
             });
           }
         } catch (error) {
@@ -378,11 +378,10 @@ export class SyncService {
       
       // Update state to completed
       await this.updateSyncState(state.id, {
-        inProgress: false,
+        isComplete: true,
         status: 'completed',
-        message: `Completed. Processed ${processed} orders. Created: ${created}, Updated: ${updated}, Failed: ${failed}`,
-        lastSyncDate: new Date(),
-        processedItems: processed
+        lastSyncedAt: new Date(),
+        processedCount: processed
       });
       
       return { processed, created, updated, failed };
@@ -456,8 +455,8 @@ export class SyncService {
       
       // Update state with total items
       await this.updateSyncState(state.id, {
-        totalItems: squarePayments.length,
-        message: `Found ${squarePayments.length} payments to sync`
+        totalCount: squarePayments.length,
+        status: `Found ${squarePayments.length} payments to sync`
       });
       
       // Process each payment
@@ -488,8 +487,8 @@ export class SyncService {
           // Update sync state progress
           if (processed % 10 === 0 || processed === squarePayments.length) {
             await this.updateSyncState(state.id, {
-              processedItems: processed,
-              message: `Processed ${processed} of ${squarePayments.length} payments`
+              processedCount: processed,
+              status: `Processed ${processed} of ${squarePayments.length} payments`
             });
           }
         } catch (error) {
@@ -500,11 +499,10 @@ export class SyncService {
       
       // Update state to completed
       await this.updateSyncState(state.id, {
-        inProgress: false,
+        isComplete: true,
         status: 'completed',
-        message: `Completed. Processed ${processed} payments. Created: ${created}, Updated: ${updated}, Failed: ${failed}`,
-        lastSyncDate: new Date(),
-        processedItems: processed
+        lastSyncedAt: new Date(),
+        processedCount: processed
       });
       
       return { processed, created, updated, failed };
@@ -564,12 +562,11 @@ export class SyncService {
       
       // Update state to in progress
       await this.updateSyncState(state.id, {
-        inProgress: true,
+        isComplete: false,
         status: 'in_progress',
-        message: 'Fetching gift cards from Square API',
-        processedItems: 0,
-        totalItems: 0,
-        error: null
+        processedCount: 0,
+        totalCount: 0,
+        errorMessage: null
       });
       
       // Fetch gift cards from Square API
@@ -577,8 +574,8 @@ export class SyncService {
       
       // Update state with total items
       await this.updateSyncState(state.id, {
-        totalItems: squareGiftCards.length,
-        message: `Found ${squareGiftCards.length} gift cards to sync`
+        totalCount: squareGiftCards.length,
+        status: `Found ${squareGiftCards.length} gift cards to sync`
       });
       
       // Process each gift card
@@ -609,8 +606,8 @@ export class SyncService {
           // Update sync state progress
           if (processed % 10 === 0 || processed === squareGiftCards.length) {
             await this.updateSyncState(state.id, {
-              processedItems: processed,
-              message: `Processed ${processed} of ${squareGiftCards.length} gift cards`
+              processedCount: processed,
+              status: `Processed ${processed} of ${squareGiftCards.length} gift cards`
             });
           }
         } catch (error) {
@@ -624,11 +621,10 @@ export class SyncService {
       
       // Update state to completed
       await this.updateSyncState(state.id, {
-        inProgress: false,
+        isComplete: true,
         status: 'completed',
-        message: `Completed. Processed ${processed} gift cards. Created: ${created}, Updated: ${updated}, Failed: ${failed}`,
-        lastSyncDate: new Date(),
-        processedItems: processed
+        lastSyncedAt: new Date(),
+        processedCount: processed
       });
       
       return { processed, created, updated, failed };
