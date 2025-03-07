@@ -313,82 +313,113 @@ export class PaymentService {
     console.log('RECONCILIATION: This operation specifically targets the architectural transition gap');
     console.log('IMPORTANT: This is a one-time fix for historical data inconsistency');
     
-    // Get transactions that need to be synced using raw SQL
-    const missingTransactionsResult = await db.execute<Transaction>(sql`
-      SELECT * FROM ${transactions}
-      WHERE ${transactions.timestamp} BETWEEN ${startDate} AND ${endDate}
-        AND NOT EXISTS (
-          SELECT 1 FROM payments 
-          WHERE payments.square_id = ${transactions.squareId}
-        )
-      ORDER BY ${transactions.timestamp} ASC
-    `);
-    
-    const missingTransactions = missingTransactionsResult.rows;
-    
-    console.log(`Found ${missingTransactions.length} missing payment records to synchronize`);
-    
-    // Process results
+    // Initialize the results object
     const results = {
-      totalProcessed: missingTransactions.length,
+      totalProcessed: 0,
       succeeded: 0,
       failed: 0,
       errors: [] as any[]
     };
     
-    // Process each transaction
-    for (const transaction of missingTransactions) {
-      try {
-        // Get square data
-        const squareData = transaction.squareData || {};
-        // Cast to any to access nested properties
-        const squareDataObject = squareData as any;
-        
-        // Process and validate data before insert
-        const tipAmount = squareDataObject.tipMoney?.amount 
-          ? parseFloat(squareDataObject.tipMoney.amount) / 100 
-          : 0;
-          
-        const taxAmount = squareDataObject.taxMoney?.amount 
-          ? parseFloat(squareDataObject.taxMoney.amount) / 100 
-          : 0;
-          
-        // Use a simpler approach with minimal parameters
-        // Avoid SQL injection by using parameterized queries for all values
+    try {
+      // Step 1: Find transactions in the date range
+      const transactionsResult = await db.select()
+        .from(transactions)
+        .where(
+          and(
+            between(transactions.timestamp, startDate, endDate)
+          )
+        )
+        .orderBy(asc(transactions.timestamp));
+      
+      console.log(`Found ${transactionsResult.length} transactions in date range`);
+      results.totalProcessed = transactionsResult.length;
+      
+      // Step 2: For each transaction, check if it exists in payments and insert if not
+      for (const transaction of transactionsResult) {
         try {
-          const isGiftCard = transaction.categoryId === 'giftCard';
-          const emptyJsonObj = '{}'; 
-            
-          // Directly use db.execute with minimal parameters to avoid SQL syntax issues
-          await db.execute(sql`
-            INSERT INTO payments 
-              (square_id, status, amount, tip_amount, tax_amount, timestamp, currency, is_gift_card_activation, metadata) 
-            VALUES 
-              (${transaction.squareId}, ${transaction.status}, ${transaction.amount}, ${tipAmount}, ${taxAmount}, ${transaction.timestamp}, 'USD', ${isGiftCard}, ${emptyJsonObj}::jsonb)
-            ON CONFLICT (square_id) DO NOTHING
-          `);
+          // Try a much simpler approach with prepared statement style
+          // Log the exact values we're using for debugging
+          console.log('Transaction data:', {
+            squareId: transaction.squareId,
+            status: transaction.status,
+            amount: transaction.amount,
+            timestamp: transaction.timestamp,
+            isGiftCard: transaction.categoryId === 'giftCard'
+          });
           
-          // Log every successful insertion for debugging
-          console.log(`Successfully inserted payment for transaction ${transaction.id}`);
-        } catch (insertError) {
-          console.error('Detailed SQL error during payment insert:', insertError);
-          throw new Error(`SQL error: ${insertError.message}`);
+          // Create a simplified insert with all the values explicitly set
+          // This avoids any syntax issues with the SQL template strings
+          const query = `
+            INSERT INTO payments 
+              (square_id, status, amount, tip_amount, tax_amount, timestamp, currency, is_gift_card_activation, metadata)
+            VALUES 
+              ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (square_id) DO NOTHING
+          `;
+          
+          const values = [
+            transaction.squareId,           // $1
+            transaction.status,             // $2
+            transaction.amount,             // $3
+            0,                              // $4 (tip_amount)
+            0,                              // $5 (tax_amount)
+            transaction.timestamp,          // $6
+            'USD',                          // $7
+            transaction.categoryId === 'giftCard', // $8
+            '{}'                            // $9 (empty JSON)
+          ];
+          
+          // Execute with explicit client from pool to use parameterized query
+          await db.execute({
+            text: query,
+            values: values
+          });
+          
+          results.succeeded++;
+          console.log(`Processed transaction ${transaction.id}: ${transaction.squareId}`);
+          
+        } catch (error) {
+          results.failed++;
+          results.errors.push({
+            transactionId: transaction.id,
+            squareId: transaction.squareId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+          console.error(`Error processing transaction ${transaction.id}:`, error);
         }
-        
-        results.succeeded++;
-        console.log(`Synced transaction ${transaction.id} (${transaction.squareId}) to payments table`);
-      } catch (error) {
-        results.failed++;
-        results.errors.push({
-          transactionId: transaction.id,
-          squareId: transaction.squareId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        console.error(`Failed to sync transaction ${transaction.id} (${transaction.squareId}):`, error);
       }
+      
+      console.log(`Reconciliation summary: ${results.succeeded} successful, ${results.failed} failed`);
+      
+      // Record sync in sync_state table with simplified approach
+      const errorDetailsJson = JSON.stringify({
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        succeeded: results.succeeded,
+        failed: results.failed
+      });
+      
+      try {
+        await db.execute(sql`
+          INSERT INTO sync_state 
+            (sync_type, last_synced, record_count, status, error_details)
+          VALUES 
+            ('missing_payments_reconciliation', CURRENT_TIMESTAMP, ${results.succeeded}, 'completed', ${errorDetailsJson}::jsonb)
+        `);
+        console.log('Recorded sync state successfully');
+      } catch (syncError) {
+        console.error('Failed to record sync state:', syncError);
+      }
+      
+    } catch (error) {
+      console.error('Error during payment reconciliation:', error);
+      results.failed++;
+      results.errors.push({
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
     
-    console.log(`Sync complete. Results: ${JSON.stringify(results)}`);
     return results;
   }
 }
