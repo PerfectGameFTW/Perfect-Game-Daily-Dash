@@ -65,8 +65,8 @@ export class SyncService {
   async updateSyncState(id: number, updates: Partial<InsertSyncState>): Promise<SyncState> {
     const result = await db.update(syncState)
       .set({
-        ...updates,
-        updatedAt: new Date()
+        ...updates
+        // Note: There's no updatedAt field in the syncState schema
       })
       .where(eq(syncState.id, id))
       .returning();
@@ -89,10 +89,14 @@ export class SyncService {
     const progress: Record<string, number> = {};
     
     for (const state of states) {
-      if (state.totalItems > 0) {
+      // Using totalCount and processedCount from the schema
+      const totalCount = state.totalCount || 0;
+      const processedCount = state.processedCount || 0;
+      
+      if (totalCount > 0) {
         progress[state.syncType] = Math.min(
           100,
-          Math.round((state.processedItems / state.totalItems) * 100)
+          Math.round((processedCount / totalCount) * 100)
         );
       } else {
         progress[state.syncType] = 0;
@@ -158,7 +162,10 @@ export class SyncService {
             
             // Extract gift card ID (GAN) from Square data
             const squareData = transaction.square_data || {};
-            const sourceId = squareData.sourceId || '';
+            // Safely access sourceId with type checking
+            const squareDataObj = typeof squareData === 'object' && squareData !== null ? squareData : {};
+            // TypeScript: Cast to any to avoid property access errors on unknown type
+            const sourceId = (squareDataObj as any).sourceId || '';
             
             if (!sourceId) {
               result.errors.push({
@@ -169,10 +176,15 @@ export class SyncService {
             }
             
             // Process the redemption
+            // Ensure transaction.id is a number
+            const transactionId = typeof transaction.id === 'number' 
+              ? transaction.id 
+              : (transaction.id ? parseInt(String(transaction.id), 10) : 0);
+              
             const redemptionResult = await giftCardService.processRedemptionFromSquare(
               sourceId,
               transaction.amount,
-              transaction.id,
+              transactionId,
               squareData
             );
             
@@ -203,18 +215,18 @@ export class SyncService {
         
         if (syncState) {
           await this.updateSyncState(syncState.id, {
-            lastSynced: new Date(),
-            recordCount: result.created,
+            lastSyncedAt: new Date(),
+            processedCount: result.created,
             status: 'completed',
-            errorDetails: result.errors.length > 0 ? result.errors : undefined
+            errorMessage: result.errors.length > 0 ? JSON.stringify(result.errors) : undefined
           });
         } else {
           await this.createSyncState({
             syncType: 'gift_card_redemptions',
-            lastSynced: new Date(),
-            recordCount: result.created,
+            lastSyncedAt: new Date(),
+            processedCount: result.created,
             status: 'completed',
-            errorDetails: result.errors.length > 0 ? result.errors : undefined
+            errorMessage: result.errors.length > 0 ? JSON.stringify(result.errors) : undefined
           });
         }
       } catch (syncError) {
@@ -262,24 +274,22 @@ export class SyncService {
       if (!state) {
         state = await this.createSyncState({
           syncType: 'orders',
-          lastSyncDate: null,
-          inProgress: false,
-          processedItems: 0,
-          totalItems: 0,
+          lastSyncedAt: new Date(),
+          isComplete: false,
+          processedCount: 0,
+          totalCount: 0,
           status: 'idle',
-          message: 'Ready to sync',
-          error: null
+          errorMessage: null
         });
       }
       
       // Update state to in progress
       await this.updateSyncState(state.id, {
-        inProgress: true,
+        isComplete: false,
         status: 'in_progress',
-        message: 'Fetching orders from Square API',
-        processedItems: 0,
-        totalItems: 0,
-        error: null
+        processedCount: 0,
+        totalCount: 0,
+        errorMessage: null
       });
       
       // Fetch orders from Square API
@@ -423,24 +433,22 @@ export class SyncService {
       if (!state) {
         state = await this.createSyncState({
           syncType: 'payments',
-          lastSyncDate: null,
-          inProgress: false,
-          processedItems: 0,
-          totalItems: 0,
+          lastSyncedAt: new Date(),
+          isComplete: false,
+          processedCount: 0,
+          totalCount: 0,
           status: 'idle',
-          message: 'Ready to sync',
-          error: null
+          errorMessage: null
         });
       }
       
       // Update state to in progress
       await this.updateSyncState(state.id, {
-        inProgress: true,
+        isComplete: false,
         status: 'in_progress',
-        message: 'Fetching payments from Square API',
-        processedItems: 0,
-        totalItems: 0,
-        error: null
+        processedCount: 0,
+        totalCount: 0,
+        errorMessage: null
       });
       
       // Fetch payments from Square API
@@ -545,13 +553,12 @@ export class SyncService {
       if (!state) {
         state = await this.createSyncState({
           syncType: 'giftCards',
-          lastSyncDate: null,
-          inProgress: false,
-          processedItems: 0,
-          totalItems: 0,
+          lastSyncedAt: new Date(),
+          isComplete: false,
+          processedCount: 0,
+          totalCount: 0,
           status: 'idle',
-          message: 'Ready to sync',
-          error: null
+          errorMessage: null
         });
       }
       

@@ -150,11 +150,14 @@ export class GiftCardService {
       }
       
       // Create redemption record - align with schema
+      // Transaction ID is required by the schema, so we must ensure it has a value
+      const transactionId = typeof paymentId === 'number' ? paymentId : 0;
+      
       const redemptionData: InsertGiftCardRedemption = {
         giftCardId,
         amount,
         timestamp: new Date(),
-        transactionId: paymentId
+        transactionId: transactionId  // Use the definitely-typed transaction ID
       };
       
       await tx.insert(giftCardRedemptions).values(redemptionData);
