@@ -71,27 +71,56 @@ export class PaymentService {
   }
   
   /**
-   * Create a new payment
+   * Create a new payment with dual-table write functionality
+   * 
+   * This method implements the forward-looking solution for the architecture transition:
+   * 1. Writes to the original 'transactions' table for backward compatibility
+   * 2. Simultaneously writes to the new 'payments' table with additional fields
+   * 
+   * This ensures data consistency during the transition period and prevents
+   * future data gaps between the two systems.
    * 
    * @param paymentData The payment data to insert
    * @returns The created payment
    */
   async createPayment(paymentData: InsertTransaction): Promise<Transaction> {
-    // First, insert into the transactions table as before
+    // Validate required payment data
+    if (!paymentData.squareId || !paymentData.amount) {
+      throw new InvalidPaymentDataError('Payment must include squareId and amount', {
+        squareId: paymentData.squareId,
+        amount: paymentData.amount
+      });
+    }
+    
+    // STEP 1: Insert into the transactions table (legacy system)
     const result = await db.insert(transactions).values(paymentData).returning();
     
     if (!result.length) {
-      throw new PaymentError('Failed to create payment', 'DB_ERROR');
+      throw new PaymentError('Failed to create payment in transactions table', 'DB_ERROR');
     }
     
-    // Now also insert into the payments table for the new system
+    // STEP 2: Insert into the payments table (new system)
     try {
       // Extract data from Square transaction to populate payments table
       const squareData = paymentData.squareData || {};
-      // Cast to any to access nested properties
       const squareDataObject = squareData as any;
       
-      // Build payment record based on transaction data
+      // Extract specific fields from Square data with proper type handling
+      const tipAmount = squareDataObject.tipMoney?.amount 
+        ? parseFloat(squareDataObject.tipMoney.amount) / 100 
+        : 0;
+        
+      const taxAmount = squareDataObject.taxMoney?.amount 
+        ? parseFloat(squareDataObject.taxMoney.amount) / 100 
+        : 0;
+      
+      // Currency defaults to USD if not specified
+      const currency = squareDataObject.currency || 'USD';
+      
+      // Determine if this is a gift card activation based on category
+      const isGiftCardActivation = paymentData.categoryId === 'giftCard';
+      
+      // Build payment record with all required fields for the new system
       await db.execute(sql`
         INSERT INTO payments (
           square_id, status, amount, tip_amount, tax_amount, timestamp, 
@@ -100,22 +129,36 @@ export class PaymentService {
           ${paymentData.squareId},
           ${paymentData.status},
           ${paymentData.amount},
-          ${squareDataObject.tipMoney?.amount ? parseFloat(squareDataObject.tipMoney.amount) / 100 : 0},
-          ${squareDataObject.taxMoney?.amount ? parseFloat(squareDataObject.taxMoney.amount) / 100 : 0},
+          ${tipAmount},
+          ${taxAmount},
           ${paymentData.timestamp},
-          ${squareDataObject.currency || 'USD'},
+          ${currency},
           ${squareDataObject.orderId || null},
           ${squareDataObject.receiptUrl || null},
-          ${paymentData.categoryId === 'giftCard'},
+          ${isGiftCardActivation},
           ${JSON.stringify(squareData)}
         )
         ON CONFLICT (square_id) DO NOTHING
       `);
       
-      console.log(`Inserted payment ${paymentData.squareId} into both transactions and payments tables`);
+      console.log(`Successfully wrote payment ${paymentData.squareId} to both transactions and payments tables`);
     } catch (error) {
-      // Log error but don't fail the transaction insert
-      console.error('Failed to insert into payments table:', error);
+      // Log error but don't fail the transaction insert since the primary write succeeded
+      console.error(`Failed to insert payment ${paymentData.squareId} into payments table:`, error);
+      
+      // Record the failure for potential later reconciliation
+      // This ensures we can identify and fix any failures during the transition
+      try {
+        await db.execute(sql`
+          INSERT INTO sync_state (sync_type, last_synced, record_count, status, error_details)
+          VALUES ('payment_dual_write_failure', NOW(), 1, 'failed', ${JSON.stringify({
+            squareId: paymentData.squareId,
+            error: error instanceof Error ? error.message : String(error)
+          })})
+        `);
+      } catch (syncError) {
+        console.error('Failed to record sync failure:', syncError);
+      }
     }
     
     return result[0];
@@ -143,29 +186,28 @@ export class PaymentService {
     
     console.log(`Filtering payments with UTC range: ${start.toISOString()} to ${end.toISOString()}`);
     
-    // Build base query
-    let query = db.select().from(transactions);
-    
-    // If status is provided, use both conditions
-    if (status) {
-      query = query.where(
-        and(
-          between(transactions.timestamp, start, end),
-          eq(transactions.status, status)
-        )
-      );
-    } else {
-      // Otherwise just use date range
-      query = query.where(between(transactions.timestamp, start, end));
-    }
-    
-    // Add ordering and limit
-    query = query.orderBy(desc(transactions.timestamp));
-    
-    // Add limit with a reasonable default
+    // Set a reasonable default limit
     const limitValue = limit && limit > 0 ? limit : 1000;
     
-    return await query;
+    // Use raw SQL to avoid Drizzle ORM typings issues
+    if (status) {
+      // With status filter
+      return await db.execute<Transaction>(sql`
+        SELECT * FROM ${transactions}
+        WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
+          AND ${transactions.status} = ${status}
+        ORDER BY ${transactions.timestamp} DESC
+        LIMIT ${limitValue}
+      `).then(result => result.rows);
+    } else {
+      // Without status filter
+      return await db.execute<Transaction>(sql`
+        SELECT * FROM ${transactions}
+        WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
+        ORDER BY ${transactions.timestamp} DESC
+        LIMIT ${limitValue}
+      `).then(result => result.rows);
+    }
   }
   
   /**
@@ -236,9 +278,25 @@ export class PaymentService {
   /**
    * Synchronize missing payment records from transactions to payments table
    * 
+   * This method is part of the dual-track strategy for architecture transition:
+   * 
+   * 1. RETROSPECTIVE FIX: It addresses the immediate issue of missing records that 
+   *    occurred on March 6, 2025, and any potential future gaps.
+   * 
+   * 2. SPECIFIC PURPOSE: The default date range specifically targets the known data gap
+   *    starting from March 6, 2025 04:13:41 UTC, which is when the architectural 
+   *    transition began.
+   * 
+   * 3. IDEMPOTENT DESIGN: It's designed to be safely run multiple times, using
+   *    NOT EXISTS and ON CONFLICT DO NOTHING to avoid duplicating data.
+   * 
+   * This special reconciliation tool should be run once after deployment to fix
+   * the 37 missing records, and can be used again in the future if similar
+   * gap situations occur.
+   * 
    * @param startDate Optional start date for sync (default: March 6, 2025 04:13:41 UTC)
    * @param endDate Optional end date for sync (default: current time)
-   * @returns Summary of synchronization results
+   * @returns Summary of synchronization results with counts and error details
    */
   async syncMissingPayments(
     startDate: Date = new Date('2025-03-06T04:13:41.000Z'),
@@ -251,19 +309,22 @@ export class PaymentService {
   }> {
     console.log(`Synchronizing missing payments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
     
-    // Get transactions that need to be synced
-    const missingTransactions = await db.select()
-      .from(transactions)
-      .where(
-        and(
-          between(transactions.timestamp, startDate, endDate),
-          sql`NOT EXISTS (
-            SELECT 1 FROM payments 
-            WHERE payments.square_id = ${transactions.squareId}
-          )`
+    // Log the critical information about this operation
+    console.log('RECONCILIATION: This operation specifically targets the architectural transition gap');
+    console.log('IMPORTANT: This is a one-time fix for historical data inconsistency');
+    
+    // Get transactions that need to be synced using raw SQL
+    const missingTransactionsResult = await db.execute<Transaction>(sql`
+      SELECT * FROM ${transactions}
+      WHERE ${transactions.timestamp} BETWEEN ${startDate} AND ${endDate}
+        AND NOT EXISTS (
+          SELECT 1 FROM payments 
+          WHERE payments.square_id = ${transactions.squareId}
         )
-      )
-      .orderBy(asc(transactions.timestamp));
+      ORDER BY ${transactions.timestamp} ASC
+    `);
+    
+    const missingTransactions = missingTransactionsResult.rows;
     
     console.log(`Found ${missingTransactions.length} missing payment records to synchronize`);
     
