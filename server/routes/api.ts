@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { dashboardService } from '../services/dashboardService';
 import { giftCardService } from '../services/giftCardService';
 import { syncService } from '../services/syncService';
+import { paymentService } from '../services/paymentService';
 import { DateRange, dateRangeSchema } from '../../shared/schema';
 
 export function createApiRouter(): Router {
@@ -191,14 +192,20 @@ export function createApiRouter(): Router {
   /**
    * Start Sync API
    * POST /api/sync
-   * Body: { type: "orders" | "payments" | "gift_cards" | "all", startDate?: string, endDate?: string }
+   * Body: { type: "orders" | "payments" | "gift_cards" | "all" | "missing_payments", startDate?: string, endDate?: string }
    */
   router.post('/sync', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const syncSchema = z.object({
-        type: z.enum(['orders', 'payments', 'gift_cards', 'all']),
-        startDate: z.string().optional(),
+        type: z.enum(['orders', 'payments', 'gift_cards', 'all', 'missing_payments']),
+        startDate: z.string().optional()
+          .refine(date => !date || !isNaN(new Date(date).getTime()), {
+            message: "startDate must be a valid date string"
+          }),
         endDate: z.string().optional()
+          .refine(date => !date || !isNaN(new Date(date).getTime()), {
+            message: "endDate must be a valid date string"
+          })
       });
       
       const validatedBody = syncSchema.parse(req.body);
@@ -225,6 +232,14 @@ export function createApiRouter(): Router {
           break;
         case 'gift_cards':
           result = await syncService.syncGiftCards();
+          break;
+        case 'missing_payments':
+          // Sync missing payments from transactions table to payments table
+          const defaultStartDate = new Date('2025-03-06T04:13:41.000Z');
+          result = await paymentService.syncMissingPayments(
+            startDate || defaultStartDate,
+            endDate || new Date()
+          );
           break;
         case 'all':
           // Run all sync operations in parallel
