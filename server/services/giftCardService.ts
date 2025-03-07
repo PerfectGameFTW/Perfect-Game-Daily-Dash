@@ -131,12 +131,16 @@ export class GiftCardService {
       const newBalance = currentBalance - amount;
       const newRedeemedAmount = (currentCard.redeemedAmount || 0) + amount;
       
+      // Create a new object for square data
+      const updatedSquareData = typeof currentCard.squareData === 'object' && currentCard.squareData !== null
+        ? { ...currentCard.squareData, lastRedemptionDate: new Date().toISOString() }
+        : { lastRedemptionDate: new Date().toISOString() };
+
       const updatedCard = await tx.update(giftCards)
         .set({
           amount: newBalance,
           redeemedAmount: newRedeemedAmount,
-          lastRedemptionDate: new Date(),
-          updatedAt: new Date()
+          squareData: updatedSquareData
         })
         .where(eq(giftCards.id, giftCardId))
         .returning();
@@ -145,14 +149,12 @@ export class GiftCardService {
         throw new GiftCardError('Failed to update gift card balance', 'DB_ERROR');
       }
       
-      // Create redemption record
+      // Create redemption record - align with schema
       const redemptionData: InsertGiftCardRedemption = {
         giftCardId,
         amount,
         timestamp: new Date(),
-        paymentId: paymentId || null,
-        orderId: orderId || null,
-        squareData: {}
+        transactionId: paymentId || 0 // Use transaction ID as required by schema
       };
       
       await tx.insert(giftCardRedemptions).values(redemptionData);
@@ -213,10 +215,11 @@ export class GiftCardService {
     `);
     
     // Access the result properly from the raw SQL query results
-    const soldCount = activationsResult.rows?.[0]?.sold_count || 0;
-    const soldAmount = activationsResult.rows?.[0]?.sold_amount || 0;
-    const redeemedCount = redemptionsResult.rows?.[0]?.redeemed_count || 0;
-    const redeemedAmount = redemptionsResult.rows?.[0]?.redeemed_amount || 0;
+    // Convert all values to numbers to avoid type issues
+    const soldCount = parseInt(String(activationsResult.rows?.[0]?.sold_count || '0'), 10) || 0;
+    const soldAmount = parseFloat(String(activationsResult.rows?.[0]?.sold_amount || '0')) || 0;
+    const redeemedCount = parseInt(String(redemptionsResult.rows?.[0]?.redeemed_count || '0'), 10) || 0;
+    const redeemedAmount = parseFloat(String(redemptionsResult.rows?.[0]?.redeemed_amount || '0')) || 0;
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
     
     return {
@@ -263,9 +266,9 @@ export class GiftCardService {
         AND activation_amount > 0
     `);
     
-    // Access the result properly from the raw SQL query result
-    const giftCardSales = result.rows?.[0]?.gift_card_sales || 0;
-    const giftCardCount = result.rows?.[0]?.gift_card_count || 0;
+    // Access the result properly from the raw SQL query result with proper type conversion
+    const giftCardSales = parseFloat(String(result.rows?.[0]?.gift_card_sales || '0')) || 0;
+    const giftCardCount = parseInt(String(result.rows?.[0]?.gift_card_count || '0'), 10) || 0;
     
     console.log(`Gift card sales calculated from database using UTC: {
   dateRange: '${dateRange}',
