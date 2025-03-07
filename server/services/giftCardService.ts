@@ -154,7 +154,7 @@ export class GiftCardService {
         giftCardId,
         amount,
         timestamp: new Date(),
-        transactionId: paymentId || 0 // Use transaction ID as required by schema
+        transactionId: paymentId
       };
       
       await tx.insert(giftCardRedemptions).values(redemptionData);
