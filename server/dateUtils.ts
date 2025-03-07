@@ -86,13 +86,22 @@ export function getEasternDateRange(dateRange: DateRange, inputStartDate?: Date,
     }
   });
 
-  // Parse dates with correct timezone handling
-  const startDate = new Date(`${startStr}T00:00:00-04:00`);
-  const endDate = new Date(`${endStr}T23:59:59.999-04:00`);
+  // Create dates in Eastern Time zone using date-fns-tz for proper DST handling
+  // This avoids hardcoding timezone offsets and lets the library calculate the correct offset
+  const startInEastern = new Date(`${startStr}T00:00:00`);
+  const endInEastern = new Date(`${endStr}T23:59:59.999`);
+  
+  // Format the dates with their correct timezone offsets based on the date
+  const startWithOffset = formatInTimeZone(startInEastern, EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ssXXX");
+  const endWithOffset = formatInTimeZone(endInEastern, EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
+  
+  // Parse into UTC dates for database queries
+  const startDate = new Date(startWithOffset);
+  const endDate = new Date(endWithOffset);
   
   console.log('Converting Eastern dates to UTC:', {
-    startET: `${startStr}T00:00:00-04:00`,
-    endET: `${endStr}T23:59:59.999-04:00`,
+    startET: startWithOffset,
+    endET: endWithOffset,
     startUTC: startDate.toISOString(),
     endUTC: endDate.toISOString()
   });
