@@ -209,7 +209,7 @@ export function createApiRouter(): Router {
   router.post('/sync', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const syncSchema = z.object({
-        type: z.enum(['orders', 'payments', 'gift_cards', 'all', 'missing_payments']),
+        type: z.enum(['orders', 'payments', 'gift_cards', 'gift_card_redemptions', 'all', 'missing_payments']),
         startDate: z.string().optional()
           .refine(date => !date || !isNaN(new Date(date).getTime()), {
             message: "startDate must be a valid date string"
@@ -245,6 +245,11 @@ export function createApiRouter(): Router {
         case 'gift_cards':
           result = await syncService.syncGiftCards();
           break;
+        case 'gift_card_redemptions':
+          console.log('Starting gift card redemption synchronization');
+          result = await syncService.syncGiftCardRedemptions(startDate, endDate);
+          console.log(`Gift card redemption sync completed: ${result.processed} processed, ${result.created} created, ${result.errors.length} errors`);
+          break;
         case 'missing_payments':
           // Special reconciliation tool for the March 6, 2025 architectural transition gap
           // This specifically addresses missing payment records since the transition began
@@ -270,16 +275,18 @@ export function createApiRouter(): Router {
           break;
         case 'all':
           // Run all sync operations in parallel
-          const [ordersResult, paymentsResult, giftCardsResult] = await Promise.all([
+          const [ordersResult, paymentsResult, giftCardsResult, redemptionsResult] = await Promise.all([
             syncService.syncOrders(startDate, endDate),
             syncService.syncPayments(startDate, endDate),
-            syncService.syncGiftCards()
+            syncService.syncGiftCards(),
+            syncService.syncGiftCardRedemptions(startDate, endDate)
           ]);
           
           result = {
             orders: ordersResult,
             payments: paymentsResult,
-            giftCards: giftCardsResult
+            giftCards: giftCardsResult,
+            giftCardRedemptions: redemptionsResult
           };
           break;
       }
@@ -288,12 +295,24 @@ export function createApiRouter(): Router {
       let message = 'Sync started successfully';
       
       // Handle different result formats based on sync type
-      if (validatedBody.type === 'missing_payments' && 'succeeded' in result) {
-        message = `Payment reconciliation completed successfully: ${result.succeeded} records synchronized, ${result.failed} failures`;
-      } else if ('processed' in result) {
-        message = `Sync completed: ${result.processed} processed, ${result.created} created, ${result.updated} updated, ${result.failed} failed`;
-      } else if ('orders' in result) {
-        message = 'All sync operations completed';
+      if (result) {
+        if (validatedBody.type === 'missing_payments' && 'succeeded' in result) {
+          message = `Payment reconciliation completed successfully: ${result.succeeded} records synchronized, ${result.failed} failures`;
+        } else if (validatedBody.type === 'gift_card_redemptions' && 'matched' in result) {
+          message = `Gift card redemption sync completed successfully: ${result.processed} processed, ${result.matched} matched, ${result.created} created, ${result.errors.length} errors`;
+        } else if ('processed' in result) {
+          if ('success' in result && result.success !== undefined) {
+            // Gift card redemption result format
+            message = `Sync completed: ${result.processed} processed, ${result.created} created`;
+          } else {
+            // Standard sync result format for orders, payments, gift cards
+            const updated = 'updated' in result ? result.updated : 0;
+            const failed = 'failed' in result ? result.failed : 0;
+            message = `Sync completed: ${result.processed} processed, ${result.created} created, ${updated} updated, ${failed} failed`;
+          }
+        } else if ('orders' in result) {
+          message = 'All sync operations completed';
+        }
       }
       
       res.json({
