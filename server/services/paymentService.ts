@@ -101,47 +101,65 @@ export class PaymentService {
     
     // STEP 2: Insert into the payments table (new system)
     try {
-      // Extract data from Square transaction to populate payments table
+      // Extract data from Square transaction
       const squareData = paymentData.squareData || {};
       const squareDataObject = squareData as any;
       
-      // Extract specific fields from Square data with proper type handling
-      const tipAmount = squareDataObject.tipMoney?.amount 
-        ? parseFloat(squareDataObject.tipMoney.amount) / 100 
-        : 0;
-        
-      const taxAmount = squareDataObject.taxMoney?.amount 
-        ? parseFloat(squareDataObject.taxMoney.amount) / 100 
-        : 0;
-      
-      // Currency defaults to USD if not specified
-      const currency = squareDataObject.currency || 'USD';
-      
-      // Determine if this is a gift card activation based on category
-      const isGiftCardActivation = paymentData.categoryId === 'giftCard';
-      
-      // Build payment record with all required fields for the new system
-      await db.execute(sql`
-        INSERT INTO payments (
-          square_id, status, amount, tip_amount, tax_amount, timestamp, 
-          currency, square_order_id, receipt_url, is_gift_card_activation, metadata
-        ) VALUES (
-          ${paymentData.squareId},
-          ${paymentData.status},
-          ${paymentData.amount},
-          ${tipAmount},
-          ${taxAmount},
-          ${paymentData.timestamp},
-          ${currency},
-          ${squareDataObject.orderId || null},
-          ${squareDataObject.receiptUrl || null},
-          ${isGiftCardActivation},
-          ${JSON.stringify(squareData)}
+      // Use a direct SQL approach to insert into payments table
+      // This is similar to our reconciliation function which we know works
+      const paymentInsertResult = await db.execute(sql`
+        WITH inserted_payment AS (
+          INSERT INTO payments 
+            (square_id, status, amount, tip_amount, tax_amount, timestamp, currency, is_gift_card_activation, metadata)
+          SELECT 
+            ${paymentData.squareId},
+            ${paymentData.status},
+            ${paymentData.amount},
+            0,
+            0,
+            ${paymentData.timestamp},
+            'USD',
+            ${paymentData.categoryId === 'giftCard'},
+            ${JSON.stringify(squareData)}::jsonb
+          WHERE NOT EXISTS (
+            SELECT 1 FROM payments WHERE square_id = ${paymentData.squareId}
+          )
+          RETURNING id
         )
-        ON CONFLICT (square_id) DO NOTHING
+        SELECT COUNT(*) AS inserted FROM inserted_payment
       `);
       
-      console.log(`Successfully wrote payment ${paymentData.squareId} to both transactions and payments tables`);
+      // Check if we successfully inserted a new payment
+      const inserted = parseInt(paymentInsertResult.rows?.[0]?.inserted?.toString() || '0', 10) > 0;
+      
+      if (inserted) {
+        console.log(`Successfully wrote NEW payment ${paymentData.squareId} to both transactions and payments tables`);
+      } else {
+        console.log(`Payment ${paymentData.squareId} already exists in payments table, skipped insertion`);
+      }
+      
+      // Record the dual-write in the sync state table for audit
+      try {
+        await db.execute(sql`
+          INSERT INTO sync_state (
+            sync_type, last_synced, record_count, status, error_details
+          ) VALUES (
+            'payment_dual_write', 
+            CURRENT_TIMESTAMP, 
+            1, 
+            'completed',
+            ${JSON.stringify({
+              squareId: paymentData.squareId,
+              timestamp: new Date().toISOString(),
+              alreadyExisted: !inserted
+            })}::jsonb
+          )
+        `);
+      } catch (syncError) {
+        // Non-critical error, just log it
+        console.warn('Failed to record successful dual-write:', syncError);
+      }
+      
     } catch (error) {
       // Log error but don't fail the transaction insert since the primary write succeeded
       console.error(`Failed to insert payment ${paymentData.squareId} into payments table:`, error);
@@ -150,15 +168,36 @@ export class PaymentService {
       // This ensures we can identify and fix any failures during the transition
       try {
         await db.execute(sql`
-          INSERT INTO sync_state (sync_type, last_synced, record_count, status, error_details)
-          VALUES ('payment_dual_write_failure', NOW(), 1, 'failed', ${JSON.stringify({
-            squareId: paymentData.squareId,
-            error: error instanceof Error ? error.message : String(error)
-          })})
+          INSERT INTO sync_state (
+            sync_type, last_synced, record_count, status, error_details
+          ) VALUES (
+            'payment_dual_write_failure', 
+            CURRENT_TIMESTAMP, 
+            1, 
+            'failed',
+            ${JSON.stringify({
+              squareId: paymentData.squareId,
+              error: error instanceof Error ? error.message : String(error),
+              timestamp: new Date().toISOString()
+            })}::jsonb
+          )
         `);
       } catch (syncError) {
         console.error('Failed to record sync failure:', syncError);
       }
+      
+      // Schedule an automatic reconciliation attempt to fix this payment later
+      setTimeout(async () => {
+        try {
+          console.log(`Attempting auto-reconciliation for failed payment ${paymentData.squareId}`);
+          await this.syncMissingPayments(
+            new Date(paymentData.timestamp.getTime() - 60 * 1000), // 1 minute before
+            new Date(paymentData.timestamp.getTime() + 60 * 1000)  // 1 minute after
+          );
+        } catch (reconcileError) {
+          console.error('Auto-reconciliation failed:', reconcileError);
+        }
+      }, 5000); // Try after 5 seconds
     }
     
     return result[0];
@@ -322,90 +361,81 @@ export class PaymentService {
     };
     
     try {
-      // Step 1: Find transactions in the date range
-      const transactionsResult = await db.select()
-        .from(transactions)
-        .where(
-          and(
-            between(transactions.timestamp, startDate, endDate)
-          )
+      // Step 1: Count the total number of transactions in the date range
+      const countResult = await db.execute(sql`
+        SELECT COUNT(*) as total FROM transactions
+        WHERE timestamp BETWEEN ${startDate} AND ${endDate}
+      `);
+      
+      // Safely access the first row and handle the result properly for TypeScript
+      const totalCount = parseInt(countResult.rows?.[0]?.total?.toString() || '0', 10);
+      results.totalProcessed = totalCount;
+      
+      console.log(`Found ${totalCount} transactions in the date range`);
+      
+      // Step 2: Use a direct SQL approach to insert all missing records at once
+      // This is much more efficient and avoids potential syntax issues with individual inserts
+      const insertResult = await db.execute(sql`
+        WITH inserted_rows AS (
+          INSERT INTO payments 
+            (square_id, status, amount, tip_amount, tax_amount, timestamp, currency, is_gift_card_activation, metadata)
+          SELECT 
+            t.square_id,
+            t.status,
+            t.amount,
+            0,
+            0,
+            t.timestamp,
+            'USD',
+            (t.category_id = 'giftCard'),
+            '{}'::jsonb
+          FROM transactions t
+          WHERE 
+            t.timestamp BETWEEN ${startDate} AND ${endDate}
+            AND NOT EXISTS (
+              SELECT 1 FROM payments p WHERE p.square_id = t.square_id
+            )
+          RETURNING square_id
         )
-        .orderBy(asc(transactions.timestamp));
+        SELECT COUNT(*) as inserted_count FROM inserted_rows
+      `);
       
-      console.log(`Found ${transactionsResult.length} transactions in date range`);
-      results.totalProcessed = transactionsResult.length;
+      // Get the count of inserted rows with proper TypeScript handling
+      const insertedCount = parseInt(insertResult.rows?.[0]?.inserted_count?.toString() || '0', 10);
+      results.succeeded = insertedCount;
       
-      // Step 2: For each transaction, check if it exists in payments and insert if not
-      for (const transaction of transactionsResult) {
-        try {
-          // Try a much simpler approach with prepared statement style
-          // Log the exact values we're using for debugging
-          console.log('Transaction data:', {
-            squareId: transaction.squareId,
-            status: transaction.status,
-            amount: transaction.amount,
-            timestamp: transaction.timestamp,
-            isGiftCard: transaction.categoryId === 'giftCard'
-          });
-          
-          // Create a simplified insert with all the values explicitly set
-          // This avoids any syntax issues with the SQL template strings
-          const query = `
-            INSERT INTO payments 
-              (square_id, status, amount, tip_amount, tax_amount, timestamp, currency, is_gift_card_activation, metadata)
-            VALUES 
-              ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (square_id) DO NOTHING
-          `;
-          
-          const values = [
-            transaction.squareId,           // $1
-            transaction.status,             // $2
-            transaction.amount,             // $3
-            0,                              // $4 (tip_amount)
-            0,                              // $5 (tax_amount)
-            transaction.timestamp,          // $6
-            'USD',                          // $7
-            transaction.categoryId === 'giftCard', // $8
-            '{}'                            // $9 (empty JSON)
-          ];
-          
-          // Execute with explicit client from pool to use parameterized query
-          await db.execute({
-            text: query,
-            values: values
-          });
-          
-          results.succeeded++;
-          console.log(`Processed transaction ${transaction.id}: ${transaction.squareId}`);
-          
-        } catch (error) {
-          results.failed++;
-          results.errors.push({
-            transactionId: transaction.id,
-            squareId: transaction.squareId,
-            error: error instanceof Error ? error.message : String(error)
-          });
-          console.error(`Error processing transaction ${transaction.id}:`, error);
-        }
-      }
+      console.log(`Successfully inserted ${insertedCount} missing payment records`);
       
-      console.log(`Reconciliation summary: ${results.succeeded} successful, ${results.failed} failed`);
+      // Step 3: Now verify the total count in the payments table
+      const verifyResult = await db.execute(sql`
+        SELECT COUNT(*) as synced_count FROM payments p
+        JOIN transactions t ON p.square_id = t.square_id
+        WHERE t.timestamp BETWEEN ${startDate} AND ${endDate}
+      `);
       
-      // Record sync in sync_state table with simplified approach
-      const errorDetailsJson = JSON.stringify({
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        succeeded: results.succeeded,
-        failed: results.failed
-      });
+      // Safely access the row and properly handle type conversion for TypeScript
+      const syncedCount = parseInt(verifyResult.rows?.[0]?.synced_count?.toString() || '0', 10);
       
+      console.log(`Verification: ${syncedCount} of ${totalCount} transactions now have corresponding payment records`);
+      
+      // Record this reconciliation in the sync_state table for audit purposes
       try {
         await db.execute(sql`
-          INSERT INTO sync_state 
-            (sync_type, last_synced, record_count, status, error_details)
-          VALUES 
-            ('missing_payments_reconciliation', CURRENT_TIMESTAMP, ${results.succeeded}, 'completed', ${errorDetailsJson}::jsonb)
+          INSERT INTO sync_state (
+            sync_type, last_synced, record_count, status, error_details
+          ) VALUES (
+            'missing_payments_reconciliation', 
+            CURRENT_TIMESTAMP, 
+            ${insertedCount}, 
+            'completed',
+            ${JSON.stringify({
+              startDate: startDate.toISOString(),
+              endDate: endDate.toISOString(),
+              totalTransactions: totalCount,
+              insertedPayments: insertedCount,
+              totalSynced: syncedCount
+            })}::jsonb
+          )
         `);
         console.log('Recorded sync state successfully');
       } catch (syncError) {
@@ -414,10 +444,31 @@ export class PaymentService {
       
     } catch (error) {
       console.error('Error during payment reconciliation:', error);
-      results.failed++;
+      results.failed = 1;
       results.errors.push({
         error: error instanceof Error ? error.message : String(error)
       });
+      
+      // Try to record the error in sync_state table
+      try {
+        await db.execute(sql`
+          INSERT INTO sync_state (
+            sync_type, last_synced, record_count, status, error_details
+          ) VALUES (
+            'missing_payments_reconciliation_error', 
+            CURRENT_TIMESTAMP, 
+            0, 
+            'failed',
+            ${JSON.stringify({
+              startDate: startDate.toISOString(),
+              endDate: endDate.toISOString(),
+              error: error instanceof Error ? error.message : String(error)
+            })}::jsonb
+          )
+        `);
+      } catch (syncError) {
+        console.error('Failed to record sync error:', syncError);
+      }
     }
     
     return results;
