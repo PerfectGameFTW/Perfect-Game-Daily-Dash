@@ -48,6 +48,7 @@ class PgStorage implements IStorage {
     console.log(`Filtering transactions with UTC range: ${startUTC} to ${endUTC}`);
     
     // For direct SQL debugging when "today" is requested
+    // Extended debugging to query by hour to identify where the issue is
     if (dateRange === 'today') {
       const debugResult = await db.execute(sql`
         SELECT COUNT(*), SUM(amount) 
@@ -62,12 +63,36 @@ class PgStorage implements IStorage {
         sum: debugResult.rows[0]?.sum || 0,
         dateRange,
         startUTC,
-        endUTC
+        endUTC,
+        status
       });
+      
+      // Add debug query to check hourly breakdown
+      const hourlyBreakdown = await db.execute(sql`
+        SELECT 
+          EXTRACT(HOUR FROM timestamp) as hour,
+          COUNT(*) as count,
+          SUM(amount) as total
+        FROM 
+          transactions
+        WHERE 
+          timestamp >= ${startUTC}::timestamp
+          AND timestamp <= ${endUTC}::timestamp
+          ${status ? sql` AND status = ${status}` : sql``}
+        GROUP BY 
+          EXTRACT(HOUR FROM timestamp)
+        ORDER BY 
+          hour
+      `);
+      
+      console.log('HOURLY BREAKDOWN FOR TODAY:');
+      for (const row of hourlyBreakdown.rows) {
+        console.log(`Hour ${row.hour}: Count ${row.count}, Total ${row.total}`);
+      }
       
       // Get some sample transactions in this range to see what's included
       const sampleResult = await db.execute(sql`
-        SELECT id, square_id, timestamp, amount, status
+        SELECT id, square_id, timestamp, amount, status, category
         FROM transactions
         WHERE timestamp >= ${startUTC}::timestamp
           AND timestamp <= ${endUTC}::timestamp
@@ -83,6 +108,7 @@ class PgStorage implements IStorage {
             id: row.id,
             timestamp: row.timestamp,
             amount: row.amount,
+            category: row.category,
             status: row.status,
             eastern: formatInTimeZone(new Date(row.timestamp as string), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
           });
