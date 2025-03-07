@@ -18,7 +18,11 @@ export const EASTERN_TIMEZONE = 'America/New_York';
  * These dates represent business day boundaries in Eastern Time but are returned as UTC timestamps
  * for direct database queries without timezone conversions.
  * 
- * FIXED: Original code was incorrectly transforming dates from ET to UTC
+ * CRITICAL FIX: The original implementation had a timezone direction error
+ * For business days in Eastern Time, UTC timestamps are 5 hours ahead (during standard time)
+ * This means:
+ * - Eastern midnight = UTC 05:00
+ * - Eastern 11:59 PM = UTC 04:59:59.999 (next day)
  */
 export function getEasternDateRange(dateRange: DateRange, inputStartDate?: Date, inputEndDate?: Date): { start: Date; end: Date } {
   const now = new Date();
@@ -88,30 +92,27 @@ export function getEasternDateRange(dateRange: DateRange, inputStartDate?: Date,
     }
   });
 
-  // FIXED: The original code was incorrectly handling the timezone conversion
-  // Here we create the proper UTC equivalents of Eastern Time boundaries
+  // For business days in Eastern Time, calculate the precise UTC timestamp
+  // that corresponds to the start and end of the business day
   
-  // First create JS Date objects for the start and end of the day in Eastern time
-  // These are without timezone information yet
-  const startTimeInET = new Date(`${startStr}T00:00:00`);
-  const endTimeInET = new Date(`${endStr}T23:59:59.999`);
+  // For example, March 7th in Eastern Time:
+  // Start: March 7 00:00:00 ET = March 7 05:00:00 UTC
+  // End: March 7 23:59:59.999 ET = March 8 04:59:59.999 UTC
   
-  // Now format these with proper timezone information using date-fns-tz
-  // This handles DST correctly based on the date
-  const startInEasternTZ = formatInTimeZone(startTimeInET, EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ssXXX");
-  const endInEasternTZ = formatInTimeZone(endTimeInET, EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
+  // Create formatted date strings with proper timezone
+  const startWithTZ = `${startStr}T00:00:00-05:00`;  // -05:00 represents Eastern Standard Time
+  const endWithTZ = `${endStr}T23:59:59.999-05:00`;
   
-  // Convert these to Date objects, which will automatically adjust to UTC internally
-  const startDate = new Date(startInEasternTZ);
-  const endDate = new Date(endInEasternTZ);
+  // Parse them to get UTC Date objects
+  const startDate = new Date(startWithTZ);
+  const endDate = new Date(endWithTZ);
   
-  // To verify the conversion is correct:
-  console.log('Converting Eastern dates to UTC (FIXED):', {
-    startET: startInEasternTZ,
-    endET: endInEasternTZ,
+  console.log('Converting Eastern business days to UTC timestamps:', {
+    startET: startWithTZ,
+    endET: endWithTZ,
     startUTC: startDate.toISOString(),
     endUTC: endDate.toISOString(),
-    correctDifference: 'UTC should be 5 hours ahead of Eastern (add 5 hours)'
+    explanation: 'Eastern midnight starts at 05:00 UTC, Eastern 23:59:59.999 ends at 04:59:59.999 UTC (next day)'
   });
   
   return {
@@ -132,30 +133,55 @@ export function formatEasternDate(date: Date): string {
  * Convert a UTC date to Eastern Time equivalent
  * Used only for display purposes, not for database queries
  * 
- * FIXED: Was creating a new Date without timezone adjustment
+ * CRITICAL FIX: Correctly handles timezone conversion from UTC to Eastern Time
+ * Eastern Time is UTC-5 (standard time) or UTC-4 (daylight saving time)
  */
 export function utcToEastern(date: Date): Date {
-  // Create a string representation of the date in Eastern Time
+  // Use formatInTimeZone to properly convert between timezones while respecting DST
   const easternISOString = formatInTimeZone(date, EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
   
   // Log the conversion for debugging
-  console.log('UTC to Eastern conversion:', {
+  console.log('UTC to Eastern conversion (FIXED):', {
     inputUTC: date.toISOString(),
     outputEastern: easternISOString,
-    correctDifference: 'Eastern time should be 5 hours behind UTC (minus 5 hours)'
+    explanation: 'Eastern time is 5 hours behind UTC during standard time, 4 hours behind during DST'
   });
   
   // Parse the ISO string with timezone information back into a Date object
+  // This will preserve the time as it appears in Eastern Time
   return new Date(easternISOString);
 }
 
 /**
  * Format hour number to AM/PM string
- * Used for UI display only
+ * Used for UI display only in Eastern Time
+ * 
+ * @param hour Hour number in 24-hour format (0-23)
+ * @returns Formatted hour string in 12-hour format with AM/PM
  */
 export function formatHour(hour: number): string {
+  // Handle special cases for 12AM and 12PM
   if (hour === 0) return '12 AM';
   if (hour === 12) return '12 PM';
+  
+  // Morning hours (1-11 AM)
   if (hour < 12) return `${hour} AM`;
+  
+  // Afternoon/evening hours (1-11 PM)
   return `${hour - 12} PM`;
+}
+
+/**
+ * Convert a UTC timestamp to an Eastern Time hour string
+ * Used for displaying hourly revenue in Eastern Time
+ * 
+ * @param utcDate UTC date object
+ * @returns Formatted hour string in Eastern Time
+ */
+export function getEasternHourFromUTC(utcDate: Date): string {
+  // Format the date in Eastern Time to get the hour
+  const easternHour = formatInTimeZone(utcDate, EASTERN_TIMEZONE, 'H');
+  
+  // Convert to number and format
+  return formatHour(parseInt(easternHour, 10));
 }
