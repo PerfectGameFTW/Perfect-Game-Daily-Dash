@@ -50,6 +50,29 @@ class PgStorage implements IStorage {
     // For direct SQL debugging when "today" is requested
     // Extended debugging to query by hour to identify where the issue is
     if (dateRange === 'today') {
+      const fullDebugResult = await db.execute(sql`
+        SELECT 
+          id, 
+          square_id, 
+          timestamp, 
+          amount, 
+          status 
+        FROM transactions
+        WHERE timestamp >= ${startUTC}::timestamp
+          AND timestamp <= ${endUTC}::timestamp
+          AND status = 'completed'
+        ORDER BY timestamp
+      `);
+      
+      console.log(`CRITICAL ISSUE - TODAY HAS ${fullDebugResult.rows.length} TRANSACTIONS`);
+      
+      // Calculate the actual sum to verify
+      let totalSum = 0;
+      for (const row of fullDebugResult.rows) {
+        totalSum += parseFloat(row.amount);
+      }
+      console.log(`MANUAL SUM OF TODAY'S TRANSACTIONS: $${totalSum.toFixed(2)}`);
+      
       const debugResult = await db.execute(sql`
         SELECT COUNT(*), SUM(amount) 
         FROM transactions
@@ -64,7 +87,8 @@ class PgStorage implements IStorage {
         dateRange,
         startUTC,
         endUTC,
-        status
+        status,
+        manualSum: totalSum
       });
       
       // Add debug query to check hourly breakdown
