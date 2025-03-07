@@ -284,10 +284,16 @@ export function createApiRouter(): Router {
           break;
       }
       
-      // Create a response message based on the sync type
+      // Create a response message based on the sync type and result format
       let message = 'Sync started successfully';
-      if (validatedBody.type === 'missing_payments') {
+      
+      // Handle different result formats based on sync type
+      if (validatedBody.type === 'missing_payments' && 'succeeded' in result) {
         message = `Payment reconciliation completed successfully: ${result.succeeded} records synchronized, ${result.failed} failures`;
+      } else if ('processed' in result) {
+        message = `Sync completed: ${result.processed} processed, ${result.created} created, ${result.updated} updated, ${result.failed} failed`;
+      } else if ('orders' in result) {
+        message = 'All sync operations completed';
       }
       
       res.json({

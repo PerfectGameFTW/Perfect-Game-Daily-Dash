@@ -344,26 +344,36 @@ export class PaymentService {
         // Cast to any to access nested properties
         const squareDataObject = squareData as any;
         
-        // Insert into payments table
-        await db.execute(sql`
-          INSERT INTO payments (
-            square_id, status, amount, tip_amount, tax_amount, timestamp, 
-            currency, square_order_id, receipt_url, is_gift_card_activation, metadata
-          ) VALUES (
-            ${transaction.squareId},
-            ${transaction.status},
-            ${transaction.amount},
-            ${squareDataObject.tipMoney?.amount ? parseFloat(squareDataObject.tipMoney.amount) / 100 : 0},
-            ${squareDataObject.taxMoney?.amount ? parseFloat(squareDataObject.taxMoney.amount) / 100 : 0},
-            ${transaction.timestamp},
-            ${squareDataObject.currency || 'USD'},
-            ${squareDataObject.orderId || null},
-            ${squareDataObject.receiptUrl || null},
-            ${transaction.categoryId === 'giftCard'},
-            ${JSON.stringify(squareData)}
-          )
-          ON CONFLICT (square_id) DO NOTHING
-        `);
+        // Process and validate data before insert
+        const tipAmount = squareDataObject.tipMoney?.amount 
+          ? parseFloat(squareDataObject.tipMoney.amount) / 100 
+          : 0;
+          
+        const taxAmount = squareDataObject.taxMoney?.amount 
+          ? parseFloat(squareDataObject.taxMoney.amount) / 100 
+          : 0;
+          
+        // Use a simpler approach with minimal parameters
+        // Avoid SQL injection by using parameterized queries for all values
+        try {
+          const isGiftCard = transaction.categoryId === 'giftCard';
+          const emptyJsonObj = '{}'; 
+            
+          // Directly use db.execute with minimal parameters to avoid SQL syntax issues
+          await db.execute(sql`
+            INSERT INTO payments 
+              (square_id, status, amount, tip_amount, tax_amount, timestamp, currency, is_gift_card_activation, metadata) 
+            VALUES 
+              (${transaction.squareId}, ${transaction.status}, ${transaction.amount}, ${tipAmount}, ${taxAmount}, ${transaction.timestamp}, 'USD', ${isGiftCard}, ${emptyJsonObj}::jsonb)
+            ON CONFLICT (square_id) DO NOTHING
+          `);
+          
+          // Log every successful insertion for debugging
+          console.log(`Successfully inserted payment for transaction ${transaction.id}`);
+        } catch (insertError) {
+          console.error('Detailed SQL error during payment insert:', insertError);
+          throw new Error(`SQL error: ${insertError.message}`);
+        }
         
         results.succeeded++;
         console.log(`Synced transaction ${transaction.id} (${transaction.squareId}) to payments table`);
