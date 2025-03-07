@@ -113,8 +113,7 @@ export class GiftCardService {
       // Get the gift card with locking for update
       const giftCard = await tx.select().from(giftCards)
         .where(eq(giftCards.id, giftCardId))
-        .limit(1)
-        .forUpdate();
+        .limit(1);
       
       if (!giftCard.length) {
         throw new GiftCardNotFoundError(giftCardId);

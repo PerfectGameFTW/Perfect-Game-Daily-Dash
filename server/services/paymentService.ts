@@ -200,6 +200,49 @@ export class PaymentService {
       }, 5000); // Try after 5 seconds
     }
     
+    // STEP 3: Process gift card redemption if this payment was made with a gift card
+    try {
+      // Extract the Square data to check for gift card redemption
+      const squareData = paymentData.squareData || {};
+      const squareDataObj = squareData as any;
+      
+      // Check if this was a payment made using a gift card
+      const isGiftCardRedemption = squareDataObj.isGiftCardRedemption === true;
+      const sourceId = squareDataObj.sourceId;
+      
+      if (isGiftCardRedemption && sourceId) {
+        // Import the giftCardService to avoid circular dependency
+        const { giftCardService } = await import('./giftCardService');
+        
+        console.log(`Processing gift card redemption for payment ${paymentData.squareId}`, {
+          sourceId, 
+          amount: paymentData.amount,
+          paymentId: result[0].id
+        });
+        
+        // Process the redemption using our new method
+        const redemptionResult = await giftCardService.processRedemptionFromSquare(
+          sourceId,
+          paymentData.amount,
+          result[0].id,
+          squareData
+        );
+        
+        if (redemptionResult) {
+          console.log(`Successfully processed gift card redemption for payment ${paymentData.squareId}`, {
+            giftCardId: redemptionResult.id,
+            gan: redemptionResult.gan,
+            remainingBalance: redemptionResult.amount
+          });
+        } else {
+          console.warn(`Could not find matching gift card for redemption: sourceId=${sourceId}, payment=${paymentData.squareId}`);
+        }
+      }
+    } catch (redemptionError) {
+      console.error('Error processing gift card redemption:', redemptionError);
+      // Non-critical error, continue with the operation since the payment was saved
+    }
+    
     return result[0];
   }
   
