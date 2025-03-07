@@ -326,7 +326,7 @@ export class PaymentService {
    * @param dateRange The date range type (today, yesterday, etc.)
    * @param startDate Optional custom start date for custom ranges
    * @param endDate Optional custom end date for custom ranges
-   * @returns Array of hourly revenue data
+   * @returns Array of hourly revenue data with all 24 hours populated
    */
   async getHourlyRevenue(
     dateRange: DateRange,
@@ -335,6 +335,11 @@ export class PaymentService {
   ): Promise<{ hour: string, amount: number }[]> {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    
+    console.log(`Getting hourly revenue with UTC dates: {
+  startUTC: '${start.toISOString()}',
+  endUTC: '${end.toISOString()}'
+}`);
     
     // Query the database for hourly revenue
     // This complex query extracts the hour from the timestamp in Eastern time
@@ -350,11 +355,43 @@ export class PaymentService {
       ORDER BY hour
     `);
     
-    // Format hours as strings like "12 AM", "1 PM", etc.
-    return result.rows.map(row => ({
-      hour: formatHour(row.hour),
-      amount: row.amount
+    console.log(`Raw hourly revenue query returned ${result.rows.length} rows`);
+    
+    // Create a map to hold all 24 hours with their amounts
+    const hourlyData: Record<number, number> = {};
+    
+    // Initialize all hours with zero
+    for (let i = 0; i < 24; i++) {
+      hourlyData[i] = 0;
+    }
+    
+    // Populate with actual data where available
+    for (const row of result.rows) {
+      hourlyData[row.hour] = row.amount;
+    }
+    
+    // Convert to array and format hours as strings like "12 AM", "1 PM", etc.
+    const hourlyRevenue = Object.entries(hourlyData).map(([hour, amount]) => ({
+      hour: formatHour(parseInt(hour, 10)),
+      amount
     }));
+    
+    // Sort by hour (0-23)
+    hourlyRevenue.sort((a, b) => {
+      const hourA = a.hour.includes('AM') 
+        ? (a.hour === '12 AM' ? 0 : parseInt(a.hour.split(' ')[0], 10))
+        : (a.hour === '12 PM' ? 12 : parseInt(a.hour.split(' ')[0], 10) + 12);
+      
+      const hourB = b.hour.includes('AM')
+        ? (b.hour === '12 AM' ? 0 : parseInt(b.hour.split(' ')[0], 10))
+        : (b.hour === '12 PM' ? 12 : parseInt(b.hour.split(' ')[0], 10) + 12);
+      
+      return hourA - hourB;
+    });
+    
+    console.log(`Returning ${hourlyRevenue.length} hourly revenue entries with all hours populated`);
+    
+    return hourlyRevenue;
   }
   
   /**

@@ -138,6 +138,18 @@ export class DashboardService {
     startDate?: Date,
     endDate?: Date
   ): Promise<HourlyRevenue[]> {
+    // First try to get hourly revenue from payment service (transactions)
+    // This ensures we get revenue data even if we don't have orders
+    const paymentHourlyRevenue = await paymentService.getHourlyRevenue(dateRange, startDate, endDate);
+    
+    // If we have payment data, return it
+    if (paymentHourlyRevenue && paymentHourlyRevenue.length > 0) {
+      console.log(`Found ${paymentHourlyRevenue.length} hourly revenue entries from payment service`);
+      return paymentHourlyRevenue;
+    }
+    
+    // Fallback to order service if payment service returns no data
+    console.log('No hourly revenue data from payment service, falling back to order service');
     return await orderService.getHourlyRevenue(dateRange, startDate, endDate);
   }
   
@@ -203,24 +215,28 @@ export class DashboardService {
     
     // Calculate values from payments
     for (const payment of payments) {
-      // Extract category from metadata if available
-      const metadata = payment.metadata as any;
+      // Extract category and other details from squareData
+      const squareData = payment.squareData ? (typeof payment.squareData === 'string' 
+        ? JSON.parse(payment.squareData) 
+        : payment.squareData as Record<string, any>) : {};
       
       // Process based on type
-      if (metadata?.category === 'partywirks') {
+      if (squareData.category === 'partywirks') {
         partywirks += payment.amount;
-      } else if (metadata?.category === 'tripleseat') {
+      } else if (squareData.category === 'tripleseat') {
         tripleseat += payment.amount;
       }
       
-      // Add tips
-      if (payment.tipAmount) {
-        tips += payment.tipAmount;
+      // Add tips - extract from squareData if available
+      const tipAmount = squareData.tipAmount || 0;
+      if (tipAmount) {
+        tips += tipAmount;
       }
       
-      // Add taxes
-      if (payment.taxAmount) {
-        taxes += payment.taxAmount;
+      // Add taxes - extract from squareData if available
+      const taxAmount = squareData.taxAmount || 0;
+      if (taxAmount) {
+        taxes += taxAmount;
       }
       
       // Process refunds (negative amounts)
