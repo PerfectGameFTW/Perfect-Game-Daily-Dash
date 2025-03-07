@@ -324,6 +324,90 @@ export class GiftCardService {
     
     return result.rowCount || 0;
   }
+
+  /**
+   * Process a gift card redemption from a Square payment
+   * 
+   * This method handles the linking between a Square payment made using a gift card
+   * and the corresponding gift card record in our database. It:
+   * 1. Finds the gift card by its GAN (Gift Account Number)
+   * 2. Creates a redemption record
+   * 3. Updates the gift card balance
+   * 
+   * @param sourceId The Square gift card ID (GAN)
+   * @param amount The redemption amount
+   * @param paymentId The database ID of the payment/transaction
+   * @param squareData Additional Square payment data
+   * @returns The processed gift card or null if gift card not found
+   */
+  async processRedemptionFromSquare(
+    sourceId: string,
+    amount: number,
+    paymentId: number,
+    squareData: any = {}
+  ): Promise<GiftCard | null> {
+    try {
+      // Step 1: Find the gift card by GAN (Gift Account Number)
+      // First try exact match on squareId
+      let giftCard: GiftCard | undefined;
+      
+      try {
+        // Try to find by square ID first
+        giftCard = await db.select().from(giftCards)
+          .where(eq(giftCards.squareId, sourceId))
+          .limit(1)
+          .then(results => results[0]);
+      } catch (error) {
+        console.log(`Gift card not found by squareId ${sourceId}`, error);
+      }
+      
+      // If not found by squareId, try GAN
+      if (!giftCard) {
+        try {
+          giftCard = await db.select().from(giftCards)
+            .where(eq(giftCards.gan, sourceId))
+            .limit(1)
+            .then(results => results[0]);
+        } catch (error) {
+          console.log(`Gift card not found by gan ${sourceId}`, error);
+        }
+      }
+      
+      // If still not found, try searching in the squareData JSON
+      if (!giftCard) {
+        try {
+          // This is a more complex query to search in JSON data
+          const cards = await db.execute(sql`
+            SELECT * FROM gift_cards
+            WHERE square_data::text LIKE ${`%${sourceId}%`}
+            LIMIT 1
+          `);
+          
+          if (cards.rows && cards.rows.length > 0) {
+            giftCard = cards.rows[0] as GiftCard;
+          }
+        } catch (error) {
+          console.log(`Error searching for gift card in square_data: ${sourceId}`, error);
+        }
+      }
+      
+      // If gift card is still not found, log and return null
+      if (!giftCard) {
+        console.log(`Could not find gift card with ID/GAN: ${sourceId}`);
+        return null;
+      }
+      
+      // Step 2: Process the redemption
+      return await this.processRedemption(
+        giftCard.id,
+        amount,
+        paymentId
+      );
+    } catch (error) {
+      console.error('Error processing gift card redemption from Square payment:', error);
+      return null;
+    }
+  }
 }
 
 // Create and export a singleton instance
