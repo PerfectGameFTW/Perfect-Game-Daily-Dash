@@ -55,14 +55,15 @@ export function requireAdmin(req: Request & { session?: { userId?: number } }, r
 
 /**
  * Creates a user object for frontend with safe data
+ * Returns null if user is falsy
  */
-export function createSafeUser(user: any) {
+export function createSafeUser(user: any): { id: number; username: string; role: string } | null {
   if (!user) return null;
   
   // Return only safe user data (exclude password)
   return {
     id: user.id,
     username: user.username,
-    role: user.role
+    role: user.role || 'user' // Default to 'user' if role is missing
   };
 }
