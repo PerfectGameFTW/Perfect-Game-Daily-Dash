@@ -8,18 +8,27 @@ async function throwIfResNotOk(res: Response) {
 }
 
 export async function apiRequest(
-  method: string,
   url: string,
-  data?: unknown | undefined,
-): Promise<Response> {
-  const res = await fetch(url, {
-    method,
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
+  options: RequestInit = {}
+): Promise<any> {
+  const defaultOptions: RequestInit = {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  };
 
+  const mergedOptions = { ...defaultOptions, ...options };
+  
+  const res = await fetch(url, mergedOptions);
   await throwIfResNotOk(res);
+  
+  // Try to parse as JSON if the content exists and is JSON
+  if (res.headers.get('content-type')?.includes('application/json')) {
+    return res.json();
+  }
+  
   return res;
 }
 

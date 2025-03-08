@@ -1,12 +1,5 @@
-/**
- * User Menu Component
- * 
- * Displays user information and authentication options in the header.
- */
-
 import { useAuth } from '@/context/AuthContext';
-import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { useLocation } from 'wouter';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,63 +8,38 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { LogOut, User, Settings } from 'lucide-react';
+import { LogOut, User } from 'lucide-react';
 
 export function UserMenu() {
   const { user, logout } = useAuth();
+  const [, navigate] = useLocation();
 
-  // If user is not authenticated, show login button
-  if (!user) {
-    return (
-      <Button variant="outline" size="sm" asChild>
-        <a href="/login">Sign In</a>
-      </Button>
-    );
-  }
-
-  // Get user's initials for avatar
-  const getInitials = () => {
-    if (!user.username) return 'U';
-    return user.username.charAt(0).toUpperCase();
-  };
-
-  // Handle logout
   const handleLogout = async () => {
     await logout();
-    window.location.href = '/login';
+    navigate('/login');
   };
+
+  if (!user) return null;
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback>{getInitials()}</AvatarFallback>
-          </Avatar>
-        </Button>
+      <DropdownMenuTrigger className="flex items-center gap-2 rounded-full px-3 py-2 hover:bg-gray-100 focus:outline-none">
+        <div className="h-8 w-8 overflow-hidden rounded-full bg-blue-100 text-blue-600">
+          <div className="flex h-full w-full items-center justify-center">
+            <User className="h-5 w-5" />
+          </div>
+        </div>
+        <span className="font-medium">{user.username}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="font-normal">
-          <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">{user.username}</p>
-            <p className="text-xs leading-none text-muted-foreground">
-              {user.role}
-            </p>
-          </div>
-        </DropdownMenuLabel>
+        <DropdownMenuLabel>My Account</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem>
+        <DropdownMenuItem className="cursor-pointer" onClick={() => navigate('/profile')}>
           <User className="mr-2 h-4 w-4" />
           <span>Profile</span>
         </DropdownMenuItem>
-        {user.role === 'admin' && (
-          <DropdownMenuItem>
-            <Settings className="mr-2 h-4 w-4" />
-            <span>Admin Settings</span>
-          </DropdownMenuItem>
-        )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleLogout}>
+        <DropdownMenuItem className="cursor-pointer text-red-600" onClick={handleLogout}>
           <LogOut className="mr-2 h-4 w-4" />
           <span>Log out</span>
         </DropdownMenuItem>

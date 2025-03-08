@@ -1,58 +1,30 @@
-/**
- * Login Page Component
- * 
- * Provides user authentication interface with form validation and error handling.
- */
-
 import { useState } from 'react';
-import { useLocation } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import { useLocation } from 'wouter';
 import { useAuth } from '@/context/AuthContext';
 
-// UI Components
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2 } from 'lucide-react';
-
-// Form schema with validation
+// Create form schema
 const loginSchema = z.object({
-  username: z.string().min(1, { message: 'Username is required' }),
-  password: z.string().min(1, { message: 'Password is required' }),
+  username: z.string().min(3, 'Username must be at least 3 characters'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
-// Form values type
 type LoginFormValues = z.infer<typeof loginSchema>;
 
 export default function Login() {
-  const { login, isLoading } = useAuth();
-  const [location, navigate] = useLocation();
-  const [error, setError] = useState<string | null>(null);
+  const { login } = useAuth();
+  const [, navigate] = useLocation();
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // Get redirect destination from URL params if available
-  const params = new URLSearchParams(window.location.search);
-  const redirectTo = params.get('redirectTo') || '/dashboard';
-
-  // Initialize form with default values
-  const form = useForm<LoginFormValues>({
+  // Initialize form with react-hook-form
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
       username: '',
@@ -60,112 +32,80 @@ export default function Login() {
     },
   });
 
-  // Form submission handler
+  // Handle form submission
   const onSubmit = async (data: LoginFormValues) => {
-    setError(null); // Clear any previous errors
-    
     try {
-      // Call the login function from auth context
+      setIsLoggingIn(true);
+      setErrorMessage(null);
+      
       const success = await login(data.username, data.password);
       
       if (success) {
-        // Redirect to dashboard or specified redirect URL on success
-        navigate(redirectTo);
+        navigate('/');
+      } else {
+        setErrorMessage('Invalid username or password');
       }
-    } catch (err) {
-      setError('An unexpected error occurred. Please try again.');
-      console.error('Login error:', err);
+    } catch (error) {
+      console.error('Login error:', error);
+      setErrorMessage('An error occurred during login');
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
-      <div className="w-full max-w-md space-y-8">
-        <div className="text-center">
-          <h2 className="mt-6 text-3xl font-bold tracking-tight text-gray-900">
-            Perfect Game Dashboard
-          </h2>
-          <p className="mt-2 text-sm text-gray-600">
-            Please sign in to your account
-          </p>
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
+        <div className="mb-6 text-center">
+          <h1 className="text-3xl font-bold text-gray-900">Perfect Game</h1>
+          <p className="mt-2 text-gray-600">Sign in to your dashboard</p>
         </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Sign In</CardTitle>
-            <CardDescription>
-              Enter your credentials to access the dashboard
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {error && (
-              <Alert variant="destructive" className="mb-4">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
+        
+        {errorMessage && (
+          <div className="mb-4 rounded bg-red-100 p-3 text-red-700">
+            {errorMessage}
+          </div>
+        )}
+        
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div>
+            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
+              Username
+            </label>
+            <input
+              id="username"
+              type="text"
+              {...register('username')}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+            />
+            {errors.username && (
+              <p className="mt-1 text-sm text-red-600">{errors.username.message}</p>
             )}
-            
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="username"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Username</FormLabel>
-                      <FormControl>
-                        <Input 
-                          placeholder="Enter your username" 
-                          {...field} 
-                          autoComplete="username"
-                          disabled={isLoading}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Password</FormLabel>
-                      <FormControl>
-                        <Input 
-                          type="password" 
-                          placeholder="Enter your password" 
-                          {...field} 
-                          autoComplete="current-password"
-                          disabled={isLoading}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <Button 
-                  type="submit" 
-                  className="w-full" 
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Signing in...
-                    </>
-                  ) : (
-                    'Sign In'
-                  )}
-                </Button>
-              </form>
-            </Form>
-          </CardContent>
-          <CardFooter className="flex justify-center text-sm text-muted-foreground">
-            Default admin account: admin / perfgame2025
-          </CardFooter>
-        </Card>
+          </div>
+          
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              {...register('password')}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+            />
+            {errors.password && (
+              <p className="mt-1 text-sm text-red-600">{errors.password.message}</p>
+            )}
+          </div>
+          
+          <button
+            type="submit"
+            disabled={isLoggingIn}
+            className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-blue-400"
+          >
+            {isLoggingIn ? 'Signing in...' : 'Sign in'}
+          </button>
+        </form>
       </div>
     </div>
   );

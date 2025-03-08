@@ -1,59 +1,53 @@
-/**
- * Protected Route Component
- * 
- * Wraps routes that require authentication and redirects 
- * unauthenticated users to the login page.
- */
-
-import { ReactNode, useEffect } from 'react';
+import { ReactNode } from 'react';
 import { useLocation } from 'wouter';
 import { useAuth } from '@/context/AuthContext';
-import { Loader2 } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 
 interface ProtectedRouteProps {
   children: ReactNode;
-  requireAdmin?: boolean;
+  requiredRole?: string;
 }
 
-export function ProtectedRoute({ children, requireAdmin = false }: ProtectedRouteProps) {
-  const { user, isLoading } = useAuth();
-  const [location, setLocation] = useLocation();
-
-  useEffect(() => {
-    // Wait until authentication state is loaded
-    if (!isLoading) {
-      // Redirect if not authenticated
-      if (!user) {
-        // Encode the current path to redirect back after login
-        const redirectPath = encodeURIComponent(location);
-        setLocation(`/login?redirectTo=${redirectPath}`);
-      }
-      
-      // If admin access is required, check user role
-      if (requireAdmin && user && user.role !== 'admin') {
-        // User is authenticated but not an admin
-        setLocation('/dashboard'); // Redirect to regular dashboard
-      }
-    }
-  }, [user, isLoading, location, setLocation, requireAdmin]);
-
-  // Show loading indicator while checking authentication
+export default function ProtectedRoute({ 
+  children, 
+  requiredRole 
+}: ProtectedRouteProps) {
+  const { user, isLoading, isAuthenticated } = useAuth();
+  const [, navigate] = useLocation();
+  
+  // Show loading spinner while checking authentication
   if (isLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center">
-        <div className="flex flex-col items-center space-y-4">
-          <Loader2 className="h-12 w-12 animate-spin text-primary" />
-          <p className="text-lg text-muted-foreground">Loading...</p>
-        </div>
+        <Spinner className="h-8 w-8" />
       </div>
     );
   }
-
-  // If user is authenticated (and is admin if required), render children
-  if (user && (!requireAdmin || user.role === 'admin')) {
-    return <>{children}</>;
+  
+  // Redirect to login if not authenticated
+  if (!isAuthenticated) {
+    navigate('/login');
+    return null;
   }
-
-  // This will only briefly show before the redirect happens
-  return null;
+  
+  // Check role if required
+  if (requiredRole && user?.role !== requiredRole) {
+    return (
+      <div className="flex h-screen w-full flex-col items-center justify-center p-4 text-center">
+        <h1 className="text-2xl font-bold text-red-600">Access Denied</h1>
+        <p className="mt-2 text-gray-600">
+          You don't have permission to access this page.
+        </p>
+        <button
+          className="mt-4 rounded bg-blue-500 px-4 py-2 text-white hover:bg-blue-600"
+          onClick={() => navigate('/')}
+        >
+          Go to Dashboard
+        </button>
+      </div>
+    );
+  }
+  
+  // Render children if authenticated and authorized
+  return <>{children}</>;
 }

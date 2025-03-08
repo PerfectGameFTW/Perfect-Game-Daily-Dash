@@ -1,76 +1,61 @@
-/**
- * Authentication Context
- * 
- * Provides a central store for authentication state and user information.
- * Offers methods for login, logout, and checking authentication status.
- */
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { queryClient } from '@/lib/queryClient';
 
-import {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  ReactNode
-} from 'react';
-import { useToast } from '@/hooks/use-toast';
-
-// Define the User type
-export interface User {
+interface User {
   id: number;
   username: string;
-  role: string;
+  role?: string;
 }
 
-// Auth context state
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  isAuthenticated: boolean;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
 }
 
-// Create the context with a default value
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  isLoading: true,
-  login: async () => false,
-  logout: async () => {},
-  checkAuth: async () => {},
-});
+const AuthContext = createContext<AuthContextType | null>(null);
 
-// Context provider component
-export function AuthProvider({ children }: { children: ReactNode }) {
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const { toast } = useToast();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Check if user is authenticated on initial load
+  // Check authentication status on initial load
   useEffect(() => {
     checkAuth();
   }, []);
 
-  // Fetch current user
   const checkAuth = async () => {
     try {
       setIsLoading(true);
       const response = await fetch('/api/auth/me');
-      const data = await response.json();
       
-      setUser(data.user);
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
+        setIsAuthenticated(true);
+      } else {
+        setUser(null);
+        setIsAuthenticated(false);
+      }
     } catch (error) {
-      console.error('Error checking authentication:', error);
+      console.error('Auth check error:', error);
       setUser(null);
+      setIsAuthenticated(false);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Login function
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
-      setIsLoading(true);
-      
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: {
@@ -78,59 +63,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
         body: JSON.stringify({ username, password }),
       });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        toast({
-          title: 'Login failed',
-          description: data.error || 'Invalid username or password',
-          variant: 'destructive',
-        });
-        return false;
+
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
+        setIsAuthenticated(true);
+        return true;
       }
       
-      setUser(data.user);
-      return true;
+      return false;
     } catch (error) {
       console.error('Login error:', error);
-      toast({
-        title: 'Login failed',
-        description: 'An unexpected error occurred',
-        variant: 'destructive',
-      });
       return false;
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  // Logout function
-  const logout = async () => {
+  const logout = async (): Promise<void> => {
     try {
-      setIsLoading(true);
-      
-      await fetch('/api/auth/logout', {
-        method: 'POST',
-      });
-      
+      await fetch('/api/auth/logout', { method: 'POST' });
       setUser(null);
+      setIsAuthenticated(false);
+      
+      // Clear any authenticated queries from the cache
+      await queryClient.invalidateQueries();
+      
     } catch (error) {
       console.error('Logout error:', error);
-      toast({
-        title: 'Logout failed',
-        description: 'An unexpected error occurred',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  // Context value
   const value = {
     user,
     isLoading,
+    isAuthenticated,
     login,
     logout,
     checkAuth,
@@ -139,7 +104,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// Custom hook to use the auth context
-export function useAuth() {
-  return useContext(AuthContext);
+export function useAuth(): AuthContextType {
+  const context = useContext(AuthContext);
+  
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  
+  return context;
 }
