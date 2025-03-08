@@ -15,6 +15,12 @@ export default function ProtectedRoute({
   const { user, isLoading, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
   
+  // Force a check for authentication on component mount
+  const auth = useAuth();
+  useEffect(() => {
+    auth.checkAuth();
+  }, []);
+  
   // Use useEffect for navigation to prevent state updates during render
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -33,6 +39,7 @@ export default function ProtectedRoute({
   
   // Don't render anything if not authenticated (useEffect will handle redirect)
   if (!isAuthenticated) {
+    navigate('/login');
     return null;
   }
   

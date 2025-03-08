@@ -39,9 +39,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
       
       if (response.ok) {
         const userData = await response.json();
-        setUser(userData);
-        setIsAuthenticated(true);
+        if (userData) {
+          // Only set as authenticated if we got actual user data back
+          setUser(userData);
+          setIsAuthenticated(true);
+        } else {
+          // Server returned OK but no user data (null)
+          setUser(null);
+          setIsAuthenticated(false);
+        }
       } else {
+        // Server returned an error
         setUser(null);
         setIsAuthenticated(false);
       }
@@ -65,10 +73,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       });
 
       if (response.ok) {
-        const userData = await response.json();
-        setUser(userData);
-        setIsAuthenticated(true);
-        return true;
+        const responseData = await response.json();
+        if (responseData.success && responseData.user) {
+          setUser(responseData.user);
+          setIsAuthenticated(true);
+          return true;
+        }
       }
       
       return false;
