@@ -4,6 +4,7 @@ import Header from "@/components/dashboard/Header";
 import StatsSummary from "@/components/dashboard/StatsSummary";
 import BottomNavigation from "@/components/dashboard/BottomNavigation";
 import TimeframeModal from "@/components/dashboard/TimeframeModal";
+import AccountDrawer from "@/components/dashboard/AccountDrawer";
 import { DateRange } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import useMobile from "@/hooks/use-mobile";
@@ -18,6 +19,7 @@ export default function Dashboard() {
   const [customStartDate, setCustomStartDate] = useState<Date | undefined>(undefined);
   const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined);
   const [timeframeModalOpen, setTimeframeModalOpen] = useState(false);
+  const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const isMobile = useMobile();
@@ -196,6 +198,11 @@ export default function Dashboard() {
         customStartDate={customStartDate}
         customEndDate={customEndDate}
         onDateRangeChange={handleDateRangeChange}
+      />
+      
+      <AccountDrawer 
+        open={accountDrawerOpen}
+        onOpenChange={setAccountDrawerOpen}
       />
     </div>
   );

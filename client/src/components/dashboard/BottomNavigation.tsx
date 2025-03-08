@@ -3,7 +3,7 @@ import {
   TrendingUp, 
   ChartPie, 
   CreditCard, 
-  Settings
+  UserCircle
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -39,9 +39,10 @@ const NavItem = ({ icon, label, active, onClick }: NavItemProps) => {
 interface BottomNavigationProps {
   activeTab?: string;
   onTabChange?: (tab: string) => void;
+  onAccountClick?: () => void;
 }
 
-const BottomNavigation = ({ activeTab = "overview", onTabChange }: BottomNavigationProps) => {
+const BottomNavigation = ({ activeTab = "overview", onTabChange, onAccountClick }: BottomNavigationProps) => {
   const [animateNav, setAnimateNav] = useState(false);
 
   useEffect(() => {
@@ -50,6 +51,11 @@ const BottomNavigation = ({ activeTab = "overview", onTabChange }: BottomNavigat
   }, []);
 
   const handleTabChange = (tab: string) => {
+    if (tab === "account" && onAccountClick) {
+      onAccountClick();
+      return;
+    }
+    
     if (onTabChange) {
       onTabChange(tab);
     }
@@ -87,10 +93,10 @@ const BottomNavigation = ({ activeTab = "overview", onTabChange }: BottomNavigat
           onClick={() => handleTabChange("giftcards")}
         />
         <NavItem 
-          icon={<Settings className="w-5 h-5 md:w-6 md:h-6" />} 
-          label="Settings"
-          active={activeTab === "settings"}
-          onClick={() => handleTabChange("settings")}
+          icon={<UserCircle className="w-5 h-5 md:w-6 md:h-6" />} 
+          label="Account"
+          active={activeTab === "account"}
+          onClick={() => handleTabChange("account")}
         />
       </div>
     </div>
