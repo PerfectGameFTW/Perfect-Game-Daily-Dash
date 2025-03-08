@@ -44,7 +44,7 @@ function Router() {
       
       <Route path="/admin">
         {() => (
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <Admin />
           </ProtectedRoute>
         )}
