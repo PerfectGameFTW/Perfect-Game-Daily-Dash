@@ -245,6 +245,7 @@ export default function UserManagement() {
                     id="username"
                     {...register('username')}
                     autoComplete="off"
+                    className="text-black"
                   />
                   {errors.username && (
                     <p className="text-xs text-red-500">{errors.username.message}</p>
@@ -260,6 +261,7 @@ export default function UserManagement() {
                     type="password"
                     {...register('password')}
                     autoComplete="new-password"
+                    className="text-black"
                   />
                   {errors.password && (
                     <p className="text-xs text-red-500">{errors.password.message}</p>
@@ -279,10 +281,10 @@ export default function UserManagement() {
                       register('role').onChange(event);
                     }}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="text-black">
                       <SelectValue placeholder="Select a role" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="text-black">
                       <SelectItem value="user">Regular User</SelectItem>
                       <SelectItem value="admin">Administrator</SelectItem>
                     </SelectContent>
