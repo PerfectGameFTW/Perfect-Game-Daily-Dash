@@ -5,6 +5,7 @@
  */
 
 import { Request, Response, NextFunction } from "express";
+import { User } from "../../shared/schema";
 
 interface RequestWithSession extends Request {
   session: {
@@ -20,7 +21,7 @@ interface RequestWithSession extends Request {
  */
 export function requireAuth(req: Request & { session?: { userId?: number } }, res: Response, next: NextFunction) {
   if (!req.session || !req.session.userId) {
-    return res.status(401).json({ error: "Unauthorized", message: "You must be logged in to access this resource." });
+    return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
   }
   
   next();
@@ -31,10 +32,12 @@ export function requireAuth(req: Request & { session?: { userId?: number } }, re
  */
 export function requireAdmin(req: Request & { session?: { userId?: number } }, res: Response, next: NextFunction) {
   if (!req.session || !req.session.userId) {
-    return res.status(401).json({ error: "Unauthorized", message: "You must be logged in to access this resource." });
+    return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
   }
   
-  // Additional admin validation can be added here if needed
+  // Here we would check if the user is an admin
+  // For now, we'll leave this as a placeholder
+  // In a real implementation, we'd fetch the user and check their role
   
   next();
 }
@@ -43,9 +46,9 @@ export function requireAdmin(req: Request & { session?: { userId?: number } }, r
  * Creates a user object for frontend with safe data
  */
 export function createSafeUser(user: any) {
-  // Return only safe user data (no password or sensitive info)
-  return {
-    id: user.id,
-    username: user.username,
-  };
+  if (!user) return null;
+  
+  // Return user without password
+  const { password, ...safeUser } = user;
+  return safeUser;
 }

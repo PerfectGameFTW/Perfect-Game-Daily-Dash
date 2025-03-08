@@ -4,14 +4,14 @@
  * Provides authentication and user management functionality.
  */
 
-import bcrypt from "bcryptjs";
-import { pgStorage } from "../pgStorage";
-import { User, InsertUser } from "../../shared/schema";
+import bcrypt from 'bcryptjs';
+import { pgStorage } from '../pgStorage';
+import { User, InsertUser } from '../../shared/schema';
 
 class AuthError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "AuthError";
+    this.name = 'AuthError';
   }
 }
 
@@ -24,17 +24,24 @@ export class AuthService {
    * @returns Created user
    */
   async registerUser(username: string, password: string): Promise<User> {
-    // Hash the password
+    // Check if username already exists
+    const existingUser = await pgStorage.getUserByUsername(username);
+    if (existingUser) {
+      throw new AuthError('Username already exists');
+    }
+    
+    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     
+    // Create user
     const userData: InsertUser = {
       username,
       password: hashedPassword,
-      role: "user", // Default role
+      role: 'user' // Default role
     };
     
-    return await pgStorage.createUser(userData);
+    return pgStorage.createUser(userData);
   }
   
   /**
@@ -46,14 +53,12 @@ export class AuthService {
    */
   async loginUser(username: string, password: string): Promise<User | null> {
     const user = await pgStorage.getUserByUsername(username);
-    
     if (!user) {
       return null;
     }
     
-    const isMatch = await bcrypt.compare(password, user.password);
-    
-    if (!isMatch) {
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
       return null;
     }
     
@@ -67,7 +72,7 @@ export class AuthService {
    * @returns User if found, undefined otherwise
    */
   async getUserById(id: number): Promise<User | undefined> {
-    return await pgStorage.getUser(id);
+    return pgStorage.getUser(id);
   }
   
   /**
@@ -80,10 +85,8 @@ export class AuthService {
   async createInitialAdmin(username: string, password: string): Promise<User | null> {
     // Check if any users exist
     const users = await pgStorage.getAllUsers();
-    
     if (users.length > 0) {
-      // Users already exist, don't create admin
-      return null;
+      return null; // Users already exist
     }
     
     // Create admin user
@@ -93,10 +96,10 @@ export class AuthService {
     const adminData: InsertUser = {
       username,
       password: hashedPassword,
-      role: "admin",
+      role: 'admin' // Admin role
     };
     
-    return await pgStorage.createUser(adminData);
+    return pgStorage.createUser(adminData);
   }
 }
 
