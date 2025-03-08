@@ -35,21 +35,26 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const checkAuth = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('/auth/me');
+      console.log('Checking authentication status...');
+      const response = await fetch('/api/auth/me');
       
       if (response.ok) {
         const userData = await response.json();
+        console.log('Auth check response:', userData);
         if (userData) {
           // Only set as authenticated if we got actual user data back
           setUser(userData);
           setIsAuthenticated(true);
+          console.log('User authenticated:', userData);
         } else {
           // Server returned OK but no user data (null)
+          console.log('No user data returned');
           setUser(null);
           setIsAuthenticated(false);
         }
       } else {
         // Server returned an error
+        console.log('Auth check failed with status:', response.status);
         setUser(null);
         setIsAuthenticated(false);
       }
@@ -64,7 +69,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
-      const response = await fetch('/auth/login', {
+      console.log(`Attempting login for user: ${username}`);
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -96,13 +102,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const logout = async (): Promise<void> => {
     try {
-      await fetch('/auth/logout', { method: 'POST' });
+      console.log('Logging out...');
+      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      console.log('Logout response status:', response.status);
+      
       setUser(null);
       setIsAuthenticated(false);
       
       // Clear any authenticated queries from the cache
       await queryClient.invalidateQueries();
       
+      console.log('Logout complete, user state cleared');
     } catch (error) {
       console.error('Logout error:', error);
     }
