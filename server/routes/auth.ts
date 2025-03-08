@@ -175,7 +175,7 @@ export function createAuthRouter(): Router {
       }
 
       // Prevent self-deletion
-      if (req.session?.userId === userId) {
+      if (req.session && req.session.userId === userId) {
         return res.status(400).json({ error: 'You cannot delete your own account' });
       }
 

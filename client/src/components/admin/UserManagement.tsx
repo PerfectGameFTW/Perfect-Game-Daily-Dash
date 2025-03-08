@@ -4,6 +4,45 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { 
+  Trash2, 
+  UserPlus, 
+  X, 
+  Shield, 
+  User as UserIcon,
+  AlertCircle,
+  LoaderCircle
+} from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Spinner } from '@/components/ui/spinner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Create user schema
 const userSchema = z.object({
@@ -25,7 +64,9 @@ export default function UserManagement() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
-  const [createMode, setCreateMode] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const { toast } = useToast();
 
   // Initialize form with react-hook-form
@@ -33,7 +74,7 @@ export default function UserManagement() {
     register,
     handleSubmit,
     reset,
-    formState: { errors },
+    formState: { errors, isSubmitting },
   } = useForm<UserFormValues>({
     resolver: zodResolver(userSchema),
     defaultValues: {
@@ -78,7 +119,6 @@ export default function UserManagement() {
   // Handle user creation
   const handleCreateUser = async (data: UserFormValues) => {
     try {
-      setLoading(true);
       const response = await fetch('/auth/register', {
         method: 'POST',
         headers: {
@@ -90,11 +130,11 @@ export default function UserManagement() {
       if (response.ok) {
         toast({
           title: 'Success',
-          description: `User ${data.username} created successfully`,
+          description: `User "${data.username}" created successfully`,
         });
         // Reset form and refresh user list
         reset();
-        setCreateMode(false);
+        setCreateDialogOpen(false);
         fetchUsers();
       } else {
         const errorData = await response.json();
@@ -111,15 +151,13 @@ export default function UserManagement() {
         description: 'An unexpected error occurred',
         variant: 'destructive',
       });
-    } finally {
-      setLoading(false);
     }
   };
 
   // Handle user deletion
-  const handleDeleteUser = async (userId: number) => {
+  const confirmDeleteUser = (user: User) => {
     // Don't allow deleting yourself
-    if (userId === currentUser?.id) {
+    if (user.id === currentUser?.id) {
       toast({
         title: 'Error',
         description: 'You cannot delete your own account',
@@ -128,21 +166,26 @@ export default function UserManagement() {
       return;
     }
 
-    if (!confirm('Are you sure you want to delete this user?')) {
-      return;
-    }
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
 
     try {
       setLoading(true);
-      const response = await fetch(`/auth/users/${userId}`, {
+      const response = await fetch(`/auth/users/${userToDelete.id}`, {
         method: 'DELETE',
       });
 
       if (response.ok) {
         toast({
           title: 'Success',
-          description: 'User deleted successfully',
+          description: `User "${userToDelete.username}" deleted successfully`,
         });
+        setDeleteDialogOpen(false);
+        setUserToDelete(null);
         fetchUsers();
       } else {
         const errorData = await response.json();
@@ -164,119 +207,121 @@ export default function UserManagement() {
     }
   };
 
+  const handleCreateDialogClose = () => {
+    setCreateDialogOpen(false);
+    reset();
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">User Management</h2>
-        <button
-          onClick={() => setCreateMode(!createMode)}
-          className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
-        >
-          {createMode ? 'Cancel' : 'Add User'}
-        </button>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-semibold text-gray-800">User Accounts</h2>
+          {loading && <Spinner size="sm" className="text-blue-600" />}
+        </div>
+        
+        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+          <DialogTrigger asChild>
+            <Button className="gap-2">
+              <UserPlus className="h-4 w-4" />
+              Add User
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create New User</DialogTitle>
+              <DialogDescription>
+                Add a new user account to the system.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <form onSubmit={handleSubmit(handleCreateUser)}>
+              <div className="grid gap-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="username" className="text-right">
+                    Username
+                  </Label>
+                  <Input
+                    id="username"
+                    {...register('username')}
+                    autoComplete="off"
+                  />
+                  {errors.username && (
+                    <p className="text-xs text-red-500">{errors.username.message}</p>
+                  )}
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="password" className="text-right">
+                    Password
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    {...register('password')}
+                    autoComplete="new-password"
+                  />
+                  {errors.password && (
+                    <p className="text-xs text-red-500">{errors.password.message}</p>
+                  )}
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="role" className="text-right">
+                    Role
+                  </Label>
+                  <Select 
+                    defaultValue="user" 
+                    onValueChange={(value) => {
+                      const event = {
+                        target: { value }
+                      } as unknown as React.ChangeEvent<HTMLSelectElement>;
+                      register('role').onChange(event);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="user">Regular User</SelectItem>
+                      <SelectItem value="admin">Administrator</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={handleCreateDialogClose}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create User'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
-      {createMode && (
-        <form
-          onSubmit={handleSubmit(handleCreateUser)}
-          className="rounded border border-gray-200 bg-white p-4 shadow-sm"
-        >
-          <h3 className="mb-4 text-lg font-medium">Create New User</h3>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700">
-                Username
-              </label>
-              <input
-                id="username"
-                type="text"
-                {...register('username')}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-              />
-              {errors.username && (
-                <p className="mt-1 text-sm text-red-600">{errors.username.message}</p>
-              )}
-            </div>
-
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                {...register('password')}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-              />
-              {errors.password && (
-                <p className="mt-1 text-sm text-red-600">{errors.password.message}</p>
-              )}
-            </div>
-
-            <div>
-              <label htmlFor="role" className="block text-sm font-medium text-gray-700">
-                Role
-              </label>
-              <select
-                id="role"
-                {...register('role')}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-              >
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
-              </select>
-              {errors.role && (
-                <p className="mt-1 text-sm text-red-600">{errors.role.message}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-4 flex justify-end space-x-3">
-            <button
-              type="button"
-              onClick={() => setCreateMode(false)}
-              className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-blue-400"
-            >
-              {loading ? 'Creating...' : 'Create User'}
-            </button>
-          </div>
-        </form>
-      )}
-
-      <div className="rounded border border-gray-200 bg-white shadow-sm">
+      <div className="rounded-md border">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
-                >
-                  ID
+            <thead>
+              <tr className="bg-gray-50">
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  User
                 </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
-                >
-                  Username
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
-                >
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Role
                 </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500"
-                >
+                <th scope="col" className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                   Actions
                 </th>
               </tr>
@@ -284,29 +329,52 @@ export default function UserManagement() {
             <tbody className="divide-y divide-gray-200 bg-white">
               {loading && users.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
-                    Loading users...
+                  <td colSpan={3} className="py-8 text-center">
+                    <div className="flex justify-center">
+                      <Spinner className="h-8 w-8 text-blue-600" />
+                    </div>
+                    <p className="mt-2 text-sm text-gray-500">Loading users...</p>
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
-                    No users found
+                  <td colSpan={3} className="py-8 text-center">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <AlertCircle className="h-8 w-8 text-gray-400" />
+                      <p className="text-sm text-gray-500">No users found</p>
+                    </div>
                   </td>
                 </tr>
               ) : (
                 users.map((user) => (
                   <tr key={user.id} className={user.id === currentUser?.id ? 'bg-blue-50' : ''}>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{user.id}</td>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
-                      {user.username}
-                      {user.id === currentUser?.id && (
-                        <span className="ml-2 text-xs text-blue-600">(You)</span>
-                      )}
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <div className="flex items-center">
+                        <div className="h-10 w-10 flex-shrink-0">
+                          <div className={`h-full w-full rounded-full flex items-center justify-center ${
+                            user.role === 'admin' ? 'bg-purple-100' : 'bg-blue-100'
+                          }`}>
+                            {user.role === 'admin' ? (
+                              <Shield className="h-5 w-5 text-purple-600" />
+                            ) : (
+                              <UserIcon className="h-5 w-5 text-blue-600" />
+                            )}
+                          </div>
+                        </div>
+                        <div className="ml-4">
+                          <div className="font-medium text-gray-900">
+                            {user.username}
+                            {user.id === currentUser?.id && (
+                              <span className="ml-2 text-xs font-normal text-blue-600">(You)</span>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-500">ID: {user.id}</div>
+                        </div>
+                      </div>
                     </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                    <td className="whitespace-nowrap px-6 py-4">
                       <span
-                        className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${
+                        className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                           user.role === 'admin'
                             ? 'bg-purple-100 text-purple-800'
                             : 'bg-green-100 text-green-800'
@@ -315,17 +383,19 @@ export default function UserManagement() {
                         {user.role}
                       </span>
                     </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                      <button
-                        onClick={() => handleDeleteUser(user.id)}
+                    <td className="whitespace-nowrap px-6 py-4 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => confirmDeleteUser(user)}
                         disabled={user.id === currentUser?.id}
-                        className={`text-red-600 hover:text-red-900 ${
+                        className={`text-red-600 hover:bg-red-100 hover:text-red-700 ${
                           user.id === currentUser?.id ? 'cursor-not-allowed opacity-50' : ''
                         }`}
-                        title={user.id === currentUser?.id ? "You can't delete your own account" : ''}
+                        title={user.id === currentUser?.id ? "You cannot delete your own account" : ''}
                       >
-                        Delete
-                      </button>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </td>
                   </tr>
                 ))
@@ -334,6 +404,35 @@ export default function UserManagement() {
           </table>
         </div>
       </div>
+      
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete {userToDelete?.username}'s account and all associated data.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setUserToDelete(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteUser} 
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {loading ? (
+                <>
+                  <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete User'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
