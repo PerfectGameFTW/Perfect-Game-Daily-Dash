@@ -22,9 +22,10 @@ export class AuthService {
    * 
    * @param username Username
    * @param password Password (plaintext, will be hashed)
+   * @param role User role (default: 'user')
    * @returns Created user
    */
-  async registerUser(username: string, password: string): Promise<User> {
+  async registerUser(username: string, password: string, role: string = 'user'): Promise<User> {
     // Check if user already exists
     const existingUser = await this.getUserByUsername(username);
     if (existingUser) {
@@ -34,11 +35,11 @@ export class AuthService {
     // Hash password
     const hashedPassword = await hash(password, 10);
 
-    // Create user
+    // Create user with validated role
     const userData: InsertUser = {
       username,
       password: hashedPassword,
-      role: 'user' // Default role
+      role: (role === 'admin' ? 'admin' : 'user') as 'user' | 'admin'
     };
 
     const result = await db.insert(users).values(userData).returning();

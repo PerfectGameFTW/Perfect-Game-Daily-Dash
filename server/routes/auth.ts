@@ -15,6 +15,12 @@ const loginSchema = z.object({
   password: z.string().min(6).max(100)
 });
 
+const registerSchema = z.object({
+  username: z.string().min(3).max(50),
+  password: z.string().min(6).max(100),
+  role: z.enum(['user', 'admin']).default('user')
+});
+
 export function createAuthRouter(): Router {
   const router = Router();
 
@@ -86,6 +92,43 @@ export function createAuthRouter(): Router {
       });
     } else {
       res.json({ success: true });
+    }
+  });
+
+  // Register endpoint
+  router.post('/register', async (req: Request & { session?: any }, res: Response) => {
+    try {
+      // Validate input
+      const validationResult = registerSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: 'Invalid input',
+          details: validationResult.error.format()
+        });
+      }
+
+      const { username, password, role } = validationResult.data;
+      
+      try {
+        const user = await authService.registerUser(username, password, role);
+        
+        // Set user ID in session
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        
+        res.json({
+          success: true,
+          user: createSafeUser(user)
+        });
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('already exists')) {
+          return res.status(409).json({ error: 'Username already exists' });
+        }
+        throw err; // Re-throw for the outer catch
+      }
+    } catch (error) {
+      console.error('Error during registration:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
