@@ -45,18 +45,26 @@ export function createAuthRouter(): Router {
   router.get('/me', async (req: Request & { session?: { userId?: number } }, res: Response) => {
     try {
       if (!req.session || !req.session.userId) {
+        console.log('GET /api/auth/me - No session or userId found', { 
+          hasSession: !!req.session,
+          sessionData: req.session ? Object.keys(req.session) : []
+        });
         return res.json(null);
       }
 
+      console.log(`GET /api/auth/me - Fetching user with ID: ${req.session.userId}`);
       const user = await authService.getUserById(req.session.userId);
       
       if (!user) {
+        console.log(`GET /api/auth/me - No user found with ID: ${req.session.userId}`);
         // Clear invalid session if user no longer exists
         req.session.userId = undefined;
         return res.json(null);
       }
 
-      res.json(createSafeUser(user));
+      const safeUser = createSafeUser(user);
+      console.log(`GET /api/auth/me - Successfully retrieved user: ${safeUser.username} (Role: ${safeUser.role})`);
+      res.json(safeUser);
     } catch (error) {
       console.error('Error checking authentication:', error);
       res.status(500).json({ error: 'Internal server error' });
@@ -94,7 +102,7 @@ export function createAuthRouter(): Router {
       
       // Save session explicitly to ensure it's stored before response
       await new Promise<void>((resolve, reject) => {
-        req.session.save((err) => {
+        req.session.save((err: Error | null) => {
           if (err) {
             console.error('Error saving session:', err);
             reject(err);
@@ -117,15 +125,20 @@ export function createAuthRouter(): Router {
   // Logout endpoint
   router.post('/logout', (req: Request & { session?: any }, res: Response) => {
     if (req.session) {
-      req.session.destroy((err: Error) => {
+      console.log(`Logging out user: ${req.session.username || 'Unknown'} (ID: ${req.session.userId || 'Unknown'})`);
+      
+      req.session.destroy((err: Error | null) => {
         if (err) {
           console.error('Error destroying session:', err);
           return res.status(500).json({ error: 'Failed to logout' });
         }
         
+        // Clear the cookie on the client
+        res.clearCookie('connect.sid');
         res.json({ success: true });
       });
     } else {
+      console.log('Logout attempted with no active session');
       res.json({ success: true });
     }
   });
@@ -153,6 +166,20 @@ export function createAuthRouter(): Router {
           // This is the first user, set session
           req.session.userId = user.id;
           req.session.username = user.username;
+          req.session.role = user.role;
+          
+          // Save session explicitly for the first user
+          await new Promise<void>((resolve, reject) => {
+            req.session.save((err: Error | null) => {
+              if (err) {
+                console.error('Error saving session during initial registration:', err);
+                reject(err);
+              } else {
+                console.log(`Session saved for first user: ${user.username} (ID: ${user.id})`);
+                resolve();
+              }
+            });
+          });
         }
         
         res.json({

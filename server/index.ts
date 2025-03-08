@@ -14,7 +14,7 @@ app.use(express.urlencoded({ extended: false }));
 const PgSession = connectPgSimple(session);
 app.use(session({
   store: new PgSession({
-    pool,
+    pool: pool as any, // Type casting to avoid compatibility issues
     tableName: 'sessions', // Default table name
     createTableIfMissing: true
   }),
@@ -32,7 +32,8 @@ app.use(session({
 // Add startup timestamp and environment check
 const startTime = new Date().toISOString();
 log(`Starting application at ${startTime}`);
-log('Environment check:', {
+log('Environment check:');
+console.log({
   NODE_ENV: process.env.NODE_ENV,
   DATABASE_URL: process.env.DATABASE_URL ? '[PRESENT]' : '[MISSING]',
   PORT: process.env.PORT || 5000
