@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import { useLocation } from 'wouter';
 import { useAuth } from '@/context/AuthContext';
 import { Spinner } from '@/components/ui/spinner';
@@ -15,6 +15,13 @@ export default function ProtectedRoute({
   const { user, isLoading, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
   
+  // Use useEffect for navigation to prevent state updates during render
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      navigate('/login');
+    }
+  }, [isLoading, isAuthenticated, navigate]);
+  
   // Show loading spinner while checking authentication
   if (isLoading) {
     return (
@@ -24,9 +31,8 @@ export default function ProtectedRoute({
     );
   }
   
-  // Redirect to login if not authenticated
+  // Don't render anything if not authenticated (useEffect will handle redirect)
   if (!isAuthenticated) {
-    navigate('/login');
     return null;
   }
   
