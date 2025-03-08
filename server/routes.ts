@@ -1394,7 +1394,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Register the API router
   // Mount our routers
   app.use("/api", apiRouter);
-  app.use("/auth", authRouter);
+  app.use("/api/auth", authRouter);
 
   // Create HTTP server and return it
   const httpServer = createServer(app);
