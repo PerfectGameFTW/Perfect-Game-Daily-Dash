@@ -87,12 +87,14 @@ class OrderNotFoundError extends OrderError {
 }
 
 
-// Import the new API router creator
+// Import the router creators
 import { createApiRouter } from './routes/api';
+import { createAuthRouter } from './routes/auth';
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Create the API router using our new service-based implementation
+  // Create the routers using our service-based implementation
   const apiRouter = createApiRouter();
+  const authRouter = createAuthRouter();
   
   // Legacy API routes below will be gradually migrated to the new service-based implementation
 
@@ -1391,7 +1393,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update gift card activations from transactions endpoint - REMOVED (migrated to gift card service)
 
   // Register the API router
+  // Mount our routers
   app.use("/api", apiRouter);
+  app.use("/auth", authRouter);
 
   // Create HTTP server and return it
   const httpServer = createServer(app);

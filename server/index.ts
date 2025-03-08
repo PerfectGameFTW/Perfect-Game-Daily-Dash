@@ -1,11 +1,31 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { db, sql } from "./db"; // Import db and sql
+import { db, sql, pool } from "./db"; // Import db, sql and pool
+import { authService } from "./services/authService";
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Configure session middleware
+const PgSession = connectPgSimple(session);
+app.use(session({
+  store: new PgSession({
+    pool,
+    tableName: 'sessions', // Default table name
+    createTableIfMissing: true
+  }),
+  secret: process.env.SESSION_SECRET || 'perfect-game-dashboard-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    secure: process.env.NODE_ENV === 'production'
+  }
+}));
 
 // Add startup timestamp and environment check
 const startTime = new Date().toISOString();
@@ -63,6 +83,19 @@ async function exitWithError(error: unknown) {
     try {
       await db.execute(sql`SELECT version()`);
       log('✓ Database connection verified');
+      
+      // Create initial admin user if none exists
+      try {
+        const adminUser = await authService.createInitialAdmin('admin', 'perfgame2025');
+        if (adminUser) {
+          log('✓ Created initial admin user: admin');
+        } else {
+          log('ℹ Users already exist, skipping initial admin creation');
+        }
+      } catch (adminError) {
+        log(`⚠ Warning: Could not create initial admin: ${adminError instanceof Error ? adminError.message : 'Unknown error'}`);
+        // Don't throw error, just log warning as this isn't critical
+      }
     } catch (dbError) {
       log('✗ Database connection failed', 'error');
       throw dbError;
