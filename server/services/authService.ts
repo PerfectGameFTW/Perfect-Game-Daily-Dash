@@ -118,6 +118,46 @@ export class AuthService {
     const result = await db.insert(users).values(adminData).returning();
     return result[0];
   }
+
+  /**
+   * Check if any users exist in the database
+   * 
+   * @returns True if users exist, false otherwise
+   */
+  async checkUsersExist(): Promise<boolean> {
+    const count = await this.getUsersCount();
+    return count > 0;
+  }
+
+  /**
+   * Get the total number of users in the system
+   * 
+   * @returns The count of users
+   */
+  async getUsersCount(): Promise<number> {
+    const result = await db.select({ count: db.fn.count() }).from(users);
+    return Number(result[0].count);
+  }
+
+  /**
+   * Get all users in the system
+   * 
+   * @returns Array of all users
+   */
+  async getAllUsers(): Promise<User[]> {
+    return db.select().from(users);
+  }
+
+  /**
+   * Delete a user by ID
+   * 
+   * @param id User ID to delete
+   * @returns True if user was deleted, false if not found
+   */
+  async deleteUser(id: number): Promise<boolean> {
+    const result = await db.delete(users).where(eq(users.id, id)).returning();
+    return result.length > 0;
+  }
 }
 
 export const authService = new AuthService();
