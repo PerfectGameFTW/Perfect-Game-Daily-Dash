@@ -4,63 +4,88 @@
  * Provides endpoints for login, logout, and user management.
  */
 
-import { Router, Request, Response } from "express";
-import { authService } from "../services/authService";
-import { createSafeUser } from "../middleware/auth";
+import { Router, Request, Response } from 'express';
+import { authService } from '../services/authService';
+import { createSafeUser } from '../middleware/auth';
+import { z } from 'zod';
+
+// Validation schemas
+const loginSchema = z.object({
+  username: z.string().min(3).max(50),
+  password: z.string().min(6).max(100)
+});
 
 export function createAuthRouter(): Router {
   const router = Router();
 
+  // Current user endpoint
   router.get('/me', async (req: Request & { session?: { userId?: number } }, res: Response) => {
     try {
       if (!req.session || !req.session.userId) {
-        return res.json({ user: null });
+        return res.json(null);
       }
 
       const user = await authService.getUserById(req.session.userId);
-      return res.json({ user: createSafeUser(user) });
+      
+      if (!user) {
+        // Clear invalid session if user no longer exists
+        req.session.userId = undefined;
+        return res.json(null);
+      }
+
+      res.json(createSafeUser(user));
     } catch (error) {
-      console.error('Error in /me route:', error);
-      return res.status(500).json({ error: 'Error fetching user' });
+      console.error('Error checking authentication:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
+  // Login endpoint
   router.post('/login', async (req: Request & { session?: any }, res: Response) => {
     try {
-      const { username, password } = req.body;
-      
-      if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are required' });
+      // Validate input
+      const validationResult = loginSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: 'Invalid input',
+          details: validationResult.error.format()
+        });
       }
-      
+
+      const { username, password } = validationResult.data;
       const user = await authService.loginUser(username, password);
-      
+
       if (!user) {
         return res.status(401).json({ error: 'Invalid username or password' });
       }
-      
-      // Set session data
+
+      // Set user ID in session
       req.session.userId = user.id;
       req.session.username = user.username;
       
-      return res.json({ user: createSafeUser(user) });
+      res.json({
+        success: true,
+        user: createSafeUser(user)
+      });
     } catch (error) {
-      console.error('Login error:', error);
-      return res.status(500).json({ error: 'Error during login' });
+      console.error('Error during login:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
+  // Logout endpoint
   router.post('/logout', (req: Request & { session?: any }, res: Response) => {
     if (req.session) {
       req.session.destroy((err: Error) => {
         if (err) {
-          return res.status(500).json({ error: 'Error during logout' });
+          console.error('Error destroying session:', err);
+          return res.status(500).json({ error: 'Failed to logout' });
         }
-        res.clearCookie('connect.sid');
-        return res.json({ success: true });
+        
+        res.json({ success: true });
       });
     } else {
-      return res.json({ success: true });
+      res.json({ success: true });
     }
   });
 

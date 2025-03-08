@@ -23,8 +23,6 @@ import {
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
 import { and, gte, lte, sql, eq, gt, or, desc, count } from "drizzle-orm";
-import { createAuthRouter } from "./routes/auth";
-
 // Helper function to safely process Square API response data
 function processSafeSquareData(data: any): any {
   try {
