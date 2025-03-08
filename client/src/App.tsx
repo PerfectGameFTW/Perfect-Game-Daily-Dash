@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import Admin from "@/pages/Admin";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useEffect } from "react";
@@ -37,6 +38,14 @@ function Router() {
         {() => (
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        )}
+      </Route>
+      
+      <Route path="/admin">
+        {() => (
+          <ProtectedRoute>
+            <Admin />
           </ProtectedRoute>
         )}
       </Route>

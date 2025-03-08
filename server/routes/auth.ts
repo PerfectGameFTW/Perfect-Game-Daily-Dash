@@ -167,7 +167,7 @@ export function createAuthRouter(): Router {
   });
 
   // Delete user (admin only)
-  router.delete('/users/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  router.delete('/users/:id', requireAuth, requireAdmin, async (req: Request & { session?: { userId?: number } }, res: Response) => {
     try {
       const userId = parseInt(req.params.id, 10);
       if (isNaN(userId)) {

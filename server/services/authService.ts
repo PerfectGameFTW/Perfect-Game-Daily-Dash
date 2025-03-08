@@ -135,8 +135,8 @@ export class AuthService {
    * @returns The count of users
    */
   async getUsersCount(): Promise<number> {
-    const result = await db.select({ count: db.fn.count() }).from(users);
-    return Number(result[0].count);
+    const result = await db.select().from(users);
+    return result.length;
   }
 
   /**
