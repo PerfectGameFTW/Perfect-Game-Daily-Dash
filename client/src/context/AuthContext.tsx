@@ -35,7 +35,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const checkAuth = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('/api/auth/me');
+      const response = await fetch('/auth/me');
       
       if (response.ok) {
         const userData = await response.json();
@@ -56,7 +56,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
-      const response = await fetch('/api/auth/login', {
+      const response = await fetch('/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -80,7 +80,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const logout = async (): Promise<void> => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/auth/logout', { method: 'POST' });
       setUser(null);
       setIsAuthenticated(false);
       
