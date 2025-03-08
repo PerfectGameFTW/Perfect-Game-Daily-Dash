@@ -19,14 +19,15 @@ app.use(session({
     createTableIfMissing: true
   }),
   secret: process.env.SESSION_SECRET || 'perfect-game-dashboard-secret',
-  resave: false,
-  saveUninitialized: false,
+  resave: true, // Changed to true to ensure session is saved on every request
+  saveUninitialized: true, // Changed to true to ensure new sessions are saved
   cookie: {
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    secure: process.env.NODE_ENV === 'production',
+    secure: false, // Changed to false to work in development
     sameSite: 'lax', // Helps with CSRF protection but allows normal navigation
     httpOnly: true // Prevents JavaScript access to cookie
-  }
+  },
+  name: 'pg.sid' // Added custom name to avoid conflicts
 }));
 
 // Add startup timestamp and environment check

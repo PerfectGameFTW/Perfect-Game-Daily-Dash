@@ -36,7 +36,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       setIsLoading(true);
       console.log('Checking authentication status...');
-      const response = await fetch('/api/auth/me');
+      const response = await fetch('/api/auth/me', {
+        credentials: 'include' // Ensure cookies are sent with the request
+      });
       
       if (response.ok) {
         const userData = await response.json();
@@ -76,24 +78,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ username, password }),
+        credentials: 'include' // Ensure cookies are sent with the request
       });
 
-      if (response.ok) {
-        const responseData = await response.json();
-        console.log('Login response:', responseData);
-        
-        if (responseData.success && responseData.user) {
-          setUser(responseData.user);
-          setIsAuthenticated(true);
-          
-          // Trigger a state change and return after a short delay to ensure
-          // React has time to process state changes
-          await new Promise(resolve => setTimeout(resolve, 100));
-          return true;
-        }
-      }
+      const responseData = await response.json();
+      console.log('Login response:', responseData);
       
-      return false;
+      if (response.ok && responseData.success && responseData.user) {
+        console.log('Login successful, setting user state:', responseData.user);
+        setUser(responseData.user);
+        setIsAuthenticated(true);
+        
+        // Immediately check auth to verify session was created properly
+        await checkAuth();
+        
+        // Trigger a state change and return after a short delay to ensure
+        // React has time to process state changes
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return true;
+      } else {
+        console.warn('Login failed:', responseData.error || 'Unknown error');
+        return false;
+      }
     } catch (error) {
       console.error('Login error:', error);
       return false;
@@ -103,7 +109,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const logout = async (): Promise<void> => {
     try {
       console.log('Logging out...');
-      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      const response = await fetch('/api/auth/logout', { 
+        method: 'POST',
+        credentials: 'include' // Ensure cookies are sent with the request
+      });
       console.log('Logout response status:', response.status);
       
       setUser(null);
