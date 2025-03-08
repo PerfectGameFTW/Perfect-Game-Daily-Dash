@@ -37,9 +37,8 @@ export default function ProtectedRoute({
     );
   }
   
-  // Don't render anything if not authenticated (useEffect will handle redirect)
+  // Don't render anything if not authenticated (the useEffect above will handle redirect)
   if (!isAuthenticated) {
-    navigate('/login');
     return null;
   }
   

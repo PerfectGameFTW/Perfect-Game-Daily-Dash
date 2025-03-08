@@ -74,9 +74,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (response.ok) {
         const responseData = await response.json();
+        console.log('Login response:', responseData);
+        
         if (responseData.success && responseData.user) {
           setUser(responseData.user);
           setIsAuthenticated(true);
+          
+          // Trigger a state change and return after a short delay to ensure
+          // React has time to process state changes
+          await new Promise(resolve => setTimeout(resolve, 100));
           return true;
         }
       }
