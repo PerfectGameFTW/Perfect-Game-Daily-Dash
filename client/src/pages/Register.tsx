@@ -18,8 +18,12 @@ export default function Register() {
     <div className="flex h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
         <div className="mb-6 text-center">
-          <h1 className="text-3xl font-bold text-gray-900">Perfect Game</h1>
-          <p className="mt-2 text-gray-600">User Registration</p>
+          <img 
+            src="/images/PG_logo_web.PNG" 
+            alt="Perfect Game Logo" 
+            className="mx-auto h-24"
+          />
+          <p className="mt-4 text-gray-600">User Registration</p>
         </div>
         
         <div className="flex flex-col items-center justify-center space-y-4 py-8">
