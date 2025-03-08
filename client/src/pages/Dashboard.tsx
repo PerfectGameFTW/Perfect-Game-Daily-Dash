@@ -189,7 +189,11 @@ export default function Dashboard() {
         </div>
       </main>
 
-      <BottomNavigation activeTab={activeTab} onTabChange={setActiveTab} />
+      <BottomNavigation 
+        activeTab={activeTab} 
+        onTabChange={setActiveTab} 
+        onAccountClick={() => setAccountDrawerOpen(true)}
+      />
 
       <TimeframeModal 
         open={timeframeModalOpen}
