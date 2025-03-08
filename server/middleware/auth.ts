@@ -4,14 +4,15 @@
  * Provides functionality for securing routes with user authentication.
  */
 
-import { Request, Response, NextFunction } from "express";
-import { User } from "../../shared/schema";
+import { Request, Response, NextFunction } from 'express';
+import { Session } from 'express-session';
+import { User } from '../../shared/schema';
 
+// Extended request type with session
 interface RequestWithSession extends Request {
-  session: {
+  session: Session & {
     userId?: number;
     username?: string;
-    [key: string]: any;
   };
 }
 
@@ -21,7 +22,7 @@ interface RequestWithSession extends Request {
  */
 export function requireAuth(req: Request & { session?: { userId?: number } }, res: Response, next: NextFunction) {
   if (!req.session || !req.session.userId) {
-    return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
+    return res.status(401).json({ error: 'Unauthorized' });
   }
   
   next();
@@ -32,14 +33,24 @@ export function requireAuth(req: Request & { session?: { userId?: number } }, re
  */
 export function requireAdmin(req: Request & { session?: { userId?: number } }, res: Response, next: NextFunction) {
   if (!req.session || !req.session.userId) {
-    return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
+    return res.status(401).json({ error: 'Unauthorized' });
   }
   
-  // Here we would check if the user is an admin
-  // For now, we'll leave this as a placeholder
-  // In a real implementation, we'd fetch the user and check their role
-  
-  next();
+  // Get user role from database and check if admin
+  // For now, we'll use a placeholder implementation
+  import('../services/authService').then(({ authService }) => {
+    authService.getUserById(req.session!.userId!)
+      .then(user => {
+        if (!user || user.role !== 'admin') {
+          return res.status(403).json({ error: 'Forbidden: Admin access required' });
+        }
+        next();
+      })
+      .catch(err => {
+        console.error('Error checking admin status:', err);
+        res.status(500).json({ error: 'Internal server error' });
+      });
+  });
 }
 
 /**
@@ -48,7 +59,10 @@ export function requireAdmin(req: Request & { session?: { userId?: number } }, r
 export function createSafeUser(user: any) {
   if (!user) return null;
   
-  // Return user without password
-  const { password, ...safeUser } = user;
-  return safeUser;
+  // Return only safe user data (exclude password)
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role
+  };
 }
