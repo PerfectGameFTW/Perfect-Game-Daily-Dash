@@ -76,15 +76,33 @@ export function createAuthRouter(): Router {
       }
 
       const { username, password } = validationResult.data;
+      console.log(`Login attempt for username: ${username}`);
+      
       const user = await authService.loginUser(username, password);
 
       if (!user) {
+        console.log(`Authentication failed for username: ${username}`);
         return res.status(401).json({ error: 'Invalid username or password' });
       }
 
       // Set user ID in session
       req.session.userId = user.id;
       req.session.username = user.username;
+      req.session.role = user.role;
+      
+      console.log(`User authenticated successfully: ${username} (ID: ${user.id}, Role: ${user.role})`);
+      
+      // Save session explicitly to ensure it's stored before response
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) {
+            console.error('Error saving session:', err);
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
       
       res.json({
         success: true,

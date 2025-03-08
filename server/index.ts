@@ -23,7 +23,9 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    secure: process.env.NODE_ENV === 'production'
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax', // Helps with CSRF protection but allows normal navigation
+    httpOnly: true // Prevents JavaScript access to cookie
   }
 }));
 
