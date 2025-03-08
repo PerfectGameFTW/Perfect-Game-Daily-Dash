@@ -4,6 +4,7 @@ import { format, isSameDay, subDays } from "date-fns";
 import { navigateDate, getFormattedDate } from "@/lib/dateUtils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { UserMenu } from "@/components/auth/UserMenu";
 
 interface HeaderProps {
   dateRange: DateRange;
@@ -161,7 +162,7 @@ export default function Header({
             </div>
             
             {onSync && (
-              <div className="flex items-center">
+              <div className="flex items-center gap-3">
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -181,6 +182,8 @@ export default function Header({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+                
+                <UserMenu />
               </div>
             )}
           </div>
