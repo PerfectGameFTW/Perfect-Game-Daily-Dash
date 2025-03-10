@@ -7,6 +7,7 @@ import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import Admin from "@/pages/Admin";
+import GiftCardTest from "@/pages/GiftCardTest";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useEffect } from "react";
@@ -46,6 +47,14 @@ function Router() {
         {() => (
           <ProtectedRoute requiredRole="admin">
             <Admin />
+          </ProtectedRoute>
+        )}
+      </Route>
+      
+      <Route path="/gift-card-test">
+        {() => (
+          <ProtectedRoute requiredRole="admin">
+            <GiftCardTest />
           </ProtectedRoute>
         )}
       </Route>
