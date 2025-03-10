@@ -4,7 +4,8 @@
  * This module provides a comprehensive solution to accurately determine
  * gift card activation amounts by linking gift cards to their original orders.
  */
-import { Pool } from 'pg';
+import pg from 'pg';
+const { Pool } = pg;
 import { db } from '../db';
 import { giftCards } from '../../shared/schema';
 import { eq, and, between, sql } from 'drizzle-orm';

@@ -341,8 +341,8 @@ export function createApiRouter(): Router {
    */
   router.post('/fix-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
     try {
-      // Import the new gift card activation fix service
-      const { fixGiftCardActivationAmounts } = require('../services/giftCardActivationFix');
+      // Import the new gift card activation fix service using import statement at the top of the file
+      const { fixGiftCardActivationAmounts } = await import('../services/giftCardActivationFix');
       
       // Run the improved fix
       const result = await fixGiftCardActivationAmounts();
@@ -353,6 +353,7 @@ export function createApiRouter(): Router {
         result
       });
     } catch (error) {
+      console.error('Error fixing gift card activation amounts:', error);
       next(error);
     }
   });
@@ -367,7 +368,7 @@ export function createApiRouter(): Router {
   router.get('/analyze-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
     try {
       // Import the gift card activation analysis service
-      const { analyzeGiftCardActivationAmounts } = require('../services/giftCardActivationFix');
+      const { analyzeGiftCardActivationAmounts } = await import('../services/giftCardActivationFix');
       
       // Run the analysis
       const analysis = await analyzeGiftCardActivationAmounts();
@@ -377,6 +378,7 @@ export function createApiRouter(): Router {
         analysis
       });
     } catch (error) {
+      console.error('Error analyzing gift card activation amounts:', error);
       next(error);
     }
   });
