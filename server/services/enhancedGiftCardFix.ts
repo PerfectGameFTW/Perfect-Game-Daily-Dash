@@ -11,10 +11,11 @@
  * 4. Future-proofing through automatic linking during creation
  */
 
-import { db } from '../db';
+import { db, sql } from '../db';
 import { giftCards, orders, transactions } from '@shared/schema';
-import { and, count, eq, isNull, sql } from 'drizzle-orm';
+import { and, count, eq, isNull } from 'drizzle-orm';
 import { fetchOrders, fetchGiftCards } from '../squareClient';
+import { pgStorage } from '../pgStorage';
 
 // Import the GiftCard type directly from schema
 import type { GiftCard as GiftCardType, Order } from '@shared/schema';
@@ -36,6 +37,19 @@ interface SquareOrder {
     };
   }>;
 }
+
+// Map JavaScript property names to database column names
+const DB_COLUMNS = {
+  // Gift Cards
+  activationAmount: 'activation_amount',
+  activationOrderId: 'activation_order_id',
+  activationSquareOrderId: 'activation_square_order_id',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
+  
+  // Orders
+  squareId: 'square_id'
+};
 
 /**
  * Result of a gift card fix operation
@@ -274,18 +288,180 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
  * @param giftCardId The ID of the newly created gift card
  * @returns The updated gift card with accurate activation amount
  */
-export async function fixNewGiftCardActivationAmount(giftCardId: number): Promise<any> {
-  // Implementation for new cards would use the same matching logic above
-  // but focused on just the one card
-  
+export async function fixNewGiftCardActivationAmount(giftCardId: number): Promise<{
+  id: number;
+  updated: boolean;
+  activationAmount?: number;
+  orderId?: number;
+  squareOrderId?: string;
+  source: string;
+  error?: string;
+}> {
   console.log(`Fixing activation amount for new gift card ${giftCardId}`);
   
-  // Simple implementation for testing - would use full implementation in production
-  return {
-    id: giftCardId,
-    updated: true,
-    source: 'New card creation flow'
-  };
+  try {
+    // 1. Get the gift card from database
+    const giftCardResult = await db.execute(sql`
+      SELECT id, gan, activation_amount, activation_order_id, activation_square_order_id, created_at
+      FROM gift_cards
+      WHERE id = ${giftCardId}
+    `);
+    
+    if (!giftCardResult.rows || giftCardResult.rows.length === 0) {
+      return {
+        id: giftCardId,
+        updated: false,
+        source: 'New card creation flow',
+        error: 'Gift card not found'
+      };
+    }
+    
+    const giftCard = giftCardResult.rows[0];
+    
+    // Check if already has activation amount and order link
+    if (
+      giftCard.activation_amount !== null && 
+      giftCard.activation_amount > 0 && 
+      giftCard.activation_order_id !== null
+    ) {
+      return {
+        id: giftCardId,
+        updated: false,
+        activationAmount: Number(giftCard.activation_amount),
+        orderId: Number(giftCard.activation_order_id),
+        squareOrderId: giftCard.activation_square_order_id,
+        source: 'Already has activation data'
+      };
+    }
+    
+    // 2. Fetch recent orders from Square API
+    const { fetchOrders } = await import('../squareClient');
+    
+    // Get orders within last 24 hours
+    const oneDayAgo = new Date();
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+    
+    const squareOrders = await fetchOrders(oneDayAgo);
+    console.log(`Fetched ${squareOrders.length} recent orders from Square API`);
+    
+    // 3. Find orders with matching GAN or close timestamp
+    const gan = giftCard.gan;
+    const createdAt = new Date(giftCard.created_at);
+    
+    // 3a. Try GAN matching first
+    if (gan) {
+      console.log(`Searching for orders with GAN ${gan}`);
+      const orderWithGan = squareOrders.find(order => {
+        // Check if this order contains a line item with this gift card's GAN
+        return order.lineItems?.some((item: any) => {
+          return item.note?.includes(gan) || 
+                 item.variationName?.includes(gan) ||
+                 item.name?.includes(gan);
+        });
+      });
+      
+      if (orderWithGan) {
+        console.log(`Found order with matching GAN: ${orderWithGan.id}`);
+        const orderAmount = extractGiftCardAmountFromOrder(orderWithGan, gan);
+        
+        if (orderAmount > 0) {
+          // Get or create order in our database
+          const orderFromDb = await getOrCreateOrderInDb(orderWithGan);
+          
+          // Update gift card with accurate amount and order link
+          await updateGiftCardActivation(
+            giftCardId, 
+            orderAmount, 
+            orderFromDb.id,
+            orderWithGan.id
+          );
+          
+          return {
+            id: giftCardId,
+            updated: true,
+            activationAmount: orderAmount,
+            orderId: orderFromDb.id,
+            squareOrderId: orderWithGan.id,
+            source: 'GAN match in order line items'
+          };
+        }
+      }
+    }
+    
+    // 3b. Try temporal matching (order within 15 minutes of gift card creation)
+    console.log(`Searching for orders within 15 minutes of gift card creation time: ${createdAt.toISOString()}`);
+    const giftCardTime = createdAt.getTime();
+    const ordersWithinTimeWindow = squareOrders.filter(order => {
+      const orderTime = new Date(order.createdAt).getTime();
+      const timeDifference = Math.abs(orderTime - giftCardTime);
+      return timeDifference < 15 * 60 * 1000; // 15 minutes in milliseconds
+    });
+    
+    // Further filter to only orders that have gift card line items
+    const giftCardOrdersInTimeWindow = ordersWithinTimeWindow.filter(order => {
+      return order.lineItems?.some((item: any) => 
+        item.name?.toLowerCase().includes('gift') ||
+        item.variationName?.toLowerCase().includes('gift') ||
+        item.catalogObjectId?.toLowerCase().includes('gift')
+      );
+    });
+    
+    if (giftCardOrdersInTimeWindow.length > 0) {
+      console.log(`Found ${giftCardOrdersInTimeWindow.length} gift card orders within time window`);
+      
+      // Sort by closest time match
+      giftCardOrdersInTimeWindow.sort((a, b) => {
+        const timeA = Math.abs(new Date(a.createdAt).getTime() - giftCardTime);
+        const timeB = Math.abs(new Date(b.createdAt).getTime() - giftCardTime);
+        return timeA - timeB;
+      });
+      
+      // Get closest matching order
+      const bestMatch = giftCardOrdersInTimeWindow[0];
+      console.log(`Best time match: Square order ${bestMatch.id} created at ${bestMatch.createdAt}`);
+      
+      // Extract correct activation amount from closest time-matching order
+      const orderAmount = extractGiftCardAmountFromOrder(bestMatch, gan || undefined);
+      
+      if (orderAmount > 0) {
+        // Get or create order in our database
+        const orderFromDb = await getOrCreateOrderInDb(bestMatch);
+        
+        // Update gift card with accurate amount and order link
+        await updateGiftCardActivation(
+          giftCardId, 
+          orderAmount, 
+          orderFromDb.id,
+          bestMatch.id
+        );
+        
+        return {
+          id: giftCardId,
+          updated: true,
+          activationAmount: orderAmount,
+          orderId: orderFromDb.id,
+          squareOrderId: bestMatch.id,
+          source: 'Temporal match (within 15 minutes)'
+        };
+      }
+    }
+    
+    // If we get here, we couldn't find a match
+    return {
+      id: giftCardId,
+      updated: false,
+      source: 'New card creation flow',
+      error: 'No matching order found'
+    };
+  } catch (error) {
+    console.error(`Error fixing new gift card ${giftCardId}:`, error);
+    return {
+      id: giftCardId,
+      updated: false,
+      source: 'New card creation flow',
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
 }
 
 /**
@@ -305,43 +481,50 @@ export async function analyzeGiftCardLinkingStatus(): Promise<{
   orderLinkPercentage: number;
   activationAmountPercentage: number;
 }> {
-  // Get total gift cards
-  const [giftCardCount] = await db.select({
-    count: count()
-  }).from(giftCards);
+  console.log('Starting gift card linking status analysis...');
   
-  // Get gift cards with activation amounts
-  const [withActivationAmount] = await db.select({
-    count: count()
-  }).from(giftCards)
-  .where(sql`activation_amount IS NOT NULL AND activation_amount > 0`);
-  
-  // Get gift cards with order links
-  const [withOrderLink] = await db.select({
-    count: count()
-  }).from(giftCards)
-  .where(sql`activation_order_id IS NOT NULL`);
-  
-  // Get average activation amount
-  const [avgActivation] = await db.select({
-    avg: sql<number>`AVG(activation_amount)`
-  }).from(giftCards)
-  .where(sql`activation_amount IS NOT NULL AND activation_amount > 0`);
-  
-  const totalCards = giftCardCount.count || 0;
-  const withAmount = withActivationAmount.count || 0;
-  const withLink = withOrderLink.count || 0;
-  const avgAmount = avgActivation.avg || 0;
-  
-  return {
-    totalGiftCards: totalCards,
-    withActivationAmount: withAmount,
-    withOrderLink: withLink,
-    avgActivationAmount: avgAmount,
-    cardsNeedingFix: totalCards - withAmount,
-    orderLinkPercentage: totalCards > 0 ? (withLink / totalCards) * 100 : 0,
-    activationAmountPercentage: totalCards > 0 ? (withAmount / totalCards) * 100 : 0
-  };
+  try {
+    // Use a single SQL query to get all statistics at once
+    const result = await db.execute(sql`
+      SELECT
+        (SELECT COUNT(*) FROM gift_cards) AS total_cards,
+        (SELECT COUNT(*) FROM gift_cards WHERE activation_amount IS NOT NULL AND activation_amount > 0) AS with_amount,
+        (SELECT COUNT(*) FROM gift_cards WHERE activation_order_id IS NOT NULL) AS with_link,
+        (SELECT AVG(activation_amount) FROM gift_cards WHERE activation_amount IS NOT NULL AND activation_amount > 0) AS avg_amount
+    `);
+    
+    // Safely extract values
+    const totalCards = Number(result.rows?.[0]?.total_cards || 0);
+    const withAmount = Number(result.rows?.[0]?.with_amount || 0);
+    const withLink = Number(result.rows?.[0]?.with_link || 0);
+    const avgAmount = Number(result.rows?.[0]?.avg_amount || 0);
+    
+    console.log('Gift card statistics:', {
+      totalCards,
+      withAmount,
+      withLink,
+      avgAmount
+    });
+    
+    // Calculate derived statistics
+    const report = {
+      totalGiftCards: totalCards,
+      withActivationAmount: withAmount,
+      withOrderLink: withLink,
+      avgActivationAmount: avgAmount,
+      cardsNeedingFix: totalCards - withAmount,
+      orderLinkPercentage: totalCards > 0 ? Math.round((withLink / totalCards) * 100) : 0,
+      activationAmountPercentage: totalCards > 0 ? Math.round((withAmount / totalCards) * 100) : 0
+    };
+    
+    // Log comprehensive results
+    console.log('Gift card analysis complete:', report);
+    
+    return report;
+  } catch (error) {
+    console.error('Error analyzing gift card linking status:', error);
+    throw error;
+  }
 }
 
 // Helper function to extract gift card amount from an order
@@ -403,25 +586,59 @@ function extractGiftCardAmountFromOrder(order: any, gan?: string): number {
 // Helper function to get or create an order in our database
 async function getOrCreateOrderInDb(squareOrder: SquareOrder): Promise<{ id: number }> {
   try {
-    // Try to find the order by using the pgStorage module which is already set up correctly
-    const pgStorage = await import('../pgStorage');
-    const existingOrder = await pgStorage.pgStorage.getOrderBySquareId(squareOrder.id);
-    
-    if (existingOrder) {
-      return { id: existingOrder.id };
+    // First, try to find the existing order
+    try {
+      const existingOrder = await pgStorage.getOrderBySquareId(squareOrder.id);
+      
+      if (existingOrder) {
+        console.log(`Found existing order with ID ${existingOrder.id} for Square order ${squareOrder.id}`);
+        return { id: existingOrder.id };
+      }
+    } catch (findError) {
+      console.error(`Error finding order by Square ID ${squareOrder.id}:`, findError);
+      // Continue to try creation
     }
     
-    // If not found, in a real implementation we would create the order
-    // but for this demo we'll use a mock ID
-    console.log('Order not found, would create in production');
-    return {
-      id: 12345 // Mock ID for testing - would be real in production
-    };
+    // If not found, try to create it
+    try {
+      console.log(`Attempting to create order for Square ID ${squareOrder.id}`);
+      const { convertSquareOrderToOrder } = await import('../squareClient');
+      const orderData = convertSquareOrderToOrder(squareOrder);
+      const newOrder = await pgStorage.createOrder(orderData);
+      console.log(`Created new order with ID ${newOrder.id}`);
+      return { id: newOrder.id };
+    } catch (createError) {
+      console.error(`Error creating order for Square ID ${squareOrder.id}:`, createError);
+      
+      // If creation fails, use a safe fallback approach
+      console.log(`Using fallback approach to find order by Square ID ${squareOrder.id}`);
+      
+      try {
+        // Use direct SQL query as a last resort
+        const result = await db.execute(sql`
+          SELECT id FROM orders 
+          WHERE square_id = ${squareOrder.id}
+          LIMIT 1
+        `);
+        
+        // Safely access results
+        const rows = result.rows;
+        if (rows && rows.length > 0 && rows[0].id) {
+          const orderId = Number(rows[0].id);
+          console.log(`Found order through fallback query: ${orderId}`);
+          return { id: orderId };
+        }
+      } catch (fallbackError) {
+        console.error(`Fallback query failed:`, fallbackError);
+      }
+      
+      // As a last resort, create a temporary placeholder order
+      console.warn(`Could not find or create order for Square ID ${squareOrder.id}`);
+      throw new Error(`Cannot find or create order for Square ID ${squareOrder.id}`);
+    }
   } catch (error) {
-    console.error('Error finding order:', error);
-    return {
-      id: 12345 // Mock ID for testing - would be real in production
-    };
+    console.error(`Error in getOrCreateOrderInDb:`, error);
+    throw error;
   }
 }
 
@@ -432,12 +649,21 @@ async function updateGiftCardActivation(
   orderId: number,
   squareOrderId: string
 ): Promise<void> {
-  await db.update(giftCards)
-  .set({
-    activationAmount: activationAmount,
-    activationOrderId: orderId,
-    activationSquareOrderId: squareOrderId,
-    updatedAt: new Date()
-  })
-  .where(eq(giftCards.id, giftCardId));
+  try {
+    // Use a prepared statement with proper parameter binding
+    await db.execute(sql`
+      UPDATE gift_cards
+      SET 
+        activation_amount = ${activationAmount},
+        activation_order_id = ${orderId},
+        activation_square_order_id = ${squareOrderId},
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ${giftCardId}
+    `);
+    
+    console.log(`Successfully updated gift card ${giftCardId} with activation amount ${activationAmount} linked to order ${orderId}`);
+  } catch (error) {
+    console.error(`Error updating gift card ${giftCardId}:`, error);
+    throw error;
+  }
 }

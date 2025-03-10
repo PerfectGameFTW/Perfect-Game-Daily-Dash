@@ -10,54 +10,13 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db';
 import { giftCards, transactions, orders } from '@shared/schema';
 import { count, eq, isNull, sql } from 'drizzle-orm';
+import { 
+  analyzeGiftCardLinkingStatus, 
+  fixAllGiftCardActivationAmounts,
+  fixNewGiftCardActivationAmount
+} from '../services/enhancedGiftCardFix';
 
 export const giftCardFixerRouter = Router();
-
-// Mock implementation while developing the real fix
-async function analyzeGiftCardLinkingStatus() {
-  // Get total gift cards
-  const [giftCardCount] = await db.select({
-    count: count()
-  }).from(giftCards);
-  
-  // Get gift cards with activation amounts
-  const [withActivationAmount] = await db.select({
-    count: count()
-  }).from(giftCards)
-  .where(sql`activation_amount IS NOT NULL AND activation_amount > 0`);
-  
-  // Get gift cards with order links
-  const [withOrderLink] = await db.select({
-    count: count()
-  }).from(giftCards)
-  .where(sql`activation_order_id IS NOT NULL`);
-  
-  // Get average activation amount
-  const [avgActivation] = await db.select({
-    avg: sql<number>`AVG(activation_amount)`
-  }).from(giftCards)
-  .where(sql`activation_amount IS NOT NULL AND activation_amount > 0`);
-  
-  return {
-    totalGiftCards: giftCardCount.count || 0,
-    withActivationAmount: withActivationAmount.count || 0,
-    withOrderLink: withOrderLink.count || 0,
-    avgActivationAmount: avgActivation.avg || 0,
-    cardsNeedingFix: (giftCardCount.count || 0) - (withActivationAmount.count || 0)
-  };
-}
-
-// Mock implementation of the fix function for testing
-async function fixAllGiftCardActivationAmounts() {
-  // Simulation of the real implementation
-  return {
-    totalProcessed: 100,
-    updated: 37,
-    alreadyCorrect: 59,
-    withoutActivation: 4,
-    details: []
-  };
-}
 
 /**
  * Fix ALL gift card activation amounts
