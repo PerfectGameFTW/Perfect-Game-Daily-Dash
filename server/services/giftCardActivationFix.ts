@@ -70,7 +70,9 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
           gc.activation_amount AS current_amount,
           o.id AS order_id,
           o.created_at AS order_timestamp,
-          COALESCE(oli.total_money, 0) AS order_amount,
+          -- Use base_price_money (original price) instead of total_money (which might be 0 due to discounts)
+          -- This is a critical fix for gift cards that were comped or had 100% discounts
+          COALESCE(oli.base_price_money, oli.total_money, 0) AS order_amount,
           -- Calculate time difference in seconds
           ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) AS time_diff_seconds
         FROM gift_cards gc
@@ -137,7 +139,8 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
           gc.activation_amount AS current_amount,
           o.id AS order_id,
           o.created_at AS order_timestamp,
-          oli.total_money AS order_amount
+          -- Use base_price_money (original price) instead of total_money (which might be 0 due to discounts)
+          COALESCE(oli.base_price_money, oli.total_money, 0) AS order_amount
         FROM gift_cards gc
         JOIN orders o ON o.square_data::text LIKE '%GIFT_CARD%' OR o.square_data::text LIKE '%gift card%' OR o.square_data::text LIKE '%Gift Card%'
         JOIN order_line_items oli ON 
