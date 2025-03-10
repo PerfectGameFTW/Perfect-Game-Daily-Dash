@@ -72,11 +72,11 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
           o.created_at AS order_timestamp,
           COALESCE(oli.total_money, 0) AS order_amount,
           -- Calculate time difference in seconds
-          ABS(EXTRACT(EPOCH FROM (gc.created_at - o.created_at))) AS time_diff_seconds
+          ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) AS time_diff_seconds
         FROM gift_cards gc
         -- Find orders created within 5 minutes (300 seconds) of gift card creation
         JOIN orders o ON 
-          ABS(EXTRACT(EPOCH FROM (gc.created_at - o.created_at))) < 300
+          ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) < 300
         -- Find order line items that could be gift cards
         JOIN order_line_items oli ON 
           oli.order_id = o.id AND 
@@ -93,8 +93,7 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
       UPDATE gift_cards gc
       SET 
         activation_amount = om.order_amount,
-        activation_order_id = om.order_id,
-        last_updated = NOW()
+        activation_payment_id = om.order_id
       FROM order_matches om
       WHERE gc.id = om.gift_card_id
       -- For each gift card, only take the best match (closest in time)
@@ -143,17 +142,16 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
         JOIN orders o ON o.square_data::text LIKE '%GIFT_CARD%' OR o.square_data::text LIKE '%gift card%' OR o.square_data::text LIKE '%Gift Card%'
         JOIN order_line_items oli ON 
           oli.order_id = o.id AND 
-          (oli.name ILIKE '%gift card%' OR oli.name ILIKE '%giftcard%' OR oli.item_type = 'GIFT_CARD')
+          (oli.name ILIKE '%gift card%' OR oli.name ILIKE '%giftcard%')
         WHERE 
           (gc.activation_amount IS NULL OR gc.activation_amount = 0) AND
           -- Time window of 24 hours to catch any outliers
-          gc.created_at BETWEEN (o.created_at - INTERVAL '24 hours') AND (o.created_at + INTERVAL '24 hours')
+          gc.purchase_date BETWEEN (o.created_at - INTERVAL '24 hours') AND (o.created_at + INTERVAL '24 hours')
       )
       UPDATE gift_cards gc
       SET 
         activation_amount = em.order_amount,
-        activation_order_id = em.order_id,
-        last_updated = NOW()
+        activation_payment_id = em.order_id
       FROM exact_matches em
       WHERE gc.id = em.gift_card_id
       RETURNING 
@@ -197,8 +195,7 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
       )
       UPDATE gift_cards gc
       SET 
-        activation_amount = bf.square_balance,
-        last_updated = NOW()
+        activation_amount = bf.square_balance
       FROM balance_fixes bf
       WHERE gc.id = bf.gift_card_id
       RETURNING 
@@ -279,7 +276,7 @@ export async function analyzeGiftCardActivationAmounts(): Promise<{
         COUNT(*) as total_cards,
         COUNT(CASE WHEN activation_amount > 0 THEN 1 END) as with_amount,
         COUNT(CASE WHEN activation_amount IS NULL OR activation_amount = 0 THEN 1 END) as without_amount,
-        COUNT(CASE WHEN activation_order_id IS NOT NULL THEN 1 END) as with_order_link,
+        COUNT(CASE WHEN activation_payment_id IS NOT NULL THEN 1 END) as with_order_link,
         ROUND(AVG(CASE WHEN activation_amount > 0 THEN activation_amount ELSE NULL END), 2) as avg_amount
       FROM gift_cards
     `);
@@ -315,12 +312,12 @@ export async function analyzeGiftCardActivationAmounts(): Promise<{
         gc.id, 
         gc.gan, 
         gc.activation_amount,
-        gc.activation_order_id,
-        gc.last_updated,
+        gc.activation_payment_id,
+        gc.purchase_date,
         gc.square_data
       FROM gift_cards gc
-      WHERE gc.last_updated IS NOT NULL
-      ORDER BY gc.last_updated DESC
+      WHERE gc.activation_amount > 0
+      ORDER BY gc.purchase_date DESC
       LIMIT 10
     `);
     
