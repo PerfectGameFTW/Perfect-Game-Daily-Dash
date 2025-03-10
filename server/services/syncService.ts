@@ -708,21 +708,33 @@ export class SyncService {
         errorMessage: null
       });
       
-      // Fetch gift cards from Square API with a timeout
-      const fetchPromise = squareClient.fetchGiftCards();
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Gift card fetch timed out after 2 minutes')), 120000);
-      });
-      
-      const squareGiftCards = await Promise.race([fetchPromise, timeoutPromise]) as any[];
-      
-      if (!squareGiftCards || !Array.isArray(squareGiftCards)) {
-        throw new Error('Failed to fetch gift cards: Invalid response format');
+      // Fetch gift cards from Square API with a stricter timeout
+      let squareGiftCards: any[] = [];
+      try {
+        const fetchPromise = squareClient.fetchGiftCards();
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Gift card fetch timed out after 30 seconds')), 30000);
+        });
+        
+        squareGiftCards = await Promise.race([fetchPromise, timeoutPromise]) as any[];
+        
+        if (!squareGiftCards || !Array.isArray(squareGiftCards)) {
+          throw new Error('Failed to fetch gift cards: Invalid response format');
+        }
+      } catch (error) {
+        console.error('Error fetching gift cards:', error);
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: 'error',
+          errorMessage: error instanceof Error ? error.message : 'Unknown error during fetch'
+        });
+        throw error;
       }
       
-      // Set a reasonable limit to prevent processing too many cards at once
-      const maxCardsToProcess = 1000; // Adjust as needed
+      // Set a much stricter limit to prevent processing too many cards at once
+      const maxCardsToProcess = 50; // Significantly reduced to prevent hanging
       const cardsToProcess = squareGiftCards.slice(0, maxCardsToProcess);
+      console.log(`Processing ${cardsToProcess.length} out of ${squareGiftCards.length} gift cards`);
       
       // Update state with total items
       await this.updateSyncState(state.id, {
@@ -730,9 +742,18 @@ export class SyncService {
         status: `Found ${cardsToProcess.length} gift cards to sync${cardsToProcess.length < squareGiftCards.length ? ' (limited to prevent timeout)' : ''}`
       });
       
-      // Process each gift card
+      // Process each gift card with a watchdog timer
+      const syncStartTime = Date.now();
+      const maxSyncTime = 2 * 60 * 1000; // 2 minutes maximum sync time
+      
       for (const squareGiftCard of cardsToProcess) {
         try {
+          // Check if we've exceeded the maximum sync time
+          if (Date.now() - syncStartTime > maxSyncTime) {
+            console.log('Maximum sync time reached, stopping sync to prevent hanging');
+            break;
+          }
+          
           // Convert Square gift card to our data model
           const giftCardData = squareClient.convertSquareGiftCardToGiftCard(squareGiftCard);
           
