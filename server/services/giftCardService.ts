@@ -79,19 +79,49 @@ export class GiftCardService {
   }
   
   /**
-   * Create a new gift card
+   * Create a new gift card with automatic order linking
+   * 
+   * This enhanced version not only creates a gift card but also:
+   * 1. Automatically finds the purchase order for accurate activation amount
+   * 2. Links the gift card to its activation order permanently
+   * 3. Sets the proper activation amount based on order data
    * 
    * @param giftCardData The gift card data to insert
-   * @returns The created gift card
+   * @returns The created gift card with accurate activation amount
    */
   async createGiftCard(giftCardData: InsertGiftCard): Promise<GiftCard> {
+    // First create the gift card with the data provided
     const result = await db.insert(giftCards).values(giftCardData).returning();
     
     if (!result.length) {
       throw new GiftCardError('Failed to create gift card', 'DB_ERROR');
     }
     
-    return result[0];
+    // Get the created gift card
+    const newGiftCard = result[0];
+    
+    try {
+      // Now enhance it with accurate activation amount by linking to its order
+      console.log(`Linking new gift card ${newGiftCard.id} to its order for accurate activation amount...`);
+      
+      // Import the enhanced gift card fix function for single cards
+      const { fixNewGiftCardActivationAmount } = await import('./enhancedGiftCardFix');
+      
+      // Fix the new gift card's activation amount
+      const enhancedGiftCard = await fixNewGiftCardActivationAmount(newGiftCard.id);
+      
+      // If enhanced card is available, return it, otherwise return the original
+      if (enhancedGiftCard) {
+        return enhancedGiftCard;
+      }
+    } catch (error) {
+      // Log the error but don't fail - we'll just return the original gift card
+      console.error(`Error enhancing new gift card ${newGiftCard.id}:`, error);
+      console.log('Continuing with original gift card data');
+    }
+    
+    // Return the original gift card if enhancement failed
+    return newGiftCard;
   }
   
   /**

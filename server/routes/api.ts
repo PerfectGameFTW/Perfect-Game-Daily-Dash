@@ -326,65 +326,71 @@ export function createApiRouter(): Router {
   });
   
   /**
-   * Fix Gift Card Activation Amounts API
+   * Fix ALL Gift Card Activation Amounts API
    * POST /api/fix-gift-cards
    * 
-   * This endpoint provides a comprehensive solution to the gift card activation amount issue,
+   * This endpoint provides a comprehensive solution to the gift card activation amount issue for ALL cards,
    * by properly linking gift cards to their original orders and extracting accurate activation amounts.
    * 
-   * Key Implementation:
-   * 1. Uses basePriceMoney instead of totalMoney for accurate pricing of discounted gift cards
-   * 2. Temporal + balance matching with orders (5-minute window)
-   * 3. Exact gift card item matching
-   * 4. Square balance extraction as a fallback
+   * Enhanced Implementation:
+   * 1. Direct Square API integration for both cards and order data
+   * 2. Multi-stage matching strategy with expanded timeframes:
+   *    a. Square Order ID direct matching when available
+   *    b. GAN (gift card number) matching with orders
+   *    c. Temporal matching (order within 30 minutes of gift card creation)
+   *    d. Line item name + amount matching
+   * 3. Permanent linking of gift cards to their activation orders
+   * 4. Future-proofing through automatic linking during creation
    * 
    * Critical Fix:
-   * - Properly handles gift cards with 100% discounts by using the original price (basePriceMoney)
-   *   rather than the discounted price (totalMoney)
-   * - This ensures gift cards that were comped or discounted still show their correct activation value
+   * - Works for ALL cards in the system, not just recent ones
+   * - Always uses basePriceMoney for accurate activation amounts on discounted cards
+   * - Creates permanent order links for future reference
    * 
    * Returns detailed results of the operation including counts and individual card fixes.
    */
   router.post('/fix-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
     try {
-      // Import the new gift card activation fix service using import statement at the top of the file
-      const { fixGiftCardActivationAmounts } = await import('../services/giftCardActivationFix');
+      // Import the enhanced gift card activation fix service
+      const { fixAllGiftCardActivationAmounts } = await import('../services/enhancedGiftCardFix');
       
-      // Run the improved fix
-      const result = await fixGiftCardActivationAmounts();
+      // Run the comprehensive fix for ALL cards
+      const result = await fixAllGiftCardActivationAmounts();
       
       res.json({
         success: true,
-        message: `Fixed ${result.updated} gift cards with activation amounts`,
+        message: `Fixed ${result.updated} gift cards with accurate activation amounts and order links`,
         result
       });
     } catch (error) {
-      console.error('Error fixing gift card activation amounts:', error);
+      console.error('Error fixing ALL gift card activation amounts:', error);
       next(error);
     }
   });
   
   /**
-   * Analyze Gift Card Activation Amounts API
+   * Analyze Gift Card Activation Amounts & Linking API
    * GET /api/analyze-gift-cards
    * 
-   * This endpoint provides detailed analysis of the current state of
-   * gift card activation amounts in the system.
+   * This endpoint provides comprehensive analysis of gift card activation amounts
+   * and their linking to original orders, including detailed statistics for monitoring
+   * the health of the gift card system.
    */
   router.get('/analyze-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
     try {
-      // Import the gift card activation analysis service
-      const { analyzeGiftCardActivationAmounts } = await import('../services/giftCardActivationFix');
+      // Import the enhanced gift card analysis service
+      const { analyzeGiftCardLinkingStatus } = await import('../services/enhancedGiftCardFix');
       
-      // Run the analysis
-      const analysis = await analyzeGiftCardActivationAmounts();
+      // Run the enhanced analysis
+      const analysis = await analyzeGiftCardLinkingStatus();
       
       res.json({
         success: true,
+        message: `Analysis complete: ${analysis.withOrderLink} of ${analysis.totalGiftCards} gift cards linked to orders`,
         analysis
       });
     } catch (error) {
-      console.error('Error analyzing gift card activation amounts:', error);
+      console.error('Error analyzing gift card linking status:', error);
       next(error);
     }
   });
