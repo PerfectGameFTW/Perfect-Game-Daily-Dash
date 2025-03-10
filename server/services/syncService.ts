@@ -465,6 +465,30 @@ export class SyncService {
       // Get or create sync state
       let state = await this.getSyncState('payments');
       
+      // Check if a sync is already in progress and prevent duplicate runs
+      if (state && state.status === 'in_progress') {
+        const lastSyncTime = state.lastSyncedAt ? new Date(state.lastSyncedAt) : new Date(0);
+        const currentTime = new Date();
+        const timeDifference = currentTime.getTime() - lastSyncTime.getTime();
+        const timeThreshold = 30 * 60 * 1000; // 30 minutes in milliseconds
+        
+        // If the last sync started less than 30 minutes ago and is still marked as in_progress,
+        // we consider it potentially stuck
+        if (timeDifference < timeThreshold) {
+          console.log(`Sync for payments already in progress. Started at ${lastSyncTime.toISOString()}`);
+          return { 
+            processed: state.processedCount || 0, 
+            created, 
+            updated, 
+            failed, 
+            alreadyRunning: true 
+          };
+        } else {
+          // If it's been running for more than 30 minutes, we'll assume it's stuck and restart it
+          console.log(`Previous payments sync appears to be stuck (running for ${Math.round(timeDifference/60000)} minutes). Restarting...`);
+        }
+      }
+      
       if (!state) {
         state = await this.createSyncState({
           syncType: 'payments',
@@ -583,6 +607,30 @@ export class SyncService {
       // Get or create sync state
       let state = await this.getSyncState('giftCards');
       
+      // Check if a sync is already in progress and prevent duplicate runs
+      if (state && state.status === 'in_progress') {
+        const lastSyncTime = state.lastSyncedAt ? new Date(state.lastSyncedAt) : new Date(0);
+        const currentTime = new Date();
+        const timeDifference = currentTime.getTime() - lastSyncTime.getTime();
+        const timeThreshold = 30 * 60 * 1000; // 30 minutes in milliseconds
+        
+        // If the last sync started less than 30 minutes ago and is still marked as in_progress,
+        // we consider it potentially stuck
+        if (timeDifference < timeThreshold) {
+          console.log(`Sync for gift cards already in progress. Started at ${lastSyncTime.toISOString()}`);
+          return { 
+            processed: state.processedCount || 0, 
+            created, 
+            updated, 
+            failed, 
+            alreadyRunning: true 
+          };
+        } else {
+          // If it's been running for more than 30 minutes, we'll assume it's stuck and restart it
+          console.log(`Previous gift cards sync appears to be stuck (running for ${Math.round(timeDifference/60000)} minutes). Restarting...`);
+        }
+      }
+      
       if (!state) {
         state = await this.createSyncState({
           syncType: 'giftCards',
@@ -599,22 +647,36 @@ export class SyncService {
       await this.updateSyncState(state.id, {
         isComplete: false,
         status: 'in_progress',
+        lastSyncedAt: new Date(), // Update the timestamp to now
         processedCount: 0,
         totalCount: 0,
         errorMessage: null
       });
       
-      // Fetch gift cards from Square API
-      const squareGiftCards = await squareClient.fetchGiftCards();
+      // Fetch gift cards from Square API with a timeout
+      const fetchPromise = squareClient.fetchGiftCards();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Gift card fetch timed out after 2 minutes')), 120000);
+      });
+      
+      const squareGiftCards = await Promise.race([fetchPromise, timeoutPromise]) as any[];
+      
+      if (!squareGiftCards || !Array.isArray(squareGiftCards)) {
+        throw new Error('Failed to fetch gift cards: Invalid response format');
+      }
+      
+      // Set a reasonable limit to prevent processing too many cards at once
+      const maxCardsToProcess = 1000; // Adjust as needed
+      const cardsToProcess = squareGiftCards.slice(0, maxCardsToProcess);
       
       // Update state with total items
       await this.updateSyncState(state.id, {
-        totalCount: squareGiftCards.length,
-        status: `Found ${squareGiftCards.length} gift cards to sync`
+        totalCount: cardsToProcess.length,
+        status: `Found ${cardsToProcess.length} gift cards to sync${cardsToProcess.length < squareGiftCards.length ? ' (limited to prevent timeout)' : ''}`
       });
       
       // Process each gift card
-      for (const squareGiftCard of squareGiftCards) {
+      for (const squareGiftCard of cardsToProcess) {
         try {
           // Convert Square gift card to our data model
           const giftCardData = squareClient.convertSquareGiftCardToGiftCard(squareGiftCard);
@@ -643,10 +705,10 @@ export class SyncService {
           processed++;
           
           // Update sync state progress
-          if (processed % 10 === 0 || processed === squareGiftCards.length) {
+          if (processed % 10 === 0 || processed === cardsToProcess.length) {
             await this.updateSyncState(state.id, {
               processedCount: processed,
-              status: `Processed ${processed} of ${squareGiftCards.length} gift cards`
+              status: `Processed ${processed} of ${cardsToProcess.length} gift cards`
             });
           }
         } catch (error) {
