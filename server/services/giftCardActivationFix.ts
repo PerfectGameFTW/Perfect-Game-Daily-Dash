@@ -76,25 +76,27 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
           -- Calculate time difference in seconds
           ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) AS time_diff_seconds
         FROM gift_cards gc
-        -- Find orders created within 5 minutes (300 seconds) of gift card creation
+        -- Find orders created within 15 minutes (900 seconds) of gift card creation
         JOIN orders o ON 
-          ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) < 300
+          ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) < 900
         -- Find order line items that could be gift cards
         JOIN order_line_items oli ON 
           oli.order_id = o.id AND 
           oli.is_gift_card = TRUE
-        -- Check that amounts match (gift card balance = order line item amount)
+        -- Loosen the WHERE clause to match more gift cards:
+        -- 1. We don't require balance to match anymore (many gift cards have been used)
+        -- 2. We update any card with default $50 value that has an actual order value
         WHERE 
-          -- Convert balanceMoney in square_data from cents to dollars for comparison
-          -- We need to match with base_price_money for gift cards with discounts
-          (gc.square_data->>'balanceMoney')::json->>'amount' IS NOT NULL AND
           (
-            CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) = CAST(oli.base_price_money AS NUMERIC(10,2))
-            OR
-            CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) = CAST(oli.total_money AS NUMERIC(10,2))
+            -- Target gift cards with $50 default values or no activation amount
+            (gc.activation_amount = 50 OR gc.activation_amount IS NULL OR gc.activation_amount = 0)
+            AND
+            -- Ensure the order line item has a valid amount
+            (oli.base_price_money > 0 OR oli.total_money > 0)
+            AND
+            -- If the card has a $50 activation amount, the order should have a different value
+            (gc.activation_amount <> oli.base_price_money AND gc.activation_amount <> oli.total_money)
           )
-          AND (gc.activation_amount IS NULL OR gc.activation_amount = 0 OR 
-               (ABS(gc.activation_amount - oli.base_price_money) > 0.01 AND ABS(gc.activation_amount - oli.total_money) > 0.01))
         -- Get the closest match by time
         ORDER BY time_diff_seconds ASC
       )
