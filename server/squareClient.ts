@@ -1,9 +1,8 @@
-// Add BigInt serialization override at the top
-if (typeof BigInt.prototype.toJSON !== 'function') {
- (BigInt.prototype as any).toJSON = function() {
-   return this.toString();
- };
-}
+// Add BigInt serialization override at the top level
+// This is a safer approach that doesn't modify the prototype
+(BigInt.prototype as any).toJSON = function() {
+  return this.toString();
+};
 
 // Add testConnection method
 export async function testConnection(): Promise<{ success: boolean, message: string }> {

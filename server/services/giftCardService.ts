@@ -313,6 +313,10 @@ export class GiftCardService {
   /**
    * Fix gift card activation amounts based on payment data
    * 
+   * @deprecated Use the more comprehensive solution in giftCardActivationFix.ts instead,
+   * which properly links gift cards to orders and extracts accurate activation amounts
+   * using multiple matching strategies.
+   * 
    * @returns Number of fixed gift cards
    */
   async fixGiftCardActivationAmounts(): Promise<number> {
@@ -344,8 +348,8 @@ export class GiftCardService {
               AND square_id = gc.square_id
             ORDER BY timestamp
             LIMIT 1
-          ), 0),
-          50.00  -- Default activation amount if no transaction found
+          ), 0)
+          -- Removed default $50 value to avoid inaccurate data
         )
       WHERE 
         (gc.activation_amount IS NULL OR gc.activation_amount = 0)
@@ -357,6 +361,9 @@ export class GiftCardService {
     if (result.rows && result.rows.length > 0) {
       console.log(`Sample fixed cards: ${JSON.stringify(result.rows.slice(0, 5))}`);
     }
+    
+    // For better accuracy, recommend using the more comprehensive fix from giftCardActivationFix.ts
+    console.log('Note: For more accurate activation amounts, use POST /api/fix-gift-cards endpoint');
     
     return result.rowCount || 0;
   }
