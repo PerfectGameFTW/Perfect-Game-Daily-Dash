@@ -94,7 +94,12 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
   console.log(`Found ${allGiftCards.length} gift cards in database`);
   
   // 2. Fetch fresh order and gift card data from Square API
-  const squareOrders = await fetchOrders();
+  // Use a much longer date range (2 years) to ensure we capture all historical gift card activations
+  const twoYearsAgo = new Date();
+  twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+  
+  console.log(`Fetching orders with extended date range: ${twoYearsAgo.toISOString()} to ${new Date().toISOString()}`);
+  const squareOrders = await fetchOrders(twoYearsAgo);
   console.log(`Fetched ${squareOrders.length} orders from Square API`);
   
   const squareGiftCards = await fetchGiftCards();
