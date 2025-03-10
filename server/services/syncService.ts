@@ -277,6 +277,7 @@ export class SyncService {
     created: number;
     updated: number;
     failed: number;
+    alreadyRunning?: boolean;
   }> {
     // Initialize counters
     let processed = 0;
@@ -287,6 +288,30 @@ export class SyncService {
     try {
       // Get or create sync state
       let state = await this.getSyncState('orders');
+      
+      // Check if a sync is already in progress and prevent duplicate runs
+      if (state && state.status === 'in_progress') {
+        const lastSyncTime = state.lastSyncedAt ? new Date(state.lastSyncedAt) : new Date(0);
+        const currentTime = new Date();
+        const timeDifference = currentTime.getTime() - lastSyncTime.getTime();
+        const timeThreshold = 30 * 60 * 1000; // 30 minutes in milliseconds
+        
+        // If the last sync started less than 30 minutes ago and is still marked as in_progress,
+        // we consider it potentially stuck
+        if (timeDifference < timeThreshold) {
+          console.log(`Sync for orders already in progress. Started at ${lastSyncTime.toISOString()}`);
+          return { 
+            processed: state.processedCount || 0, 
+            created, 
+            updated, 
+            failed, 
+            alreadyRunning: true 
+          };
+        } else {
+          // If it's been running for more than 30 minutes, we'll assume it's stuck and restart it
+          console.log(`Previous orders sync appears to be stuck (running for ${Math.round(timeDifference/60000)} minutes). Restarting...`);
+        }
+      }
       
       if (!state) {
         state = await this.createSyncState({
@@ -304,40 +329,54 @@ export class SyncService {
       await this.updateSyncState(state.id, {
         isComplete: false,
         status: 'in_progress',
+        lastSyncedAt: new Date(), // Update the timestamp to now
         processedCount: 0,
         totalCount: 0,
         errorMessage: null
       });
       
-      // Fetch orders from Square API
-      const squareOrders = await squareClient.fetchOrders(startDate, endDate);
+      // Fetch orders from Square API with a timeout
+      const fetchPromise = squareClient.fetchOrders(startDate, endDate);
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Order fetch timed out after 2 minutes')), 120000);
+      });
+      
+      const squareOrders = await Promise.race([fetchPromise, timeoutPromise]) as any[];
+      
+      if (!squareOrders || !Array.isArray(squareOrders)) {
+        throw new Error('Failed to fetch orders: Invalid response format');
+      }
+      
+      // Set a reasonable limit to prevent processing too many orders at once
+      const maxOrdersToProcess = 500; // Adjust as needed
+      const ordersToProcess = squareOrders.slice(0, maxOrdersToProcess);
       
       // Update state with total items
       await this.updateSyncState(state.id, {
-        totalCount: squareOrders.length,
-        status: `Found ${squareOrders.length} orders to sync`
+        totalCount: ordersToProcess.length,
+        status: `Found ${ordersToProcess.length} orders to sync${ordersToProcess.length < squareOrders.length ? ' (limited to prevent timeout)' : ''}`
       });
       
       // Process each order
-      for (const squareOrder of squareOrders) {
+      for (const squareOrder of ordersToProcess) {
         try {
           // Convert Square order to our data model
           const orderData = squareClient.convertSquareOrderToOrder(squareOrder);
           
           // Check if order exists
-          let existingOrder;
+          let existingOrder: any = null;
           try {
             existingOrder = await orderService.getOrderBySquareId(orderData.squareId);
           } catch (error) {
             // Order doesn't exist, which is fine
           }
           
-          if (existingOrder) {
+          if (existingOrder && typeof existingOrder === 'object' && existingOrder !== null) {
             // Order exists, skip for now (could implement update logic here)
             updated++;
           } else {
             // Order doesn't exist, create it
-            await orderService.createOrder(orderData);
+            const createdOrder = await orderService.createOrder(orderData);
             
             // Extract and create line items
             if (squareOrder.lineItems) {
@@ -346,13 +385,19 @@ export class SyncService {
                 let orderId = 0;
                 
                 // Type safe way to access order ID
-                if (existingOrder) {
+                if (existingOrder && typeof existingOrder === 'object' && existingOrder !== null && 'id' in existingOrder) {
                   // existingOrder is an Order type from getOrderBySquareId
-                  orderId = existingOrder.id;
-                } else if (orderData && 'id' in orderData && typeof orderData.id === 'number') {
-                  // orderData is from createOrder which returns an Order
-                  orderId = orderData.id;
+                  orderId = Number(existingOrder.id);
+                } else if (createdOrder && typeof createdOrder === 'object' && createdOrder !== null && 'id' in createdOrder) {
+                  // createdOrder is from createOrder which returns an Order
+                  orderId = Number(createdOrder.id);
                 }
+                
+                if (orderId === 0) {
+                  console.warn('Could not determine order ID for line item, skipping');
+                  continue;
+                }
+                
                 const lineItemData = squareClient.convertSquareLineItemToOrderLineItem(
                   squareLineItem,
                   orderId
@@ -381,13 +426,19 @@ export class SyncService {
                 let orderId = 0;
                 
                 // Type safe way to access order ID
-                if (existingOrder) {
+                if (existingOrder && typeof existingOrder === 'object' && existingOrder !== null && 'id' in existingOrder) {
                   // existingOrder is an Order type from getOrderBySquareId
-                  orderId = existingOrder.id;
-                } else if (orderData && 'id' in orderData && typeof orderData.id === 'number') {
-                  // orderData is from createOrder which returns an Order
-                  orderId = orderData.id;
+                  orderId = Number(existingOrder.id);
+                } else if (createdOrder && typeof createdOrder === 'object' && createdOrder !== null && 'id' in createdOrder) {
+                  // createdOrder is from createOrder which returns an Order
+                  orderId = Number(createdOrder.id);
                 }
+                
+                if (orderId === 0) {
+                  console.warn('Could not determine order ID for discount, skipping');
+                  continue;
+                }
+                
                 const discountData = squareClient.convertSquareDiscountToOrderDiscount(
                   squareDiscount,
                   orderId
@@ -403,10 +454,10 @@ export class SyncService {
           processed++;
           
           // Update sync state progress
-          if (processed % 10 === 0 || processed === squareOrders.length) {
+          if (processed % 10 === 0 || processed === ordersToProcess.length) {
             await this.updateSyncState(state.id, {
               processedCount: processed,
-              status: `Processed ${processed} of ${squareOrders.length} orders`
+              status: `Processed ${processed} of ${ordersToProcess.length} orders`
             });
           }
         } catch (error) {
