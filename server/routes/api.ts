@@ -12,6 +12,7 @@ import { giftCardService } from '../services/giftCardService';
 import { syncService } from '../services/syncService';
 import { paymentService } from '../services/paymentService';
 import { DateRange, dateRangeSchema } from '../../shared/schema';
+import { giftCardFixerRouter } from '../api/giftCardFixer';
 
 export function createApiRouter(): Router {
   const router = Router();
@@ -394,6 +395,9 @@ export function createApiRouter(): Router {
       next(error);
     }
   });
+  
+  // Use gift card fixer router for dedicated API endpoints
+  router.use(giftCardFixerRouter);
   
   return router;
 }

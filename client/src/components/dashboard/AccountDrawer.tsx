@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, User, LogOut } from "lucide-react";
+import { ShieldCheck, User, LogOut, CreditCard, CircleCheck } from "lucide-react";
 import { useLocation } from "wouter";
 
 interface AccountDrawerProps {
@@ -61,6 +61,16 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
               <User className="h-5 w-5 text-primary" />
               Dashboard
             </Button>
+            {user?.role === 'admin' && (
+              <Button 
+                variant="outline" 
+                className="w-full text-left justify-start gap-2 border-white/20 hover:bg-white/10"
+                onClick={() => handleNavigate('/gift-card-test')}
+              >
+                <CreditCard className="h-5 w-5 text-primary" />
+                Gift Card Test
+              </Button>
+            )}
             <Button 
               variant="outline" 
               className="w-full text-left justify-start gap-2 border-white/20 hover:bg-white/10"
