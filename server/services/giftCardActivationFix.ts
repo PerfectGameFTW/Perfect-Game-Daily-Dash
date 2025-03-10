@@ -1,0 +1,348 @@
+/**
+ * Gift Card Activation Fix Service
+ * 
+ * This module provides a comprehensive solution to accurately determine
+ * gift card activation amounts by linking gift cards to their original orders.
+ */
+import { Pool } from 'pg';
+import { db } from '../db';
+import { giftCards } from '../../shared/schema';
+import { eq, and, between, sql } from 'drizzle-orm';
+
+/**
+ * Result of a gift card fix operation
+ */
+interface GiftCardFixResult {
+  totalProcessed: number;
+  updated: number;
+  alreadyCorrect: number;
+  withoutActivation: number;
+  details: {
+    id: number;
+    gan: string;
+    previousAmount: number;
+    newAmount: number;
+    source: string;
+    orderId?: number;
+    orderTimestamp?: Date;
+  }[];
+}
+
+/**
+ * Fix gift card activation amounts using order data
+ * 
+ * This function:
+ * 1. Identifies gift cards needing activation amount updates
+ * 2. Matches gift cards to orders using temporal and balance matching
+ * 3. Updates gift cards with accurate activation amounts from order data
+ * 4. Returns detailed results of the operation
+ * 
+ * @returns Detailed results of the fix operation
+ */
+export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult> {
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL
+  });
+  
+  try {
+    console.log('Starting improved gift card activation amount fix...');
+    
+    // Get total gift card count for reporting
+    const totalCards = await pool.query(`SELECT COUNT(*) FROM gift_cards`);
+    const totalCardCount = parseInt(totalCards.rows[0].count || '0');
+    
+    // Initialize result object
+    const result: GiftCardFixResult = {
+      totalProcessed: totalCardCount,
+      updated: 0,
+      alreadyCorrect: 0,
+      withoutActivation: 0,
+      details: []
+    };
+    
+    // First approach: Match using temporal + balance matching with orders
+    const temporalFixes = await pool.query(`
+      WITH order_matches AS (
+        SELECT 
+          gc.id AS gift_card_id,
+          gc.gan,
+          gc.activation_amount AS current_amount,
+          o.id AS order_id,
+          o.created_at AS order_timestamp,
+          COALESCE(oli.total_money, 0) AS order_amount,
+          -- Calculate time difference in seconds
+          ABS(EXTRACT(EPOCH FROM (gc.created_at - o.created_at))) AS time_diff_seconds
+        FROM gift_cards gc
+        -- Find orders created within 5 minutes (300 seconds) of gift card creation
+        JOIN orders o ON 
+          ABS(EXTRACT(EPOCH FROM (gc.created_at - o.created_at))) < 300
+        -- Find order line items that could be gift cards
+        JOIN order_line_items oli ON 
+          oli.order_id = o.id AND 
+          oli.is_gift_card = TRUE
+        -- Check that amounts match (gift card balance = order line item amount)
+        WHERE 
+          -- Convert balanceMoney in square_data from cents to dollars for comparison
+          (gc.square_data->>'balanceMoney')::json->>'amount' IS NOT NULL AND
+          ROUND((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100), 2) = ROUND(oli.total_money, 2)
+          AND (gc.activation_amount IS NULL OR gc.activation_amount = 0 OR ABS(gc.activation_amount - oli.total_money) > 0.01)
+        -- Get the closest match by time
+        ORDER BY time_diff_seconds ASC
+      )
+      UPDATE gift_cards gc
+      SET 
+        activation_amount = om.order_amount,
+        activation_order_id = om.order_id,
+        last_updated = NOW()
+      FROM order_matches om
+      WHERE gc.id = om.gift_card_id
+      -- For each gift card, only take the best match (closest in time)
+      AND om.time_diff_seconds = (
+        SELECT MIN(time_diff_seconds) 
+        FROM order_matches 
+        WHERE gift_card_id = om.gift_card_id
+      )
+      RETURNING 
+        gc.id,
+        gc.gan,
+        om.current_amount AS previous_amount,
+        gc.activation_amount AS new_amount,
+        'temporal_balance_match' AS source,
+        om.order_id,
+        om.order_timestamp
+    `);
+    
+    console.log(`Fixed ${temporalFixes.rowCount || 0} gift cards using temporal + balance matching`);
+    
+    // Add details to the result
+    if (temporalFixes.rows && temporalFixes.rows.length > 0) {
+      result.updated += temporalFixes.rowCount;
+      result.details.push(...temporalFixes.rows.map(row => ({
+        id: row.id,
+        gan: row.gan,
+        previousAmount: parseFloat(row.previous_amount || '0'),
+        newAmount: parseFloat(row.new_amount),
+        source: row.source,
+        orderId: row.order_id,
+        orderTimestamp: row.order_timestamp ? new Date(row.order_timestamp) : undefined
+      })));
+    }
+    
+    // Second approach: Match gift cards with zero activation amounts to orders with exact line items
+    const exactItemFixes = await pool.query(`
+      WITH exact_matches AS (
+        SELECT 
+          gc.id AS gift_card_id,
+          gc.gan,
+          gc.activation_amount AS current_amount,
+          o.id AS order_id,
+          o.created_at AS order_timestamp,
+          oli.total_money AS order_amount
+        FROM gift_cards gc
+        JOIN orders o ON o.square_data::text LIKE '%GIFT_CARD%' OR o.square_data::text LIKE '%gift card%' OR o.square_data::text LIKE '%Gift Card%'
+        JOIN order_line_items oli ON 
+          oli.order_id = o.id AND 
+          (oli.name ILIKE '%gift card%' OR oli.name ILIKE '%giftcard%' OR oli.item_type = 'GIFT_CARD')
+        WHERE 
+          (gc.activation_amount IS NULL OR gc.activation_amount = 0) AND
+          -- Time window of 24 hours to catch any outliers
+          gc.created_at BETWEEN (o.created_at - INTERVAL '24 hours') AND (o.created_at + INTERVAL '24 hours')
+      )
+      UPDATE gift_cards gc
+      SET 
+        activation_amount = em.order_amount,
+        activation_order_id = em.order_id,
+        last_updated = NOW()
+      FROM exact_matches em
+      WHERE gc.id = em.gift_card_id
+      RETURNING 
+        gc.id,
+        gc.gan,
+        em.current_amount AS previous_amount,
+        gc.activation_amount AS new_amount,
+        'exact_item_match' AS source,
+        em.order_id,
+        em.order_timestamp
+    `);
+    
+    console.log(`Fixed ${exactItemFixes.rowCount || 0} gift cards using exact item matching`);
+    
+    // Add details to the result
+    if (exactItemFixes.rows && exactItemFixes.rows.length > 0) {
+      result.updated += exactItemFixes.rowCount;
+      result.details.push(...exactItemFixes.rows.map(row => ({
+        id: row.id,
+        gan: row.gan,
+        previousAmount: parseFloat(row.previous_amount || '0'),
+        newAmount: parseFloat(row.new_amount),
+        source: row.source,
+        orderId: row.order_id,
+        orderTimestamp: row.order_timestamp ? new Date(row.order_timestamp) : undefined
+      })));
+    }
+    
+    // Third fallback: Use balance + redeemed amount as activation amount for remaining cards
+    const fallbackFixes = await pool.query(`
+      WITH balance_fixes AS (
+        SELECT 
+          gc.id AS gift_card_id,
+          gc.gan,
+          gc.activation_amount AS current_amount,
+          ROUND((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100), 2) AS square_balance
+        FROM gift_cards gc
+        WHERE 
+          (gc.activation_amount IS NULL OR gc.activation_amount = 0) AND
+          gc.square_data->>'balanceMoney' IS NOT NULL
+      )
+      UPDATE gift_cards gc
+      SET 
+        activation_amount = bf.square_balance,
+        last_updated = NOW()
+      FROM balance_fixes bf
+      WHERE gc.id = bf.gift_card_id
+      RETURNING 
+        gc.id,
+        gc.gan,
+        bf.current_amount AS previous_amount,
+        gc.activation_amount AS new_amount,
+        'square_balance' AS source
+    `);
+    
+    console.log(`Fixed ${fallbackFixes.rowCount || 0} gift cards using Square balance fallback`);
+    
+    // Add details to the result
+    if (fallbackFixes.rows && fallbackFixes.rows.length > 0) {
+      result.updated += fallbackFixes.rowCount;
+      result.details.push(...fallbackFixes.rows.map(row => ({
+        id: row.id,
+        gan: row.gan,
+        previousAmount: parseFloat(row.previous_amount || '0'),
+        newAmount: parseFloat(row.new_amount),
+        source: row.source
+      })));
+    }
+    
+    // Get final stats to complete the result
+    const finalStats = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN activation_amount > 0 THEN 1 END) as with_amount,
+        COUNT(CASE WHEN activation_amount IS NULL OR activation_amount = 0 THEN 1 END) as without_amount
+      FROM gift_cards
+    `);
+    
+    if (finalStats.rows && finalStats.rows.length > 0) {
+      result.alreadyCorrect = parseInt(finalStats.rows[0].with_amount) - result.updated;
+      result.withoutActivation = parseInt(finalStats.rows[0].without_amount || '0');
+    }
+    
+    console.log(`
+      Gift card activation fix complete:
+      - Total gift cards: ${result.totalProcessed}
+      - Updated: ${result.updated}
+      - Already correct: ${result.alreadyCorrect}
+      - Still without activation amount: ${result.withoutActivation}
+    `);
+    
+    return result;
+    
+  } catch (error) {
+    console.error('Error fixing gift card activation amounts:', error);
+    throw error;
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
+ * Analyze and report on gift card activation amounts
+ * 
+ * This function generates a detailed report on the current state
+ * of gift card activation amounts in the system.
+ * 
+ * @returns Analysis report
+ */
+export async function analyzeGiftCardActivationAmounts(): Promise<{
+  totalGiftCards: number;
+  withActivationAmount: number;
+  withoutActivationAmount: number;
+  withOrderLink: number;
+  avgActivationAmount: number;
+  amountDistribution: Record<string, number>;
+  recentFixedCards: any[];
+}> {
+  try {
+    // Query for basic statistics
+    const statsResult = await db.execute(sql`
+      SELECT 
+        COUNT(*) as total_cards,
+        COUNT(CASE WHEN activation_amount > 0 THEN 1 END) as with_amount,
+        COUNT(CASE WHEN activation_amount IS NULL OR activation_amount = 0 THEN 1 END) as without_amount,
+        COUNT(CASE WHEN activation_order_id IS NOT NULL THEN 1 END) as with_order_link,
+        ROUND(AVG(CASE WHEN activation_amount > 0 THEN activation_amount ELSE NULL END), 2) as avg_amount
+      FROM gift_cards
+    `);
+    
+    // Query for amount distribution
+    const distributionResult = await db.execute(sql`
+      SELECT 
+        CASE 
+          WHEN activation_amount = 0 THEN '0'
+          WHEN activation_amount <= 25 THEN '1-25'
+          WHEN activation_amount <= 50 THEN '26-50'
+          WHEN activation_amount <= 100 THEN '51-100'
+          WHEN activation_amount <= 200 THEN '101-200'
+          ELSE 'Over 200'
+        END as amount_range,
+        COUNT(*) as count
+      FROM gift_cards
+      GROUP BY amount_range
+      ORDER BY 
+        CASE 
+          WHEN amount_range = '0' THEN 0
+          WHEN amount_range = '1-25' THEN 1
+          WHEN amount_range = '26-50' THEN 2
+          WHEN amount_range = '51-100' THEN 3
+          WHEN amount_range = '101-200' THEN 4
+          ELSE 5
+        END
+    `);
+    
+    // Get recently fixed cards
+    const recentFixesResult = await db.execute(sql`
+      SELECT 
+        gc.id, 
+        gc.gan, 
+        gc.activation_amount,
+        gc.activation_order_id,
+        gc.last_updated,
+        gc.square_data
+      FROM gift_cards gc
+      WHERE gc.last_updated IS NOT NULL
+      ORDER BY gc.last_updated DESC
+      LIMIT 10
+    `);
+    
+    // Format the distribution data
+    const distribution: Record<string, number> = {};
+    if (distributionResult.rows) {
+      distributionResult.rows.forEach((row: any) => {
+        distribution[row.amount_range] = parseInt(row.count);
+      });
+    }
+    
+    // Return the complete analysis
+    return {
+      totalGiftCards: parseInt(statsResult.rows?.[0]?.total_cards || '0'),
+      withActivationAmount: parseInt(statsResult.rows?.[0]?.with_amount || '0'),
+      withoutActivationAmount: parseInt(statsResult.rows?.[0]?.without_amount || '0'),
+      withOrderLink: parseInt(statsResult.rows?.[0]?.with_order_link || '0'),
+      avgActivationAmount: parseFloat(statsResult.rows?.[0]?.avg_amount || '0'),
+      amountDistribution: distribution,
+      recentFixedCards: recentFixesResult.rows || []
+    };
+  } catch (error) {
+    console.error('Error analyzing gift card activation amounts:', error);
+    throw error;
+  }
+}
