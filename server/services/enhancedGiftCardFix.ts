@@ -373,16 +373,14 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
                   const itemQuantity = lineItem.quantity ? parseInt(lineItem.quantity) : 1;
                   const itemTotalMoney = lineItemData.totalMoney || 0;
                   const itemBasePriceMoney = lineItemData.basePriceMoney || itemTotalMoney || 0;
-                  const itemVariationName = lineItem.variationName || '';
-                  const itemNote = lineItem.note || '';
                   
-                  // Insert line item
+                  // Insert line item - skip the properties that don't exist in lineItemData
                   await pool.query(`
                     INSERT INTO order_line_items (
                       order_id, square_id, name, quantity, total_money, 
-                      base_price_money, variation_name, note, is_gift_card
+                      base_price_money, is_gift_card
                     ) VALUES (
-                      $1, $2, $3, $4, $5, $6, $7, $8, $9
+                      $1, $2, $3, $4, $5, $6, $7
                     )
                   `, [
                     orderId,
@@ -391,8 +389,6 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
                     itemQuantity,
                     itemTotalMoney,
                     itemBasePriceMoney,
-                    itemVariationName,
-                    itemNote,
                     isGiftCard
                   ]);
                 }
