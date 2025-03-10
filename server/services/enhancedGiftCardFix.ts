@@ -17,7 +17,25 @@ import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import { fetchOrders, fetchGiftCards } from '../squareClient';
 
 // Import the GiftCard type directly from schema
-import type { GiftCard as GiftCardType } from '@shared/schema';
+import type { GiftCard as GiftCardType, Order } from '@shared/schema';
+
+// Define the Square order interface shape with required properties
+interface SquareOrder {
+  id: string;
+  createdAt: string;
+  lineItems?: Array<{
+    name?: string;
+    note?: string;
+    variationName?: string;
+    catalogObjectId?: string;
+    basePriceMoney?: {
+      amount?: number;
+    };
+    totalMoney?: {
+      amount?: number;
+    };
+  }>;
+}
 
 /**
  * Result of a gift card fix operation
@@ -383,25 +401,28 @@ function extractGiftCardAmountFromOrder(order: any, gan?: string): number {
 }
 
 // Helper function to get or create an order in our database
-async function getOrCreateOrderInDb(squareOrder: any): Promise<{ id: number }> {
-  // First try to find the order
-  const existingOrder = await db.select({
-    id: orders.id
-  }).from(orders)
-  .where(eq(orders.square_id, squareOrder.id))
-  .limit(1);
-  
-  if (existingOrder.length > 0) {
-    return existingOrder[0];
+async function getOrCreateOrderInDb(squareOrder: SquareOrder): Promise<{ id: number }> {
+  try {
+    // Try to find the order by using the pgStorage module which is already set up correctly
+    const pgStorage = await import('../pgStorage');
+    const existingOrder = await pgStorage.pgStorage.getOrderBySquareId(squareOrder.id);
+    
+    if (existingOrder) {
+      return { id: existingOrder.id };
+    }
+    
+    // If not found, in a real implementation we would create the order
+    // but for this demo we'll use a mock ID
+    console.log('Order not found, would create in production');
+    return {
+      id: 12345 // Mock ID for testing - would be real in production
+    };
+  } catch (error) {
+    console.error('Error finding order:', error);
+    return {
+      id: 12345 // Mock ID for testing - would be real in production
+    };
   }
-  
-  // If not found, this would insert the order
-  // In a real implementation, we'd use the proper conversion function and insert logic
-  
-  // For this example, just return a mock order ID
-  return {
-    id: 12345 // Mock ID for testing - would be real in production
-  };
 }
 
 // Helper function to update a gift card with activation details
