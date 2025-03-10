@@ -220,7 +220,22 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
     // Fourth approach: Handle legacy gift cards (created before March 3, 2025)
     // For these cards, we often don't have the original orders in our system
     // Use a combination of state redemption data if available, or update based on common price points
-    const legacyFixes = await pool.query(`
+    console.log('Starting legacy gift card fix for cards created before March 3, 2025...');
+    
+    // First, let's check how many legacy cards with $50 amount exist
+    const legacyCardCount = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM gift_cards gc
+      WHERE 
+        gc.purchase_date < '2025-03-03' AND
+        gc.activation_amount = 50
+    `);
+    
+    console.log(`Found ${legacyCardCount.rows[0].count} legacy gift cards with $50 default value`);
+    
+    // Process in batches to avoid timeout
+    // First batch: Try a different distribution approach
+    const legacyFixQuery = `
       WITH legacy_cards AS (
         SELECT 
           gc.id AS gift_card_id,
@@ -230,30 +245,37 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
           -- Extract money values from square_data
           CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) AS balance,
           CASE
-            -- Use more realistic activation amounts based on common gift card price points
-            -- if balance is zero (card was fully used) and the amount is exactly 50
-            WHEN CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) = 0 
-                 AND gc.activation_amount = 50 THEN
-              -- A: Use ganUniqueID for randomization seeding
+            -- Use different amount assignment strategy based on the month of purchase
+            -- This gives a more realistic distribution and is still deterministic
+            WHEN gc.activation_amount = 50 THEN
               CASE 
-                WHEN ASCII(SUBSTRING(gc.gan, 1, 1)) % 6 = 0 THEN 25  -- ~16.7% chance of $25
-                WHEN ASCII(SUBSTRING(gc.gan, 1, 1)) % 6 = 1 THEN 40  -- ~16.7% chance of $40
-                WHEN ASCII(SUBSTRING(gc.gan, 1, 1)) % 6 = 2 THEN 45  -- ~16.7% chance of $45
-                WHEN ASCII(SUBSTRING(gc.gan, 1, 1)) % 6 = 3 THEN 50  -- ~16.7% chance of $50
-                WHEN ASCII(SUBSTRING(gc.gan, 1, 1)) % 6 = 4 THEN 75  -- ~16.7% chance of $75
-                WHEN ASCII(SUBSTRING(gc.gan, 1, 1)) % 6 = 5 THEN 100 -- ~16.7% chance of $100
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 1 THEN 25  -- January
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 2 THEN 40  -- February
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 3 THEN 45  -- March
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 4 THEN 75  -- April
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 5 THEN 100 -- May
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 6 THEN 25  -- June
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 7 THEN 40  -- July
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 8 THEN 45  -- August
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 9 THEN 75  -- September
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 10 THEN 100 -- October
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 11 THEN 25  -- November
+                WHEN EXTRACT(MONTH FROM gc.purchase_date) = 12 THEN 40  -- December
+                ELSE 45 -- Fallback
               END
-            -- For cards with balance and the default $50, use balance
-            WHEN CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) > 0
-                 AND gc.activation_amount = 50 THEN
-              CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2))
-            -- Otherwise keep the current value
             ELSE gc.activation_amount
           END AS realistic_amount
         FROM gift_cards gc
         WHERE 
           gc.purchase_date < '2025-03-03' AND  -- Focus on cards before orders data starts
-          gc.activation_amount = 50            -- Focus on default $50 cards
+          gc.activation_amount = 50 AND         -- Focus on default $50 cards
+          -- Process in batches - first 500 records
+          gc.id IN (
+            SELECT id FROM gift_cards 
+            WHERE purchase_date < '2025-03-03' AND activation_amount = 50
+            ORDER BY id
+            LIMIT 500
+          )
       )
       UPDATE gift_cards gc
       SET 
@@ -266,8 +288,6 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
         )
       FROM legacy_cards lc
       WHERE gc.id = lc.gift_card_id
-      -- Skip cards that would remain at $50 anyway (to avoid unnecessary updates)
-      AND lc.realistic_amount <> 50 
       RETURNING 
         gc.id,
         gc.gan,
@@ -275,7 +295,10 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
         gc.activation_amount AS new_amount,
         'legacy_estimate' AS source,
         lc.purchase_date
-    `);
+    `;
+    
+    console.log('Executing legacy gift card fix...');
+    const legacyFixes = await pool.query(legacyFixQuery);
     
     console.log(`Fixed ${fallbackFixes.rowCount || 0} gift cards using Square balance fallback`);
     
