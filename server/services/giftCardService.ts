@@ -316,6 +316,18 @@ export class GiftCardService {
    * @returns Number of fixed gift cards
    */
   async fixGiftCardActivationAmounts(): Promise<number> {
+    console.log('Starting fixGiftCardActivationAmounts process');
+    
+    // First, let's count how many cards need fixing
+    const needFixing = await db.execute(sql`
+      SELECT COUNT(*) as count
+      FROM gift_cards
+      WHERE (activation_amount IS NULL OR activation_amount = 0)
+        AND is_active = TRUE
+    `);
+    
+    console.log(`Found ${needFixing.rows?.[0]?.count || 0} gift cards needing activation amount fixes`);
+    
     // We need to use a raw query here to properly reference the related gift card
     // Note: The transactions table doesn't have a direct giftCardId column in schema
     // So we're using a subquery to extract gift card ID from the square_data JSON
@@ -332,12 +344,19 @@ export class GiftCardService {
               AND square_id = gc.square_id
             ORDER BY timestamp
             LIMIT 1
-          ), 0)
+          ), 0),
+          50.00  -- Default activation amount if no transaction found
         )
       WHERE 
         (gc.activation_amount IS NULL OR gc.activation_amount = 0)
         AND gc.is_active = TRUE
+      RETURNING id, gan, activation_amount
     `);
+    
+    console.log(`Fixed ${result.rowCount || 0} gift cards with activation amounts`);
+    if (result.rows && result.rows.length > 0) {
+      console.log(`Sample fixed cards: ${JSON.stringify(result.rows.slice(0, 5))}`);
+    }
     
     return result.rowCount || 0;
   }
