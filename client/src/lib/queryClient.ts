@@ -8,11 +8,28 @@ async function throwIfResNotOk(res: Response) {
 }
 
 export async function apiRequest(
-  url: string,
-  options: RequestInit = {}
+  methodOrUrl: string,
+  urlOrOptions?: string | RequestInit,
+  optionsOrUndefined?: RequestInit
 ): Promise<any> {
+  let method = 'GET';
+  let url: string;
+  let options: RequestInit = {};
+
+  // Handle different parameter patterns
+  if (urlOrOptions && typeof urlOrOptions === 'string') {
+    // First form: apiRequest('GET', '/api/endpoint')
+    method = methodOrUrl;
+    url = urlOrOptions;
+    options = optionsOrUndefined || {};
+  } else {
+    // Second form: apiRequest('/api/endpoint', {options})
+    url = methodOrUrl;
+    options = (urlOrOptions as RequestInit) || {};
+  }
+
   const defaultOptions: RequestInit = {
-    method: 'GET',
+    method,
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
@@ -21,15 +38,21 @@ export async function apiRequest(
 
   const mergedOptions = { ...defaultOptions, ...options };
   
-  const res = await fetch(url, mergedOptions);
-  await throwIfResNotOk(res);
-  
-  // Try to parse as JSON if the content exists and is JSON
-  if (res.headers.get('content-type')?.includes('application/json')) {
-    return res.json();
+  console.log(`API request: ${method} ${url}`);
+  try {
+    const res = await fetch(url, mergedOptions);
+    await throwIfResNotOk(res);
+    
+    // Try to parse as JSON if the content exists and is JSON
+    if (res.headers.get('content-type')?.includes('application/json')) {
+      return res.json();
+    }
+    
+    return res;
+  } catch (error) {
+    console.error(`API request failed: ${method} ${url}`, error);
+    throw error;
   }
-  
-  return res;
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
