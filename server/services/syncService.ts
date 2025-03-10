@@ -3,6 +3,8 @@
  * 
  * Handles synchronization of data with the Square API.
  * Provides a clean API for other services to trigger synchronization.
+ * 
+ * NOTE: This version includes important fixes to prevent infinite loops and handle timeouts.
  */
 
 import { db } from '../db';
@@ -454,6 +456,7 @@ export class SyncService {
     created: number;
     updated: number;
     failed: number;
+    alreadyRunning?: boolean;
   }> {
     // Initialize counters
     let processed = 0;
@@ -596,6 +599,7 @@ export class SyncService {
     created: number;
     updated: number;
     failed: number;
+    alreadyRunning?: boolean;
   }> {
     // Initialize counters
     let processed = 0;
