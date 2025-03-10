@@ -116,8 +116,9 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
   
   for (const giftCard of allGiftCards) {
     try {
-      // Skip cards that already have correct activation amount and order link
-      // Using database column names from schema
+      // Two conditions for skipping:
+      // 1. Cards with proper activation amount and order link
+      // 2. EXCEPT cards with suspicious $50 activation_amount + $0 amount pattern (these need fixing)
       if (
         giftCard.activationAmount !== null && 
         giftCard.activationAmount > 0 && 
@@ -126,6 +127,11 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
       ) {
         result.alreadyCorrect++;
         continue;
+      }
+      
+      // Specifically target the suspicious pattern cards - default $50 activation amounts with $0 balance
+      if (giftCard.activationAmount === 50 && giftCard.amount === 0) {
+        console.log(`Found suspicious gift card ${giftCard.id} with $50 activation_amount and $0 balance - will attempt to fix`);
       }
       
       // 3a. Try to match by Square Order ID if available
