@@ -86,9 +86,15 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
         -- Check that amounts match (gift card balance = order line item amount)
         WHERE 
           -- Convert balanceMoney in square_data from cents to dollars for comparison
+          -- We need to match with base_price_money for gift cards with discounts
           (gc.square_data->>'balanceMoney')::json->>'amount' IS NOT NULL AND
-          CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) = CAST(oli.total_money AS NUMERIC(10,2))
-          AND (gc.activation_amount IS NULL OR gc.activation_amount = 0 OR ABS(gc.activation_amount - oli.total_money) > 0.01)
+          (
+            CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) = CAST(oli.base_price_money AS NUMERIC(10,2))
+            OR
+            CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) = CAST(oli.total_money AS NUMERIC(10,2))
+          )
+          AND (gc.activation_amount IS NULL OR gc.activation_amount = 0 OR 
+               (ABS(gc.activation_amount - oli.base_price_money) > 0.01 AND ABS(gc.activation_amount - oli.total_money) > 0.01))
         -- Get the closest match by time
         ORDER BY time_diff_seconds ASC
       )

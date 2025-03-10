@@ -336,10 +336,17 @@ export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: num
       itemName.toLowerCase().includes('giftcard')));
   
   if (isGiftCard) {
-    console.log(`Found gift card line item: ${itemName} with value: ${safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0}`);
+    // Use basePriceMoney instead of totalMoney for gift card activation amount
+    // This ensures we get the correct amount even when the gift card was discounted or comped
+    const basePrice = safeLineItem.basePriceMoney ? Number(safeLineItem.basePriceMoney.amount) / 100 : 0;
+    const finalPrice = safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0;
+    
+    console.log(`Found gift card line item: ${itemName} with base price: $${basePrice}, final price: $${finalPrice}`);
+    
     // Add gift card metadata to the squareData
     safeLineItem.isGiftCard = true;
-    safeLineItem.giftCardAmount = safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0;
+    // Prioritize using the base price for gift card value (before discounts)
+    safeLineItem.giftCardAmount = basePrice || finalPrice;
   }
 
   // Determine the category for the item
