@@ -234,7 +234,7 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
     console.log(`Found ${legacyCardCount.rows[0].count} legacy gift cards with $50 default value`);
     
     // Process in batches to avoid timeout
-    // First batch: Try a different distribution approach
+    // First batch: Try a different distribution approach using unprocessed cards only
     const legacyFixQuery = `
       WITH legacy_cards AS (
         SELECT 
@@ -268,14 +268,9 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
         FROM gift_cards gc
         WHERE 
           gc.purchase_date < '2025-03-03' AND  -- Focus on cards before orders data starts
-          gc.activation_amount = 50 AND         -- Focus on default $50 cards
-          -- Process in batches - first 500 records
-          gc.id IN (
-            SELECT id FROM gift_cards 
-            WHERE purchase_date < '2025-03-03' AND activation_amount = 50
-            ORDER BY id
-            LIMIT 500
-          )
+          gc.activation_amount = 50 AND        -- Focus on default $50 cards
+          (gc.square_data->'legacyActivationEstimate') IS NULL -- Only unprocessed cards
+        LIMIT 500 -- Process in batches
       )
       UPDATE gift_cards gc
       SET 
