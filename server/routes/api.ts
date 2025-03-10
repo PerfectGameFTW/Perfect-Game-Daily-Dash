@@ -332,10 +332,16 @@ export function createApiRouter(): Router {
    * This endpoint provides a comprehensive solution to the gift card activation amount issue,
    * by properly linking gift cards to their original orders and extracting accurate activation amounts.
    * 
-   * It implements:
-   * 1. Temporal + balance matching with orders (5-minute window)
-   * 2. Exact gift card item matching
-   * 3. Square balance extraction as a fallback
+   * Key Implementation:
+   * 1. Uses basePriceMoney instead of totalMoney for accurate pricing of discounted gift cards
+   * 2. Temporal + balance matching with orders (5-minute window)
+   * 3. Exact gift card item matching
+   * 4. Square balance extraction as a fallback
+   * 
+   * Critical Fix:
+   * - Properly handles gift cards with 100% discounts by using the original price (basePriceMoney)
+   *   rather than the discounted price (totalMoney)
+   * - This ensures gift cards that were comped or discounted still show their correct activation value
    * 
    * Returns detailed results of the operation including counts and individual card fixes.
    */
