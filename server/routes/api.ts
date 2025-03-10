@@ -328,15 +328,53 @@ export function createApiRouter(): Router {
   /**
    * Fix Gift Card Activation Amounts API
    * POST /api/fix-gift-cards
+   * 
+   * This endpoint provides a comprehensive solution to the gift card activation amount issue,
+   * by properly linking gift cards to their original orders and extracting accurate activation amounts.
+   * 
+   * It implements:
+   * 1. Temporal + balance matching with orders (5-minute window)
+   * 2. Exact gift card item matching
+   * 3. Square balance extraction as a fallback
+   * 
+   * Returns detailed results of the operation including counts and individual card fixes.
    */
   router.post('/fix-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
     try {
-      const fixedCount = await giftCardService.fixGiftCardActivationAmounts();
+      // Import the new gift card activation fix service
+      const { fixGiftCardActivationAmounts } = require('../services/giftCardActivationFix');
+      
+      // Run the improved fix
+      const result = await fixGiftCardActivationAmounts();
       
       res.json({
         success: true,
-        message: 'Gift card activation amounts fixed successfully',
-        fixedCount
+        message: `Fixed ${result.updated} gift cards with activation amounts`,
+        result
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+  
+  /**
+   * Analyze Gift Card Activation Amounts API
+   * GET /api/analyze-gift-cards
+   * 
+   * This endpoint provides detailed analysis of the current state of
+   * gift card activation amounts in the system.
+   */
+  router.get('/analyze-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      // Import the gift card activation analysis service
+      const { analyzeGiftCardActivationAmounts } = require('../services/giftCardActivationFix');
+      
+      // Run the analysis
+      const analysis = await analyzeGiftCardActivationAmounts();
+      
+      res.json({
+        success: true,
+        analysis
       });
     } catch (error) {
       next(error);

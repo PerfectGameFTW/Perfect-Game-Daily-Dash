@@ -116,7 +116,7 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
     
     // Add details to the result
     if (temporalFixes.rows && temporalFixes.rows.length > 0) {
-      result.updated += temporalFixes.rowCount;
+      result.updated += temporalFixes.rowCount || 0;
       result.details.push(...temporalFixes.rows.map(row => ({
         id: row.id,
         gan: row.gan,
@@ -169,7 +169,7 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
     
     // Add details to the result
     if (exactItemFixes.rows && exactItemFixes.rows.length > 0) {
-      result.updated += exactItemFixes.rowCount;
+      result.updated += exactItemFixes.rowCount || 0;
       result.details.push(...exactItemFixes.rows.map(row => ({
         id: row.id,
         gan: row.gan,
@@ -212,7 +212,7 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
     
     // Add details to the result
     if (fallbackFixes.rows && fallbackFixes.rows.length > 0) {
-      result.updated += fallbackFixes.rowCount;
+      result.updated += fallbackFixes.rowCount || 0;
       result.details.push(...fallbackFixes.rows.map(row => ({
         id: row.id,
         gan: row.gan,
@@ -327,17 +327,25 @@ export async function analyzeGiftCardActivationAmounts(): Promise<{
     const distribution: Record<string, number> = {};
     if (distributionResult.rows) {
       distributionResult.rows.forEach((row: any) => {
-        distribution[row.amount_range] = parseInt(row.count);
+        distribution[row.amount_range || '0'] = parseInt(String(row.count) || '0');
       });
     }
     
+    // Process stats with safe handling for potential null/undefined
+    const stats = statsResult.rows?.[0] || {};
+    const totalCards = stats.total_cards ? parseInt(String(stats.total_cards)) : 0;
+    const withAmount = stats.with_amount ? parseInt(String(stats.with_amount)) : 0;
+    const withoutAmount = stats.without_amount ? parseInt(String(stats.without_amount)) : 0;
+    const withOrderLink = stats.with_order_link ? parseInt(String(stats.with_order_link)) : 0;
+    const avgAmount = stats.avg_amount ? parseFloat(String(stats.avg_amount)) : 0;
+    
     // Return the complete analysis
     return {
-      totalGiftCards: parseInt(statsResult.rows?.[0]?.total_cards || '0'),
-      withActivationAmount: parseInt(statsResult.rows?.[0]?.with_amount || '0'),
-      withoutActivationAmount: parseInt(statsResult.rows?.[0]?.without_amount || '0'),
-      withOrderLink: parseInt(statsResult.rows?.[0]?.with_order_link || '0'),
-      avgActivationAmount: parseFloat(statsResult.rows?.[0]?.avg_amount || '0'),
+      totalGiftCards: totalCards,
+      withActivationAmount: withAmount,
+      withoutActivationAmount: withoutAmount,
+      withOrderLink: withOrderLink,
+      avgActivationAmount: avgAmount,
       amountDistribution: distribution,
       recentFixedCards: recentFixesResult.rows || []
     };
