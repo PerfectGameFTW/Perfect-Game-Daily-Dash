@@ -10,6 +10,7 @@ import {
   foreignKey,
   primaryKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -173,6 +174,10 @@ export const giftCards = pgTable("gift_cards", {
   purchaseDate: timestamp("purchase_date", { withTimezone: true }).notNull(),
   squareData: jsonb("square_data"),
   gan: text("gan"), // Gift Card Account Number for matching with orders
+  activationOrderId: integer("activation_order_id").references(() => orders.id), // Link to order when activated
+  activationSquareOrderId: text("activation_square_order_id"), // Original Square order ID for matching
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 export const insertGiftCardSchema = createInsertSchema(giftCards).omit({

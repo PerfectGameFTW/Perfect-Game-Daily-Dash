@@ -16,6 +16,9 @@ import { giftCards, orders, transactions } from '@shared/schema';
 import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import { fetchOrders, fetchGiftCards } from '../squareClient';
 
+// Import the GiftCard type directly from schema
+import type { GiftCard as GiftCardType } from '@shared/schema';
+
 /**
  * Result of a gift card fix operation
  */
@@ -96,7 +99,8 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
         
         if (matchingOrder) {
           // Extract correct activation amount from order
-          const orderAmount = extractGiftCardAmountFromOrder(matchingOrder, giftCard.gan);
+          // Handle potential null gan with optional chaining and nullish coalescing
+          const orderAmount = extractGiftCardAmountFromOrder(matchingOrder, giftCard.gan || undefined);
           
           if (orderAmount > 0) {
             // Get or create order in our database
@@ -113,8 +117,8 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
             result.updated++;
             result.details.push({
               id: giftCard.id,
-              gan: giftCard.gan,
-              previousAmount: giftCard.activation_amount,
+              gan: giftCard.gan || '',  // Use empty string for null gan
+              previousAmount: giftCard.activationAmount || 0,
               newAmount: orderAmount,
               source: 'Square Order ID direct match',
               orderId: orderFromDb.id,
@@ -130,7 +134,7 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
       // 3b. Try to match by GAN (gift card number) in order line items
       const orderWithGan = squareOrders.find(order => {
         // Check if this order contains a line item with this gift card's GAN
-        return order.lineItems?.some(item => {
+        return order.lineItems?.some((item: any) => {
           return item.note?.includes(giftCard.gan) || 
                  item.variationName?.includes(giftCard.gan) ||
                  item.name?.includes(giftCard.gan);
@@ -139,7 +143,7 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
       
       if (orderWithGan) {
         // Extract correct activation amount from order
-        const orderAmount = extractGiftCardAmountFromOrder(orderWithGan, giftCard.gan);
+        const orderAmount = extractGiftCardAmountFromOrder(orderWithGan, giftCard.gan || undefined);
         
         if (orderAmount > 0) {
           // Get or create order in our database
@@ -156,8 +160,8 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
           result.updated++;
           result.details.push({
             id: giftCard.id,
-            gan: giftCard.gan,
-            previousAmount: giftCard.activation_amount,
+            gan: giftCard.gan || '',
+            previousAmount: giftCard.activationAmount || 0,
             newAmount: orderAmount,
             source: 'GAN match in order line items',
             orderId: orderFromDb.id,
@@ -170,7 +174,7 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
       }
       
       // 3c. Try temporal matching (order within 15 minutes of gift card creation)
-      const giftCardTime = new Date(giftCard.created_at).getTime();
+      const giftCardTime = new Date(giftCard.createdAt).getTime();
       const ordersWithinTimeWindow = squareOrders.filter(order => {
         const orderTime = new Date(order.createdAt).getTime();
         const timeDifference = Math.abs(orderTime - giftCardTime);
@@ -179,7 +183,7 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
       
       // Further filter to only orders that have gift card line items
       const giftCardOrdersInTimeWindow = ordersWithinTimeWindow.filter(order => {
-        return order.lineItems?.some(item => 
+        return order.lineItems?.some((item: any) => 
           item.name?.toLowerCase().includes('gift') ||
           item.name?.toLowerCase().includes('cards') ||
           item.catalogObjectId?.toLowerCase().includes('gift')
@@ -198,7 +202,7 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
         const bestMatch = giftCardOrdersInTimeWindow[0];
         
         // Extract correct activation amount from closest time-matching order
-        const orderAmount = extractGiftCardAmountFromOrder(bestMatch, giftCard.gan);
+        const orderAmount = extractGiftCardAmountFromOrder(bestMatch, giftCard.gan || undefined);
         
         if (orderAmount > 0) {
           // Get or create order in our database
@@ -215,8 +219,8 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
           result.updated++;
           result.details.push({
             id: giftCard.id,
-            gan: giftCard.gan,
-            previousAmount: giftCard.activation_amount,
+            gan: giftCard.gan || '',
+            previousAmount: giftCard.activationAmount || 0,
             newAmount: orderAmount,
             source: 'Temporal match (within 15 minutes)',
             orderId: orderFromDb.id,
@@ -409,10 +413,10 @@ async function updateGiftCardActivation(
 ): Promise<void> {
   await db.update(giftCards)
   .set({
-    activation_amount: activationAmount,
-    activation_order_id: orderId,
-    activation_square_order_id: squareOrderId,
-    updated_at: new Date()
+    activationAmount: activationAmount,
+    activationOrderId: orderId,
+    activationSquareOrderId: squareOrderId,
+    updatedAt: new Date()
   })
   .where(eq(giftCards.id, giftCardId));
 }
