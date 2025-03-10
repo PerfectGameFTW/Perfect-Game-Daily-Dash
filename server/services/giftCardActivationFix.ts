@@ -277,31 +277,39 @@ export async function analyzeGiftCardActivationAmounts(): Promise<{
         COUNT(CASE WHEN activation_amount > 0 THEN 1 END) as with_amount,
         COUNT(CASE WHEN activation_amount IS NULL OR activation_amount = 0 THEN 1 END) as without_amount,
         COUNT(CASE WHEN activation_payment_id IS NOT NULL THEN 1 END) as with_order_link,
-        ROUND(AVG(CASE WHEN activation_amount > 0 THEN activation_amount ELSE NULL END), 2) as avg_amount
+        CAST(AVG(CASE WHEN activation_amount > 0 THEN activation_amount ELSE NULL END) AS DECIMAL(10,2)) as avg_amount
       FROM gift_cards
     `);
     
-    // Query for amount distribution
+    // Query for amount distribution - using simpler approach with numeric ranges
     const distributionResult = await db.execute(sql`
       SELECT 
         CASE 
-          WHEN activation_amount = 0 THEN '0'
-          WHEN activation_amount <= 25 THEN '1-25'
-          WHEN activation_amount <= 50 THEN '26-50'
-          WHEN activation_amount <= 100 THEN '51-100'
-          WHEN activation_amount <= 200 THEN '101-200'
+          WHEN activation_amount < 1 THEN '0'
+          WHEN activation_amount BETWEEN 1 AND 25 THEN '1-25'
+          WHEN activation_amount BETWEEN 26 AND 50 THEN '26-50'
+          WHEN activation_amount BETWEEN 51 AND 100 THEN '51-100'
+          WHEN activation_amount BETWEEN 101 AND 200 THEN '101-200'
           ELSE 'Over 200'
-        END as amount_range,
+        END as range_name,
         COUNT(*) as count
       FROM gift_cards
-      GROUP BY amount_range
+      GROUP BY 
+        CASE 
+          WHEN activation_amount < 1 THEN '0'
+          WHEN activation_amount BETWEEN 1 AND 25 THEN '1-25'
+          WHEN activation_amount BETWEEN 26 AND 50 THEN '26-50'
+          WHEN activation_amount BETWEEN 51 AND 100 THEN '51-100'
+          WHEN activation_amount BETWEEN 101 AND 200 THEN '101-200'
+          ELSE 'Over 200'
+        END
       ORDER BY 
         CASE 
-          WHEN amount_range = '0' THEN 0
-          WHEN amount_range = '1-25' THEN 1
-          WHEN amount_range = '26-50' THEN 2
-          WHEN amount_range = '51-100' THEN 3
-          WHEN amount_range = '101-200' THEN 4
+          WHEN range_name = '0' THEN 0
+          WHEN range_name = '1-25' THEN 1
+          WHEN range_name = '26-50' THEN 2
+          WHEN range_name = '51-100' THEN 3
+          WHEN range_name = '101-200' THEN 4
           ELSE 5
         END
     `);
@@ -325,7 +333,7 @@ export async function analyzeGiftCardActivationAmounts(): Promise<{
     const distribution: Record<string, number> = {};
     if (distributionResult.rows) {
       distributionResult.rows.forEach((row: any) => {
-        distribution[row.amount_range || '0'] = parseInt(String(row.count) || '0');
+        distribution[row.range_name || '0'] = parseInt(String(row.count) || '0');
       });
     }
     
