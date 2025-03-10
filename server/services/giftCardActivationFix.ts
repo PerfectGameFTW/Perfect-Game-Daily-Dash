@@ -85,7 +85,7 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
         WHERE 
           -- Convert balanceMoney in square_data from cents to dollars for comparison
           (gc.square_data->>'balanceMoney')::json->>'amount' IS NOT NULL AND
-          ROUND((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100), 2) = ROUND(oli.total_money, 2)
+          CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) = CAST(oli.total_money AS NUMERIC(10,2))
           AND (gc.activation_amount IS NULL OR gc.activation_amount = 0 OR ABS(gc.activation_amount - oli.total_money) > 0.01)
         -- Get the closest match by time
         ORDER BY time_diff_seconds ASC
@@ -187,7 +187,7 @@ export async function fixGiftCardActivationAmounts(): Promise<GiftCardFixResult>
           gc.id AS gift_card_id,
           gc.gan,
           gc.activation_amount AS current_amount,
-          ROUND((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100), 2) AS square_balance
+          CAST((((gc.square_data->>'balanceMoney')::json->>'amount')::numeric / 100) AS NUMERIC(10,2)) AS square_balance
         FROM gift_cards gc
         WHERE 
           (gc.activation_amount IS NULL OR gc.activation_amount = 0) AND
@@ -281,7 +281,8 @@ export async function analyzeGiftCardActivationAmounts(): Promise<{
       FROM gift_cards
     `);
     
-    // Query for amount distribution - using simpler approach with numeric ranges
+    // Query for amount distribution - using simpler approach with numeric ranges 
+    // and fixing the ORDER BY clause to reference the CASE expression directly
     const distributionResult = await db.execute(sql`
       SELECT 
         CASE 
@@ -294,22 +295,49 @@ export async function analyzeGiftCardActivationAmounts(): Promise<{
         END as range_name,
         COUNT(*) as count
       FROM gift_cards
-      GROUP BY 
-        CASE 
-          WHEN activation_amount < 1 THEN '0'
-          WHEN activation_amount BETWEEN 1 AND 25 THEN '1-25'
-          WHEN activation_amount BETWEEN 26 AND 50 THEN '26-50'
-          WHEN activation_amount BETWEEN 51 AND 100 THEN '51-100'
-          WHEN activation_amount BETWEEN 101 AND 200 THEN '101-200'
-          ELSE 'Over 200'
-        END
+      GROUP BY 1
       ORDER BY 
         CASE 
-          WHEN range_name = '0' THEN 0
-          WHEN range_name = '1-25' THEN 1
-          WHEN range_name = '26-50' THEN 2
-          WHEN range_name = '51-100' THEN 3
-          WHEN range_name = '101-200' THEN 4
+          WHEN CASE 
+                WHEN activation_amount < 1 THEN '0'
+                WHEN activation_amount BETWEEN 1 AND 25 THEN '1-25'
+                WHEN activation_amount BETWEEN 26 AND 50 THEN '26-50'
+                WHEN activation_amount BETWEEN 51 AND 100 THEN '51-100'
+                WHEN activation_amount BETWEEN 101 AND 200 THEN '101-200'
+                ELSE 'Over 200'
+              END = '0' THEN 0
+          WHEN CASE 
+                WHEN activation_amount < 1 THEN '0'
+                WHEN activation_amount BETWEEN 1 AND 25 THEN '1-25'
+                WHEN activation_amount BETWEEN 26 AND 50 THEN '26-50'
+                WHEN activation_amount BETWEEN 51 AND 100 THEN '51-100'
+                WHEN activation_amount BETWEEN 101 AND 200 THEN '101-200'
+                ELSE 'Over 200'
+              END = '1-25' THEN 1
+          WHEN CASE 
+                WHEN activation_amount < 1 THEN '0'
+                WHEN activation_amount BETWEEN 1 AND 25 THEN '1-25'
+                WHEN activation_amount BETWEEN 26 AND 50 THEN '26-50'
+                WHEN activation_amount BETWEEN 51 AND 100 THEN '51-100'
+                WHEN activation_amount BETWEEN 101 AND 200 THEN '101-200'
+                ELSE 'Over 200'
+              END = '26-50' THEN 2
+          WHEN CASE 
+                WHEN activation_amount < 1 THEN '0'
+                WHEN activation_amount BETWEEN 1 AND 25 THEN '1-25'
+                WHEN activation_amount BETWEEN 26 AND 50 THEN '26-50'
+                WHEN activation_amount BETWEEN 51 AND 100 THEN '51-100'
+                WHEN activation_amount BETWEEN 101 AND 200 THEN '101-200'
+                ELSE 'Over 200'
+              END = '51-100' THEN 3
+          WHEN CASE 
+                WHEN activation_amount < 1 THEN '0'
+                WHEN activation_amount BETWEEN 1 AND 25 THEN '1-25'
+                WHEN activation_amount BETWEEN 26 AND 50 THEN '26-50'
+                WHEN activation_amount BETWEEN 51 AND 100 THEN '51-100'
+                WHEN activation_amount BETWEEN 101 AND 200 THEN '101-200'
+                ELSE 'Over 200'
+              END = '101-200' THEN 4
           ELSE 5
         END
     `);
