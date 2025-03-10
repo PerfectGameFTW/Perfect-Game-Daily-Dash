@@ -207,6 +207,8 @@ export class GiftCardService {
         AND activation_amount > 0
     `);
     
+    console.log(`Gift card activations raw result:`, JSON.stringify(activationsResult.rows));
+    
     // Query the database for gift card redemptions using Drizzle's SQL template
     // which properly handles parameterized queries
     const redemptionsResult = await db.execute(sql`
@@ -217,6 +219,8 @@ export class GiftCardService {
       WHERE timestamp BETWEEN ${start} AND ${end}
     `);
     
+    console.log(`Gift card redemptions raw result:`, JSON.stringify(redemptionsResult.rows));
+    
     // Access the result properly from the raw SQL query results
     // Convert all values to numbers to avoid type issues
     const soldCount = parseInt(String(activationsResult.rows?.[0]?.sold_count || '0'), 10) || 0;
@@ -224,6 +228,14 @@ export class GiftCardService {
     const redeemedCount = parseInt(String(redemptionsResult.rows?.[0]?.redeemed_count || '0'), 10) || 0;
     const redeemedAmount = parseFloat(String(redemptionsResult.rows?.[0]?.redeemed_amount || '0')) || 0;
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
+    
+    console.log(`Gift card summary processed values: {
+      soldCount: ${soldCount},
+      soldAmount: ${soldAmount},
+      redeemedCount: ${redeemedCount},
+      redeemedAmount: ${redeemedAmount},
+      averageValue: ${averageValue}
+    }`);
     
     return {
       soldCount,
