@@ -108,11 +108,17 @@ export class GiftCardService {
       const { fixNewGiftCardActivationAmount } = await import('./enhancedGiftCardFix');
       
       // Fix the new gift card's activation amount
-      const enhancedGiftCard = await fixNewGiftCardActivationAmount(newGiftCard.id);
+      const enhancedGiftCardResult = await fixNewGiftCardActivationAmount(newGiftCard.id);
       
-      // If enhanced card is available, return it, otherwise return the original
-      if (enhancedGiftCard) {
-        return enhancedGiftCard;
+      // If the enhancement was successful, update the gift card with the new data
+      if (enhancedGiftCardResult && enhancedGiftCardResult.updated && enhancedGiftCardResult.activationAmount) {
+        // Update the gift card with the enhanced data
+        return {
+          ...newGiftCard,
+          activationAmount: enhancedGiftCardResult.activationAmount,
+          activationOrderId: enhancedGiftCardResult.orderId || null,
+          activationSquareOrderId: enhancedGiftCardResult.squareOrderId || null
+        };
       }
     } catch (error) {
       // Log the error but don't fail - we'll just return the original gift card

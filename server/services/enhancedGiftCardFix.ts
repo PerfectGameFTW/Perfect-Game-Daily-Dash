@@ -319,17 +319,20 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
     const giftCard = giftCardResult.rows[0];
     
     // Check if already has activation amount and order link
+    const activationAmount = giftCard.activation_amount ? Number(giftCard.activation_amount) : 0;
+    const activationOrderId = giftCard.activation_order_id ? Number(giftCard.activation_order_id) : null;
+    const activationSquareOrderId = giftCard.activation_square_order_id ? String(giftCard.activation_square_order_id) : null;
+    
     if (
-      giftCard.activation_amount !== null && 
-      giftCard.activation_amount > 0 && 
-      giftCard.activation_order_id !== null
+      activationAmount > 0 && 
+      activationOrderId !== null
     ) {
       return {
         id: giftCardId,
         updated: false,
-        activationAmount: Number(giftCard.activation_amount),
-        orderId: Number(giftCard.activation_order_id),
-        squareOrderId: giftCard.activation_square_order_id,
+        activationAmount: activationAmount,
+        orderId: activationOrderId,
+        squareOrderId: activationSquareOrderId,
         source: 'Already has activation data'
       };
     }
@@ -345,8 +348,26 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
     console.log(`Fetched ${squareOrders.length} recent orders from Square API`);
     
     // 3. Find orders with matching GAN or close timestamp
-    const gan = giftCard.gan;
-    const createdAt = new Date(giftCard.created_at);
+    const ganRaw = giftCard.gan;
+    const gan = ganRaw ? String(ganRaw) : undefined;
+    
+    // Safely parse created_at as a Date
+    let createdAt: Date;
+    try {
+      // Handle different possible formats of created_at
+      if (giftCard.created_at) {
+        createdAt = new Date(String(giftCard.created_at));
+      } else {
+        // Fallback to current time minus 1 hour if no timestamp available
+        createdAt = new Date();
+        createdAt.setHours(createdAt.getHours() - 1);
+        console.log(`No created_at timestamp found, using fallback: ${createdAt.toISOString()}`);
+      }
+    } catch (error) {
+      console.error(`Error parsing created_at timestamp: ${error}`);
+      createdAt = new Date();
+      createdAt.setHours(createdAt.getHours() - 1);
+    }
     
     // 3a. Try GAN matching first
     if (gan) {
