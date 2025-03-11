@@ -1,19 +1,31 @@
 // Test API endpoints
-const fetch = require("node-fetch");
 async function test() {
   try {
-    console.log("Testing /api/summary?dateRange=today");
-    const summaryResponse = await fetch("http://localhost:3000/api/summary?dateRange=today");
-    const summaryData = await summaryResponse.json();
-    console.log("Summary data:", JSON.stringify(summaryData, null, 2));
-    console.log("Status:", summaryResponse.status);
-    console.log("\nTesting /api/hourly-revenue?dateRange=today");
-    const hourlyResponse = await fetch("http://localhost:3000/api/hourly-revenue?dateRange=today");
-    const hourlyData = await hourlyResponse.json();
-    console.log("Hourly data:", JSON.stringify(hourlyData.slice(0, 3), null, 2));
-    console.log("Status:", hourlyResponse.status);
+    console.log("Testing /api/summary...");
+    const response = await fetch("http://localhost:5000/api/summary?dateRange=today");
+    
+    if (!response.ok) {
+      console.error(`Error: API returned status ${response.status}`);
+      const text = await response.text();
+      console.error(`Response body: ${text}`);
+      return;
+    }
+    
+    const data = await response.json();
+    console.log("API Response Data:", data);
+    
+    // Check if data is empty
+    if (Object.keys(data).length === 0) {
+      console.log("⚠️ API returned empty object");
+    } else {
+      console.log("✅ API returned data successfully");
+      console.log("totalRevenue:", data.totalRevenue);
+      console.log("revenueChange:", data.revenueChange);
+      console.log("totalOrders:", data.totalOrders);
+    }
   } catch (error) {
-    console.error("Error testing API:", error);
+    console.error("Error testing API:", error.message);
   }
 }
+
 test();

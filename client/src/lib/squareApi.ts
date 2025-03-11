@@ -53,7 +53,22 @@ export const fetchDailySummary = async (
     // Check if response is already JSON
     if (typeof response === 'object' && response !== null) {
       console.log('⭐ Daily summary API returned JSON object directly:', response);
-      return response;
+      
+      // Ensure all numeric fields are actually numbers (not strings)
+      const processedResponse = {
+        totalRevenue: typeof response.totalRevenue === 'number' ? response.totalRevenue : parseFloat(response.totalRevenue || '0'),
+        revenueChange: typeof response.revenueChange === 'number' ? response.revenueChange : parseFloat(response.revenueChange || '0'),
+        totalOrders: typeof response.totalOrders === 'number' ? response.totalOrders : parseInt(response.totalOrders || '0', 10),
+        ordersChange: typeof response.ordersChange === 'number' ? response.ordersChange : parseFloat(response.ordersChange || '0'),
+        averageOrder: typeof response.averageOrder === 'number' ? response.averageOrder : parseFloat(response.averageOrder || '0'),
+        averageOrderChange: typeof response.averageOrderChange === 'number' ? response.averageOrderChange : parseFloat(response.averageOrderChange || '0'),
+        giftCardSales: typeof response.giftCardSales === 'number' ? response.giftCardSales : parseFloat(response.giftCardSales || '0'),
+        giftCardSalesChange: typeof response.giftCardSalesChange === 'number' ? response.giftCardSalesChange : parseFloat(response.giftCardSalesChange || '0'),
+        date: response.date || new Date().toISOString().split('T')[0]
+      };
+      
+      console.log('⭐ Processed daily summary data:', processedResponse);
+      return processedResponse;
     }
     
     // If it's a Response object, parse it
@@ -61,7 +76,22 @@ export const fetchDailySummary = async (
       console.log('⭐ Daily summary API returned Response object, parsing JSON...');
       const data = await response.json();
       console.log('⭐ Parsed JSON response:', data);
-      return data;
+      
+      // Process the data to ensure all numeric fields are actually numbers
+      const processedData = {
+        totalRevenue: typeof data.totalRevenue === 'number' ? data.totalRevenue : parseFloat(data.totalRevenue || '0'),
+        revenueChange: typeof data.revenueChange === 'number' ? data.revenueChange : parseFloat(data.revenueChange || '0'),
+        totalOrders: typeof data.totalOrders === 'number' ? data.totalOrders : parseInt(data.totalOrders || '0', 10),
+        ordersChange: typeof data.ordersChange === 'number' ? data.ordersChange : parseFloat(data.ordersChange || '0'),
+        averageOrder: typeof data.averageOrder === 'number' ? data.averageOrder : parseFloat(data.averageOrder || '0'),
+        averageOrderChange: typeof data.averageOrderChange === 'number' ? data.averageOrderChange : parseFloat(data.averageOrderChange || '0'),
+        giftCardSales: typeof data.giftCardSales === 'number' ? data.giftCardSales : parseFloat(data.giftCardSales || '0'),
+        giftCardSalesChange: typeof data.giftCardSalesChange === 'number' ? data.giftCardSalesChange : parseFloat(data.giftCardSalesChange || '0'),
+        date: data.date || new Date().toISOString().split('T')[0]
+      };
+      
+      console.log('⭐ Processed JSON data:', processedData);
+      return processedData;
     }
     
     // Fallback case, should not happen with our API setup
@@ -136,7 +166,21 @@ export const fetchDetailedTransactions = async (
     // Check if response is already JSON
     if (typeof response === 'object' && response !== null) {
       console.log('⭐ Detailed transactions API returned JSON object directly:', response);
-      return response;
+      
+      // Process the data to ensure all numeric fields are actually numbers
+      const processedResponse = {
+        partywirks: typeof response.partywirks === 'number' ? response.partywirks : parseFloat(response.partywirks || '0'),
+        tripleseat: typeof response.tripleseat === 'number' ? response.tripleseat : parseFloat(response.tripleseat || '0'),
+        tips: typeof response.tips === 'number' ? response.tips : parseFloat(response.tips || '0'),
+        serviceCharges: typeof response.serviceCharges === 'number' ? response.serviceCharges : parseFloat(response.serviceCharges || '0'),
+        taxes: typeof response.taxes === 'number' ? response.taxes : parseFloat(response.taxes || '0'),
+        refunds: typeof response.refunds === 'number' ? response.refunds : parseFloat(response.refunds || '0'),
+        discountsAndComps: typeof response.discountsAndComps === 'number' ? response.discountsAndComps : parseFloat(response.discountsAndComps || '0'),
+        giftCardSales: typeof response.giftCardSales === 'number' ? response.giftCardSales : parseFloat(response.giftCardSales || '0')
+      };
+      
+      console.log('⭐ Processed detailed transactions data:', processedResponse);
+      return processedResponse;
     }
     
     // If it's a Response object, parse it
@@ -144,7 +188,21 @@ export const fetchDetailedTransactions = async (
       console.log('⭐ Detailed transactions API returned Response object, parsing JSON...');
       const data = await response.json();
       console.log('⭐ Parsed JSON response:', data);
-      return data;
+      
+      // Process the data to ensure all numeric fields are actually numbers
+      const processedData = {
+        partywirks: typeof data.partywirks === 'number' ? data.partywirks : parseFloat(data.partywirks || '0'),
+        tripleseat: typeof data.tripleseat === 'number' ? data.tripleseat : parseFloat(data.tripleseat || '0'),
+        tips: typeof data.tips === 'number' ? data.tips : parseFloat(data.tips || '0'),
+        serviceCharges: typeof data.serviceCharges === 'number' ? data.serviceCharges : parseFloat(data.serviceCharges || '0'),
+        taxes: typeof data.taxes === 'number' ? data.taxes : parseFloat(data.taxes || '0'),
+        refunds: typeof data.refunds === 'number' ? data.refunds : parseFloat(data.refunds || '0'),
+        discountsAndComps: typeof data.discountsAndComps === 'number' ? data.discountsAndComps : parseFloat(data.discountsAndComps || '0'),
+        giftCardSales: typeof data.giftCardSales === 'number' ? data.giftCardSales : parseFloat(data.giftCardSales || '0')
+      };
+      
+      console.log('⭐ Processed detailed transactions JSON data:', processedData);
+      return processedData;
     }
     
     // Fallback case

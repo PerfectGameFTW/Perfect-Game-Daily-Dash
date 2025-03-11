@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchDailySummary, fetchDetailedTransactions } from "@/lib/squareApi";
 import { DateRange } from "@shared/schema";
@@ -30,12 +31,23 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const { data, isLoading } = useQuery({
     queryKey: ['/api/summary', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchDailySummary(dateRange, customStartDate, customEndDate),
+    retry: 1,
+    retryDelay: 1000,
   });
 
   const { data: detailedTransactions, isLoading: isDetailedLoading } = useQuery({
     queryKey: ['/api/detailed-transactions', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchDetailedTransactions(dateRange, customStartDate, customEndDate),
+    retry: 1,
+    retryDelay: 1000,
   });
+  
+  // Log the data as soon as it becomes available
+  useEffect(() => {
+    if (data) {
+      console.log('🔍 Summary data received in StatsSummary component:', data);
+    }
+  }, [data]);
 
   if (isLoading || isDetailedLoading) {
     return (
