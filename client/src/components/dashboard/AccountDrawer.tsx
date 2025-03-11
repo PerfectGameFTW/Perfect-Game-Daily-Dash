@@ -37,7 +37,7 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="backdrop-blur-sm border-t border-t-border">
+      <DrawerContent className="bg-background/95 backdrop-blur-sm border-t border-t-border">
         <div className="mx-auto w-full max-w-sm">
           <DrawerHeader>
             <DrawerTitle className="text-foreground text-center">Account</DrawerTitle>
@@ -76,7 +76,7 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
             )}
             <Button 
               variant="outline" 
-              className="w-full text-left justify-start gap-2 border-white/20 hover:bg-white/10"
+              className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
               onClick={handleLogout}
             >
               <LogOut className="h-5 w-5 text-primary" />
@@ -84,14 +84,14 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
             </Button>
             
             {/* Dark Mode Toggle */}
-            <div className="flex items-center justify-between px-2 py-3 border border-white/20 rounded-md">
+            <div className="flex items-center justify-between px-2 py-3 border border-border rounded-md">
               <div className="flex items-center gap-2">
                 {theme === 'dark' ? (
                   <Moon className="h-5 w-5 text-primary" />
                 ) : (
                   <Sun className="h-5 w-5 text-primary" />
                 )}
-                <span className="text-white">{theme === 'dark' ? 'Dark' : 'Light'} Mode</span>
+                <span className="text-foreground">{theme === 'dark' ? 'Dark' : 'Light'} Mode</span>
               </div>
               <Switch 
                 checked={theme === 'dark'}
@@ -101,7 +101,7 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
           </div>
           <DrawerFooter>
             <DrawerClose asChild>
-              <Button variant="outline" className="border-white/20 hover:bg-white/10">
+              <Button variant="outline" className="border-border hover:bg-accent/50">
                 Close
               </Button>
             </DrawerClose>
