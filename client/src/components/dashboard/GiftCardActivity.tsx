@@ -46,11 +46,11 @@ export default function GiftCardActivity({
         datasets: [{
           data: [data.soldAmount, data.redeemedAmount],
           backgroundColor: [
-            'rgba(225, 29, 72, 0.9)', // red-600 with alpha
+            'rgba(100, 116, 139, 0.9)', // slate-500 with alpha
             'rgba(255, 255, 255, 0.7)'  // white with alpha
           ],
           borderColor: [
-            'rgba(225, 29, 72, 1)', // red-600
+            'rgba(100, 116, 139, 1)', // slate-500
             'rgba(255, 255, 255, 0.8)'  // white
           ],
           borderWidth: 2,
@@ -95,7 +95,7 @@ export default function GiftCardActivity({
             }
           },
           tooltip: {
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            backgroundColor: 'rgba(30, 41, 59, 0.8)', // slate-800 with alpha
             borderColor: 'rgba(255, 255, 255, 0.1)',
             borderWidth: 1,
             padding: 10,
@@ -116,11 +116,11 @@ export default function GiftCardActivity({
   }, [data, isLoading, dateRange]);
 
   return (
-    <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
+    <div className="bg-slate-800/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
       <div className="flex flex-row items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-bold flex items-center text-white">
-            <CreditCard size={20} className="mr-2 text-red-600" />
+            <CreditCard size={20} className="mr-2 text-slate-400" />
             <span>Gift Card Activity</span>
           </h2>
           {data && !isLoading && (
@@ -130,7 +130,7 @@ export default function GiftCardActivity({
             </div>
           )}
         </div>
-        <div className="flex items-center px-3 py-1.5 bg-red-600/10 text-red-600 rounded-lg text-sm font-medium">
+        <div className="flex items-center px-3 py-1.5 bg-slate-400/10 text-slate-400 rounded-lg text-sm font-medium">
           <CreditCard size={14} className="mr-1.5" />
           <span>Gift Cards</span>
         </div>
@@ -156,7 +156,7 @@ export default function GiftCardActivity({
             <h4 className="text-base font-medium text-white/90">
               {dateRange === 'yesterday' ? 'Gift Card Sales Yesterday' : 'Gift Card Sales Today'}
             </h4>
-            <span className="text-2xl font-bold text-red-600">{formatCurrency(data?.soldAmount || 0)}</span>
+            <span className="text-2xl font-bold text-slate-400">{formatCurrency(data?.soldAmount || 0)}</span>
           </div>
           
           {/* Donut Chart for Gift Card Sales vs Redemptions */}
@@ -172,7 +172,7 @@ export default function GiftCardActivity({
                 </div>
                 <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-red-600 rounded-full" 
+                    className="h-full bg-slate-500 rounded-full" 
                     style={{ 
                       width: `${data?.soldAmount ? Math.min(100, (data.soldAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
                     }} 
@@ -201,8 +201,8 @@ export default function GiftCardActivity({
           <div className="mt-6 grid grid-cols-2 gap-4">
             <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-red-600/20 flex items-center justify-center mr-3">
-                  <CreditCard className="h-4 w-4 text-red-600" />
+                <div className="h-8 w-8 rounded-lg bg-slate-500/20 flex items-center justify-center mr-3">
+                  <CreditCard className="h-4 w-4 text-slate-400" />
                 </div>
                 <div>
                   <div className="text-sm font-medium text-white/60">Cards Sold</div>
@@ -223,8 +223,8 @@ export default function GiftCardActivity({
             </div>
             <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-red-600/20 flex items-center justify-center mr-3">
-                  <DollarSign className="h-4 w-4 text-red-600" />
+                <div className="h-8 w-8 rounded-lg bg-slate-500/20 flex items-center justify-center mr-3">
+                  <DollarSign className="h-4 w-4 text-slate-400" />
                 </div>
                 <div>
                   <div className="text-sm font-medium text-white/60">Avg. Card Value</div>
