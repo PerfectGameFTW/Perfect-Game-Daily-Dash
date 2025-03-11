@@ -314,9 +314,12 @@ export function formatCurrency(value: number): string {
 }
 
 export function formatPercentage(value: number): string {
+  // Fix: The value is already a decimal percentage (e.g., 0.85 for 85%)
+  // The Intl.NumberFormat with style: 'percent' expects values as fractions,
+  // so 0.85 becomes 85% without needing to divide by 100
   return new Intl.NumberFormat('en-US', {
     style: 'percent',
     minimumFractionDigits: 1,
     maximumFractionDigits: 1
-  }).format(value / 100);
+  }).format(value);
 }

@@ -51,9 +51,21 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   }
 
   // Calculate adjusted sales (some items may need to be subtracted)
-  const calculatedNetRevenue = (data?.totalRevenue || 0) - 
-    (detailedTransactions?.refunds || 0) - 
-    (detailedTransactions?.discountsAndComps || 0);
+  // Debug log to verify values
+  console.log('API Response Data:', {
+    totalRevenue: data?.totalRevenue,
+    refunds: detailedTransactions?.refunds,
+    discounts: detailedTransactions?.discountsAndComps,
+    revenueChange: data?.revenueChange,
+    giftCardSales: data?.giftCardSales
+  });
+
+  // Ensure we're working with numbers even if API returns strings
+  const totalRevenue = typeof data?.totalRevenue === 'number' ? data?.totalRevenue : parseFloat(data?.totalRevenue || '0');
+  const refunds = typeof detailedTransactions?.refunds === 'number' ? detailedTransactions?.refunds : parseFloat(detailedTransactions?.refunds || '0');
+  const discounts = typeof detailedTransactions?.discountsAndComps === 'number' ? detailedTransactions?.discountsAndComps : parseFloat(detailedTransactions?.discountsAndComps || '0');
+  
+  const calculatedNetRevenue = totalRevenue - refunds - discounts;
 
   return (
     <div className="mt-4 space-y-6">
