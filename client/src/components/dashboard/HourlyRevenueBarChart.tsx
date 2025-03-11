@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo } from "react"
 import { TrendingUp } from "lucide-react"
 import { 
   Bar, 
@@ -61,19 +62,19 @@ export default function HourlyRevenueBarChart({
     queryFn: () => fetchHourlyRevenue(dateRange, customStartDate, customEndDate),
   });
   
-  const chartData = React.useMemo(() => {
+  const chartData = useMemo(() => {
     if (!data || data.length === 0) return [];
     return formatDataForChart(data);
   }, [data]);
   
   // Find the peak hour for all sales
-  const peakHour = React.useMemo(() => {
+  const peakHour = useMemo(() => {
     if (!data || data.length === 0) return null;
     return data.reduce((max, item) => (item.amount > max.amount ? item : max), data[0]);
   }, [data]);
 
   // Calculate total
-  const totalRevenue = React.useMemo(() => {
+  const totalRevenue = useMemo(() => {
     if (!data || data.length === 0) return 0;
     return data.reduce((sum, item) => sum + (item.amount || 0), 0);
   }, [data]);
