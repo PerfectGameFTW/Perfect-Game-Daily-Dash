@@ -108,20 +108,20 @@ export default function Header({
   };
 
   return (
-    <header className="backdrop-blur-sm border-b border-white/10 bg-black/30 px-4 py-4">
+    <header className="backdrop-blur-sm border-b border-border bg-card/80 px-4 py-4">
       <div className="w-full max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center">
             <Activity className="h-8 w-8 text-primary mr-2" />
-            <h1 className="text-2xl font-bold text-white">Perfect Game Analytics</h1>
+            <h1 className="text-2xl font-bold text-card-foreground">Perfect Game Analytics</h1>
           </div>
           <div className="flex items-center">
-            <div className="flex items-center bg-black/40 p-1 rounded-lg shadow-lg border border-white/5 mr-4">
+            <div className="flex items-center bg-background/90 p-1 rounded-lg shadow-lg border border-border mr-4">
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      className="p-2 cursor-pointer hover:bg-black/30 rounded-full transition-colors"
+                      className="p-2 cursor-pointer hover:bg-accent/50 rounded-full transition-colors"
                       onClick={handlePrevDate}
                       aria-label="Previous date"
                     >
@@ -135,7 +135,7 @@ export default function Header({
               </TooltipProvider>
               
               <button 
-                className="flex items-center gap-2 text-center font-medium text-white mx-2 cursor-pointer px-4 py-1.5 hover:bg-black/30 rounded-md transition-colors"
+                className="flex items-center gap-2 text-center font-medium text-foreground mx-2 cursor-pointer px-4 py-1.5 hover:bg-accent/50 rounded-md transition-colors"
                 onClick={onOpenTimeframeModal}
               >
                 <Calendar className="h-4 w-4 text-primary" />
@@ -146,7 +146,7 @@ export default function Header({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      className="p-2 cursor-pointer hover:bg-black/30 rounded-full transition-colors"
+                      className="p-2 cursor-pointer hover:bg-accent/50 rounded-full transition-colors"
                       onClick={handleNextDate}
                       aria-label="Next date"
                     >

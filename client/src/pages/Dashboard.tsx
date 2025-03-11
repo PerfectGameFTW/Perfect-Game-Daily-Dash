@@ -122,8 +122,8 @@ export default function Dashboard() {
       case "hourly":
         return (
           <div className="space-y-8">
-            <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl">
-              <h2 className="text-2xl font-bold mb-4 text-white">Hourly Revenue</h2>
+            <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl">
+              <h2 className="text-2xl font-bold mb-4 text-card-foreground">Hourly Revenue</h2>
               <HourlyRevenueChart
                 dateRange={dateRange}
                 customStartDate={customStartDate}
@@ -135,8 +135,8 @@ export default function Dashboard() {
       case "categories":
         return (
           <div className="space-y-8">
-            <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl">
-              <h2 className="text-2xl font-bold mb-4 text-white">Revenue by Category</h2>
+            <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl">
+              <h2 className="text-2xl font-bold mb-4 text-card-foreground">Revenue by Category</h2>
               <RevenueByCategoryChart
                 dateRange={dateRange}
                 customStartDate={customStartDate}
@@ -148,8 +148,8 @@ export default function Dashboard() {
       case "giftcards":
         return (
           <div className="space-y-8">
-            <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl">
-              <h2 className="text-2xl font-bold mb-4 text-white">Gift Card Activity</h2>
+            <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl">
+              <h2 className="text-2xl font-bold mb-4 text-card-foreground">Gift Card Activity</h2>
               <GiftCardActivity
                 dateRange={dateRange}
                 customStartDate={customStartDate}
@@ -170,7 +170,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen w-full bg-black text-foreground pb-16 md:pb-0">
+    <div className="flex flex-col min-h-screen w-full bg-background text-foreground pb-16 md:pb-0">
       <Header 
         dateRange={dateRange}
         customStartDate={customStartDate}
