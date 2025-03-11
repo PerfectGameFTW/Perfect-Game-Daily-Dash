@@ -45,9 +45,42 @@ export const fetchDailySummary = async (
   startDate?: Date,
   endDate?: Date
 ): Promise<DailySummary> => {
-  const queryString = buildQueryString(dateRange, startDate, endDate);
-  const response = await apiRequest('GET', `/api/summary?${queryString}`);
-  return await response.json();
+  try {
+    const queryString = buildQueryString(dateRange, startDate, endDate);
+    console.log('⭐ Fetching daily summary with query:', `/api/summary?${queryString}`);
+    const response = await apiRequest('GET', `/api/summary?${queryString}`);
+    
+    // Check if response is already JSON
+    if (typeof response === 'object' && response !== null) {
+      console.log('⭐ Daily summary API returned JSON object directly:', response);
+      return response;
+    }
+    
+    // If it's a Response object, parse it
+    if (response instanceof Response) {
+      console.log('⭐ Daily summary API returned Response object, parsing JSON...');
+      const data = await response.json();
+      console.log('⭐ Parsed JSON response:', data);
+      return data;
+    }
+    
+    // Fallback case, should not happen with our API setup
+    console.error('⭐ Unexpected response type from daily summary API:', typeof response);
+    return {
+      totalRevenue: 0,
+      revenueChange: 0,
+      totalOrders: 0,
+      ordersChange: 0,
+      averageOrder: 0,
+      averageOrderChange: 0,
+      giftCardSales: 0,
+      giftCardSalesChange: 0,
+      date: new Date().toISOString().split('T')[0]
+    };
+  } catch (error) {
+    console.error('⭐ Error fetching daily summary:', error);
+    throw error;
+  }
 };
 
 export const fetchTransactions = async (
@@ -95,9 +128,41 @@ export const fetchDetailedTransactions = async (
   startDate?: Date,
   endDate?: Date
 ): Promise<DetailedTransactionBreakdown> => {
-  const queryString = buildQueryString(dateRange, startDate, endDate);
-  const response = await apiRequest('GET', `/api/detailed-transactions?${queryString}`);
-  return await response.json();
+  try {
+    const queryString = buildQueryString(dateRange, startDate, endDate);
+    console.log('⭐ Fetching detailed transactions with query:', `/api/detailed-transactions?${queryString}`);
+    const response = await apiRequest('GET', `/api/detailed-transactions?${queryString}`);
+    
+    // Check if response is already JSON
+    if (typeof response === 'object' && response !== null) {
+      console.log('⭐ Detailed transactions API returned JSON object directly:', response);
+      return response;
+    }
+    
+    // If it's a Response object, parse it
+    if (response instanceof Response) {
+      console.log('⭐ Detailed transactions API returned Response object, parsing JSON...');
+      const data = await response.json();
+      console.log('⭐ Parsed JSON response:', data);
+      return data;
+    }
+    
+    // Fallback case
+    console.error('⭐ Unexpected response type from detailed transactions API:', typeof response);
+    return {
+      partywirks: 0,
+      tripleseat: 0,
+      tips: 0,
+      serviceCharges: 0,
+      taxes: 0,
+      refunds: 0,
+      discountsAndComps: 0,
+      giftCardSales: 0
+    };
+  } catch (error) {
+    console.error('⭐ Error fetching detailed transactions:', error);
+    throw error;
+  }
 };
 
 // Test gift card detection endpoint removed as part of unifying sync process
