@@ -1,7 +1,5 @@
 import { 
   BarChart3,
-  TrendingUp, 
-  ChartPie, 
   CreditCard, 
   UserCircle
 } from "lucide-react";
@@ -73,18 +71,6 @@ const BottomNavigation = ({ activeTab = "overview", onTabChange, onAccountClick 
           label="Overview" 
           active={activeTab === "overview"}
           onClick={() => handleTabChange("overview")}
-        />
-        <NavItem 
-          icon={<TrendingUp className="w-5 h-5 md:w-6 md:h-6" />} 
-          label="Hourly" 
-          active={activeTab === "hourly"}
-          onClick={() => handleTabChange("hourly")}
-        />
-        <NavItem 
-          icon={<ChartPie className="w-5 h-5 md:w-6 md:h-6" />} 
-          label="Categories" 
-          active={activeTab === "categories"}
-          onClick={() => handleTabChange("categories")}
         />
         <NavItem 
           icon={<CreditCard className="w-5 h-5 md:w-6 md:h-6" />} 
