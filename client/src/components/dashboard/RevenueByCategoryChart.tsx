@@ -122,11 +122,11 @@ export default function RevenueByCategoryChart({
     'No data';
 
   return (
-    <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
+    <div className="bg-slate-800/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
       <div className="flex flex-row items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-bold flex items-center text-white">
-            <ChartPie size={20} className="mr-2 text-red-600" />
+            <ChartPie size={20} className="mr-2 text-slate-400" />
             <span>Revenue by Category</span>
           </h2>
           {data && !isLoading && (
@@ -136,7 +136,7 @@ export default function RevenueByCategoryChart({
             </div>
           )}
         </div>
-        <div className="flex items-center px-3 py-1.5 bg-red-600/10 text-red-600 rounded-lg text-sm font-medium">
+        <div className="flex items-center px-3 py-1.5 bg-slate-400/10 text-slate-400 rounded-lg text-sm font-medium">
           <PieChart size={14} className="mr-1.5" />
           <span>Category Split</span>
         </div>

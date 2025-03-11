@@ -40,14 +40,14 @@ const formatDataForChart = (data: HourlyRevenue[]) => {
   });
 };
 
-// Chart configuration - blue for sales
+// Chart configuration - slate for sales
 const chartConfig = {
   hours: {
     label: "Hour",
   },
   amount: {
     label: "Revenue",
-    color: "#DC2626", // Red (red-600)
+    color: "#64748b", // slate-500
   },
 } satisfies ChartConfig;
 
@@ -73,11 +73,11 @@ export default function HourlyRevenueChart({
   }, [data]);
 
   return (
-    <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
+    <div className="bg-slate-800/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
       <div className="flex flex-row items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-xl font-bold flex items-center text-white">
-            <Clock size={20} className="mr-2 text-red-600" />
+            <Clock size={20} className="mr-2 text-slate-400" />
             <span>Hourly Revenue</span>
           </h2>
           {peakHour && !isLoading && (
@@ -87,7 +87,7 @@ export default function HourlyRevenueChart({
             </div>
           )}
         </div>
-        <div className="flex items-center px-3 py-1.5 bg-red-600/10 text-red-600 rounded-lg text-sm font-medium">
+        <div className="flex items-center px-3 py-1.5 bg-slate-400/10 text-slate-400 rounded-lg text-sm font-medium">
           <TrendingUp size={14} className="mr-1.5" />
           <span>Hourly Pattern</span>
         </div>
@@ -134,7 +134,7 @@ export default function HourlyRevenueChart({
                   <ChartTooltip
                     content={
                       <ChartTooltipContent
-                        className="w-[150px] bg-black/80 border border-white/10 shadow-lg backdrop-blur-sm"
+                        className="w-[150px] bg-slate-800/80 border border-white/10 shadow-lg backdrop-blur-sm"
                         labelFormatter={(value) => {
                           return `${value}`;
                         }}
