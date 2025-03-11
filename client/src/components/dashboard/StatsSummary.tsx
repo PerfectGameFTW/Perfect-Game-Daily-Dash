@@ -42,12 +42,10 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     retryDelay: 1000,
   });
   
-  // Log the data as soon as it becomes available
-  useEffect(() => {
-    if (data) {
-      console.log('🔍 Summary data received in StatsSummary component:', data);
-    }
-  }, [data]);
+  // Direct logging when data is available
+  if (data) {
+    console.log('🔍 Summary data received in StatsSummary component:', data);
+  }
 
   if (isLoading || isDetailedLoading) {
     return (
