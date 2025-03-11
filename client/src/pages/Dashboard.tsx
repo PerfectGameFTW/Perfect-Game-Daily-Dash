@@ -9,9 +9,7 @@ import { DateRange } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import useMobile from "@/hooks/use-mobile";
 import { queryClient } from "@/lib/queryClient";
-import { ChartPie, TrendingUp, CreditCard, BarChart3 } from "lucide-react";
-import HourlyRevenueChart from "@/components/dashboard/HourlyRevenueChart";
-import RevenueByCategoryChart from "@/components/dashboard/RevenueByCategoryChart";
+import { CreditCard, BarChart3 } from "lucide-react";
 import GiftCardActivity from "@/components/dashboard/GiftCardActivity";
 
 export default function Dashboard() {
@@ -118,32 +116,6 @@ export default function Dashboard() {
             customStartDate={customStartDate}
             customEndDate={customEndDate}
           />
-        );
-      case "hourly":
-        return (
-          <div className="space-y-8">
-            <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl">
-              <h2 className="text-2xl font-bold mb-4 text-card-foreground">Hourly Revenue</h2>
-              <HourlyRevenueChart
-                dateRange={dateRange}
-                customStartDate={customStartDate}
-                customEndDate={customEndDate}
-              />
-            </div>
-          </div>
-        );
-      case "categories":
-        return (
-          <div className="space-y-8">
-            <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl">
-              <h2 className="text-2xl font-bold mb-4 text-card-foreground">Revenue by Category</h2>
-              <RevenueByCategoryChart
-                dateRange={dateRange}
-                customStartDate={customStartDate}
-                customEndDate={customEndDate}
-              />
-            </div>
-          </div>
         );
       case "giftcards":
         return (
