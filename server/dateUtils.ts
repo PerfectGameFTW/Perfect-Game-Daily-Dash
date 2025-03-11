@@ -108,25 +108,30 @@ export function getEasternDateRange(dateRange: DateRange, inputStartDate?: Date,
   // Start: March 7 00:00:00 ET = March 7 05:00:00 UTC
   // End: March 7 23:59:59.999 ET = March 8 04:59:59.999 UTC
   
-  // Create formatted date strings with proper timezone
-  const startWithTZ = `${startStr}T00:00:00-05:00`;  // -05:00 represents Eastern Standard Time
-  const endWithTZ = `${endStr}T23:59:59.999-05:00`;
+  // Use proper timezone calculations through date-fns-tz instead of hardcoded offsets
+  // This will account for Daylight Saving Time automatically
+  const startDate = new Date(`${startStr}T00:00:00Z`);
+  const endDate = new Date(`${endStr}T23:59:59.999Z`);
   
-  // Parse them to get UTC Date objects
-  const startDate = new Date(startWithTZ);
-  const endDate = new Date(endWithTZ);
+  // Convert the dates to ET time zone properly accounting for DST
+  const startInET = formatInTimeZone(startDate, EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSS");
+  const endInET = formatInTimeZone(endDate, EASTERN_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss.SSS");
+  
+  // Create new Date objects that properly account for timezone
+  const startDateFinal = new Date(startInET + 'Z');
+  const endDateFinal = new Date(endInET + 'Z');
   
   console.log('Converting Eastern business days to UTC timestamps:', {
-    startET: startWithTZ,
-    endET: endWithTZ,
-    startUTC: startDate.toISOString(),
-    endUTC: endDate.toISOString(),
-    explanation: 'Eastern midnight starts at 05:00 UTC, Eastern 23:59:59.999 ends at 04:59:59.999 UTC (next day)'
+    startET: startInET,
+    endET: endInET,
+    startUTC: startDateFinal.toISOString(),
+    endUTC: endDateFinal.toISOString(),
+    explanation: 'Using date-fns-tz to properly handle DST transitions in Eastern Time'
   });
   
   return {
-    start: startDate,
-    end: endDate
+    start: startDateFinal,
+    end: endDateFinal
   };
 }
 
