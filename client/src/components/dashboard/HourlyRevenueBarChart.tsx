@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useEffect } from "react"
 import { TrendingUp } from "lucide-react"
 import { 
   Bar, 
@@ -33,13 +33,19 @@ interface HourlyRevenueBarChartProps {
 
 // Format data for Recharts using the hourly revenue data
 const formatDataForChart = (data: HourlyRevenue[]) => {
+  // Log data to inspect
+  console.log('Hourly Revenue Data from API:', data);
+  
   return data.map(item => {
     // For a real stacked chart, we would have multiple values here
     // Since we only have one value (total revenue), we'll use that for the primary series
+    // Make sure we handle different data types correctly
+    const amount = typeof item.amount === 'string' ? parseFloat(item.amount) : (item.amount || 0);
+    
     return {
       hour: item.hour,
-      sales: item.amount || 0,
-      formattedAmount: formatCurrency(item.amount || 0),
+      sales: amount,
+      formattedAmount: formatCurrency(amount),
     };
   });
 };
@@ -100,6 +106,12 @@ export default function HourlyRevenueBarChart({
   // But we'll show all hours for consistency
   const displayData = chartData;
 
+  // Set a CSS variable for the bar color to ensure it's available
+  // We'll use the primary color as fallback
+  useEffect(() => {
+    document.documentElement.style.setProperty('--color-sales', 'hsl(var(--primary))');
+  }, []);
+
   return (
     <div className="relative h-[320px] w-full">
       <ChartContainer config={chartConfig} className="h-full">
@@ -123,7 +135,7 @@ export default function HourlyRevenueBarChart({
             <ChartLegend content={<ChartLegendContent />} />
             <Bar
               dataKey="sales"
-              fill="var(--color-sales)"
+              fill="hsl(var(--primary))" // Use direct HSL value instead of var reference
               radius={[4, 4, 0, 0]}
               name="Sales"
             />
