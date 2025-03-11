@@ -48,8 +48,6 @@ export default function Dashboard() {
     const queryKeys = [
       ['/api/summary', newRange, start?.toISOString(), end?.toISOString()],
       ['/api/transactions', newRange, start?.toISOString(), end?.toISOString()],
-      ['/api/revenue-by-category', newRange, start?.toISOString(), end?.toISOString()],
-      ['/api/hourly-revenue', newRange, start?.toISOString(), end?.toISOString()],
       ['/api/gift-card-summary', newRange, start?.toISOString(), end?.toISOString()]
     ];
 
@@ -91,8 +89,6 @@ export default function Dashboard() {
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ['/api/summary'] });
         queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/revenue-by-category'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/hourly-revenue'] });
         queryClient.invalidateQueries({ queryKey: ['/api/gift-card-summary'] });
       }, 5000);
     } catch (error) {
