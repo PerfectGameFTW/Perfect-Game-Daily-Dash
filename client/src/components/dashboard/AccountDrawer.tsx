@@ -9,8 +9,10 @@ import {
   DrawerTitle
 } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, User, LogOut, CreditCard, CircleCheck } from "lucide-react";
+import { useTheme } from "@/context/ThemeContext";
+import { ShieldCheck, User, LogOut, CreditCard, CircleCheck, Moon, Sun } from "lucide-react";
 import { useLocation } from "wouter";
 
 interface AccountDrawerProps {
@@ -20,6 +22,7 @@ interface AccountDrawerProps {
 
 export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps) {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [_, navigate] = useLocation();
 
   const handleNavigate = (path: string) => {
@@ -34,11 +37,11 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="bg-black/95 backdrop-blur-sm border-t border-white/10">
+      <DrawerContent className="backdrop-blur-sm border-t border-t-border">
         <div className="mx-auto w-full max-w-sm">
           <DrawerHeader>
-            <DrawerTitle className="text-white text-center">Account</DrawerTitle>
-            <DrawerDescription className="text-white/70 text-center">
+            <DrawerTitle className="text-foreground text-center">Account</DrawerTitle>
+            <DrawerDescription className="text-muted-foreground text-center">
               {user ? `Logged in as ${user.username}` : 'Manage your account'}
             </DrawerDescription>
           </DrawerHeader>
@@ -46,7 +49,7 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
             {user?.role === 'admin' && (
               <Button 
                 variant="outline" 
-                className="w-full text-left justify-start gap-2 border-white/20 hover:bg-white/10"
+                className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
                 onClick={() => handleNavigate('/admin')}
               >
                 <ShieldCheck className="h-5 w-5 text-primary" />
@@ -55,7 +58,7 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
             )}
             <Button 
               variant="outline" 
-              className="w-full text-left justify-start gap-2 border-white/20 hover:bg-white/10"
+              className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
               onClick={() => handleNavigate('/')}
             >
               <User className="h-5 w-5 text-primary" />
@@ -64,7 +67,7 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
             {user?.role === 'admin' && (
               <Button 
                 variant="outline" 
-                className="w-full text-left justify-start gap-2 border-white/20 hover:bg-white/10"
+                className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
                 onClick={() => handleNavigate('/gift-card-test')}
               >
                 <CreditCard className="h-5 w-5 text-primary" />
@@ -79,6 +82,22 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
               <LogOut className="h-5 w-5 text-primary" />
               Sign out
             </Button>
+            
+            {/* Dark Mode Toggle */}
+            <div className="flex items-center justify-between px-2 py-3 border border-white/20 rounded-md">
+              <div className="flex items-center gap-2">
+                {theme === 'dark' ? (
+                  <Moon className="h-5 w-5 text-primary" />
+                ) : (
+                  <Sun className="h-5 w-5 text-primary" />
+                )}
+                <span className="text-white">{theme === 'dark' ? 'Dark' : 'Light'} Mode</span>
+              </div>
+              <Switch 
+                checked={theme === 'dark'}
+                onCheckedChange={toggleTheme}
+              />
+            </div>
           </div>
           <DrawerFooter>
             <DrawerClose asChild>
