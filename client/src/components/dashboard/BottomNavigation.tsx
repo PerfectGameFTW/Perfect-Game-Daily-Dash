@@ -21,16 +21,16 @@ const NavItem = ({ icon, label, active, onClick }: NavItemProps) => {
       onClick={onClick}
     >
       {active && (
-        <div className="absolute top-0 left-1/2 w-8 h-1 bg-red-600 rounded-b-lg transform -translate-x-1/2 transition-all duration-300" />
+        <div className="absolute top-0 left-1/2 w-8 h-1 bg-primary rounded-b-lg transform -translate-x-1/2 transition-all duration-300" />
       )}
-      <div className={`mb-1 transition-colors duration-200 ${active ? 'text-red-600 scale-110' : 'text-white/50'}`}>
+      <div className={`mb-1 transition-colors duration-200 ${active ? 'text-primary scale-110' : 'text-muted-foreground'}`}>
         {icon}
       </div>
-      <span className={`text-xs md:text-sm transition-colors duration-200 ${active ? 'text-white font-medium' : 'text-white/50'}`}>
+      <span className={`text-xs md:text-sm transition-colors duration-200 ${active ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
         {label}
       </span>
       {active && (
-        <div className="absolute -bottom-1 left-1/2 w-1.5 h-1.5 bg-red-600 rounded-full transform -translate-x-1/2" />
+        <div className="absolute -bottom-1 left-1/2 w-1.5 h-1.5 bg-primary rounded-full transform -translate-x-1/2" />
       )}
     </button>
   );
@@ -63,7 +63,7 @@ const BottomNavigation = ({ activeTab = "overview", onTabChange, onAccountClick 
 
   return (
     <div 
-      className={`fixed bottom-0 left-0 right-0 h-16 md:h-20 backdrop-blur-sm bg-black/80 border-t border-white/10 flex items-center justify-between px-2 md:px-4 transition-all duration-300 ease-in-out z-50 ${
+      className={`fixed bottom-0 left-0 right-0 h-16 md:h-20 backdrop-blur-sm bg-card/90 border-t border-border flex items-center justify-between px-2 md:px-4 transition-all duration-300 ease-in-out z-50 ${
         animateNav ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'
       }`}
     >

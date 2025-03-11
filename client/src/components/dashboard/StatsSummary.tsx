@@ -60,11 +60,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
       {/* Revenue Highlights - Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* Total Revenue Card */}
-        <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
+        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
-              <h3 className="text-sm font-medium text-white/70">Total Revenue</h3>
-              <p className="text-3xl font-bold mt-2 text-white">{formatCurrency(data?.totalRevenue || 0)}</p>
+              <h3 className="text-sm font-medium text-muted-foreground">Total Revenue</h3>
+              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(data?.totalRevenue || 0)}</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
               <DollarSign className="h-6 w-6 text-primary" />
@@ -86,7 +86,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               )}
               {formatPercentage(Math.abs(data?.revenueChange || 0))}
             </div>
-            <span className="ml-2 text-xs text-white/60">vs. previous period</span>
+            <span className="ml-2 text-xs text-muted-foreground">vs. previous period</span>
           </div>
         </div>
 
