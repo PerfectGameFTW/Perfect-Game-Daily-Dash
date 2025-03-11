@@ -9,6 +9,7 @@ import Register from "@/pages/Register";
 import Admin from "@/pages/Admin";
 import GiftCardTest from "@/pages/GiftCardTest";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useEffect } from "react";
 
@@ -69,8 +70,10 @@ function Router() {
 function AppContent() {
   return (
     <AuthProvider>
-      <Router />
-      <Toaster />
+      <ThemeProvider>
+        <Router />
+        <Toaster />
+      </ThemeProvider>
     </AuthProvider>
   );
 }
