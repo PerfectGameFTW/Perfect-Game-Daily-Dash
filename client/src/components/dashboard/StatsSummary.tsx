@@ -91,14 +91,14 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         </div>
 
         {/* Gift Card Sales */}
-        <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
+        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
-              <h3 className="text-sm font-medium text-white/70">Gift Card Sales</h3>
-              <p className="text-3xl font-bold mt-2 text-white">{formatCurrency(data?.giftCardSales || 0)}</p>
+              <h3 className="text-sm font-medium text-muted-foreground">Gift Card Sales</h3>
+              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(data?.giftCardSales || 0)}</p>
             </div>
-            <div className="h-12 w-12 rounded-xl bg-red-600/10 flex items-center justify-center">
-              <Gift className="h-6 w-6 text-red-600" />
+            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Gift className="h-6 w-6 text-primary" />
             </div>
           </div>
           
@@ -117,24 +117,24 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               )}
               {formatPercentage(Math.abs(data?.giftCardSalesChange || 0))}
             </div>
-            <span className="ml-2 text-xs text-white/60">vs. previous period</span>
+            <span className="ml-2 text-xs text-muted-foreground">vs. previous period</span>
           </div>
         </div>
         
         {/* Tips */}
-        <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
+        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
-              <h3 className="text-sm font-medium text-white/70">Tips</h3>
-              <p className="text-3xl font-bold mt-2 text-white">{formatCurrency(detailedTransactions?.tips || 0)}</p>
+              <h3 className="text-sm font-medium text-muted-foreground">Tips</h3>
+              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(detailedTransactions?.tips || 0)}</p>
             </div>
-            <div className="h-12 w-12 rounded-xl bg-red-600/10 flex items-center justify-center">
-              <BadgeDollarSign className="h-6 w-6 text-red-600" />
+            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
+              <BadgeDollarSign className="h-6 w-6 text-primary" />
             </div>
           </div>
           
           <div className="mt-4 flex items-center">
-            <span className="text-xs text-white/60">
+            <span className="text-xs text-muted-foreground">
               {(detailedTransactions?.tips || 0) > 0 
                 ? `${((detailedTransactions?.tips || 0) / (data?.totalRevenue || 1) * 100).toFixed(1)}% of sales` 
                 : "No tips in this period"}
@@ -143,14 +143,14 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         </div>
         
         {/* Net Sales */}
-        <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
+        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
-              <h3 className="text-sm font-medium text-white/70">Net Sales</h3>
-              <p className="text-3xl font-bold mt-2 text-white">{formatCurrency(calculatedNetRevenue)}</p>
+              <h3 className="text-sm font-medium text-muted-foreground">Net Sales</h3>
+              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(calculatedNetRevenue)}</p>
             </div>
-            <div className="h-12 w-12 rounded-xl bg-red-600/10 flex items-center justify-center">
-              <Wallet className="h-6 w-6 text-red-600" />
+            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Wallet className="h-6 w-6 text-primary" />
             </div>
           </div>
           
@@ -169,16 +169,16 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               )}
               {formatPercentage(Math.abs(1 - (calculatedNetRevenue / (data?.totalRevenue || 1))))}
             </div>
-            <span className="ml-2 text-xs text-white/60">vs. gross revenue</span>
+            <span className="ml-2 text-xs text-muted-foreground">vs. gross revenue</span>
           </div>
         </div>
       </div>
 
       {/* Hourly Revenue Chart */}
-      <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl">
+      <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-white">Hourly Revenue</h2>
-          <div className="flex items-center gap-2 text-white/70 text-sm">
+          <h2 className="text-xl font-bold text-card-foreground">Hourly Revenue</h2>
+          <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <TrendingUp className="h-4 w-4 text-primary" />
             <span>Today's pattern</span>
           </div>
@@ -192,93 +192,93 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
       {/* Detailed Metrics & Breakdown */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-black/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl md:col-span-2">
-          <h2 className="text-xl font-bold mb-4 text-white">Revenue Breakdown</h2>
+        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl md:col-span-2">
+          <h2 className="text-xl font-bold mb-4 text-card-foreground">Revenue Breakdown</h2>
           
           <div className="space-y-4">
             {/* Service Payments Section */}
-            <div className="border-b border-white/10 pb-3">
-              <h3 className="text-sm font-medium mb-3 text-white/70">Service Payments</h3>
+            <div className="border-b border-border pb-3">
+              <h3 className="text-sm font-medium mb-3 text-muted-foreground">Service Payments</h3>
               
               <div className="grid grid-cols-2 gap-4">
                 {/* Partywirks */}
-                <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                <div className="flex items-center justify-between p-3 bg-accent/30 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-red-600/10 flex items-center justify-center mr-3">
-                      <Users className="h-4 w-4 text-red-600" />
+                    <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                      <Users className="h-4 w-4 text-primary" />
                     </div>
-                    <span className="text-sm text-white">Partywirks</span>
+                    <span className="text-sm text-card-foreground">Partywirks</span>
                   </div>
-                  <span className="font-medium text-white">{formatCurrency(detailedTransactions?.partywirks || 0)}</span>
+                  <span className="font-medium text-card-foreground">{formatCurrency(detailedTransactions?.partywirks || 0)}</span>
                 </div>
                 
                 {/* Tripleseat */}
-                <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                <div className="flex items-center justify-between p-3 bg-accent/30 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center mr-3">
-                      <Receipt className="h-4 w-4 text-white" />
+                    <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                      <Receipt className="h-4 w-4 text-primary" />
                     </div>
-                    <span className="text-sm text-white">Tripleseat</span>
+                    <span className="text-sm text-card-foreground">Tripleseat</span>
                   </div>
-                  <span className="font-medium text-white">{formatCurrency(detailedTransactions?.tripleseat || 0)}</span>
+                  <span className="font-medium text-card-foreground">{formatCurrency(detailedTransactions?.tripleseat || 0)}</span>
                 </div>
               </div>
             </div>
             
             {/* Additional Charges Section */}
-            <div className="border-b border-white/10 pb-3">
-              <h3 className="text-sm font-medium mb-3 text-white/70">Additional Charges</h3>
+            <div className="border-b border-border pb-3">
+              <h3 className="text-sm font-medium mb-3 text-muted-foreground">Additional Charges</h3>
               
               <div className="grid grid-cols-2 gap-4">
                 {/* Service Charges */}
-                <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                <div className="flex items-center justify-between p-3 bg-accent/30 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-red-600/10 flex items-center justify-center mr-3">
-                      <Tag className="h-4 w-4 text-red-600" />
+                    <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                      <Tag className="h-4 w-4 text-primary" />
                     </div>
-                    <span className="text-sm text-white">Service Charges</span>
+                    <span className="text-sm text-card-foreground">Service Charges</span>
                   </div>
-                  <span className="font-medium text-white">{formatCurrency(detailedTransactions?.serviceCharges || 0)}</span>
+                  <span className="font-medium text-card-foreground">{formatCurrency(detailedTransactions?.serviceCharges || 0)}</span>
                 </div>
                 
                 {/* Taxes */}
-                <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                <div className="flex items-center justify-between p-3 bg-accent/30 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center mr-3">
-                      <CreditCard className="h-4 w-4 text-white" />
+                    <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                      <CreditCard className="h-4 w-4 text-primary" />
                     </div>
-                    <span className="text-sm text-white">Taxes</span>
+                    <span className="text-sm text-card-foreground">Taxes</span>
                   </div>
-                  <span className="font-medium text-white">{formatCurrency(detailedTransactions?.taxes || 0)}</span>
+                  <span className="font-medium text-card-foreground">{formatCurrency(detailedTransactions?.taxes || 0)}</span>
                 </div>
               </div>
             </div>
             
             {/* Adjustments Section */}
             <div>
-              <h3 className="text-sm font-medium mb-3 text-white/70">Adjustments</h3>
+              <h3 className="text-sm font-medium mb-3 text-muted-foreground">Adjustments</h3>
               
               <div className="grid grid-cols-2 gap-4">
                 {/* Refunds */}
-                <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                <div className="flex items-center justify-between p-3 bg-accent/30 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-red-600/10 flex items-center justify-center mr-3">
-                      <Award className="h-4 w-4 text-red-600" />
+                    <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                      <Award className="h-4 w-4 text-primary" />
                     </div>
-                    <span className="text-sm text-white">Refunds</span>
+                    <span className="text-sm text-card-foreground">Refunds</span>
                   </div>
-                  <span className="font-medium text-white">{formatCurrency(detailedTransactions?.refunds || 0)}</span>
+                  <span className="font-medium text-card-foreground">{formatCurrency(detailedTransactions?.refunds || 0)}</span>
                 </div>
                 
                 {/* Discounts & Comps */}
-                <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                <div className="flex items-center justify-between p-3 bg-accent/30 rounded-lg">
                   <div className="flex items-center">
-                    <div className="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center mr-3">
-                      <Percent className="h-4 w-4 text-white" />
+                    <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                      <Percent className="h-4 w-4 text-primary" />
                     </div>
-                    <span className="text-sm text-white">Discounts & Comps</span>
+                    <span className="text-sm text-card-foreground">Discounts & Comps</span>
                   </div>
-                  <span className="font-medium text-white">{formatCurrency(detailedTransactions?.discountsAndComps || 0)}</span>
+                  <span className="font-medium text-card-foreground">{formatCurrency(detailedTransactions?.discountsAndComps || 0)}</span>
                 </div>
               </div>
             </div>
@@ -287,17 +287,17 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         
         {/* Summary Stats */}
         <div className="bg-gradient-to-br from-primary/20 to-primary/5 backdrop-blur-sm p-6 rounded-xl border border-primary/20 shadow-xl">
-          <h2 className="text-xl font-bold mb-6 text-white">Summary Stats</h2>
+          <h2 className="text-xl font-bold mb-6 text-card-foreground">Summary Stats</h2>
           
           <div className="space-y-5">
             <div className="flex justify-between items-center">
-              <span className="text-white/80">Orders</span>
-              <span className="text-white font-medium">{data?.totalOrders || 0}</span>
+              <span className="text-muted-foreground">Orders</span>
+              <span className="text-card-foreground font-medium">{data?.totalOrders || 0}</span>
             </div>
             
             <div className="flex justify-between items-center">
-              <span className="text-white/80">Average Order</span>
-              <span className="text-white font-medium">
+              <span className="text-muted-foreground">Average Order</span>
+              <span className="text-card-foreground font-medium">
                 {data?.totalOrders && data.totalOrders > 0 
                   ? formatCurrency((data?.totalRevenue || 0) / data.totalOrders) 
                   : formatCurrency(0)}
@@ -305,30 +305,30 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
             
             <div className="flex justify-between items-center">
-              <span className="text-white/80">Gift Card Sales</span>
-              <span className="text-white font-medium">{formatCurrency(data?.giftCardSales || 0)}</span>
+              <span className="text-muted-foreground">Gift Card Sales</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(data?.giftCardSales || 0)}</span>
             </div>
             
             <div className="flex justify-between items-center">
-              <span className="text-white/80">Gross Revenue</span>
-              <span className="text-white font-medium">{formatCurrency(data?.totalRevenue || 0)}</span>
+              <span className="text-muted-foreground">Gross Revenue</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(data?.totalRevenue || 0)}</span>
             </div>
             
             <div className="flex justify-between items-center">
-              <span className="text-white/80">Taxes & Fees</span>
-              <span className="text-white font-medium">
+              <span className="text-muted-foreground">Taxes & Fees</span>
+              <span className="text-card-foreground font-medium">
                 {formatCurrency((detailedTransactions?.taxes || 0) + (detailedTransactions?.serviceCharges || 0))}
               </span>
             </div>
             
             <div className="flex justify-between items-center">
-              <span className="text-white/80">Discounts</span>
-              <span className="text-white font-medium">{formatCurrency(detailedTransactions?.discountsAndComps || 0)}</span>
+              <span className="text-muted-foreground">Discounts</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.discountsAndComps || 0)}</span>
             </div>
             
-            <div className="flex justify-between items-center pt-3 border-t border-white/10">
-              <span className="text-white font-medium">Net Revenue</span>
-              <span className="text-white font-medium">{formatCurrency(calculatedNetRevenue)}</span>
+            <div className="flex justify-between items-center pt-3 border-t border-border">
+              <span className="text-card-foreground font-medium">Net Revenue</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(calculatedNetRevenue)}</span>
             </div>
           </div>
         </div>
