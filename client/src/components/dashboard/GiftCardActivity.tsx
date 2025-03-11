@@ -46,12 +46,12 @@ export default function GiftCardActivity({
         datasets: [{
           data: [data.soldAmount, data.redeemedAmount],
           backgroundColor: [
-            'rgba(100, 116, 139, 0.9)', // slate-500 with alpha
-            'rgba(255, 255, 255, 0.7)'  // white with alpha
+            'hsl(var(--primary) / 0.9)',  // Primary color with alpha
+            'hsl(var(--accent) / 0.7)'    // Accent color with alpha
           ],
           borderColor: [
-            'rgba(100, 116, 139, 1)', // slate-500
-            'rgba(255, 255, 255, 0.8)'  // white
+            'hsl(var(--primary))',        // Primary color
+            'hsl(var(--accent) / 0.8)'    // Accent color with alpha
           ],
           borderWidth: 2,
           hoverOffset: 6,
@@ -66,7 +66,7 @@ export default function GiftCardActivity({
           legend: {
             position: 'bottom',
             labels: {
-              color: 'rgba(255, 255, 255, 0.7)',
+              color: 'hsl(var(--muted-foreground))',
               padding: 15,
               font: {
                 size: 12
@@ -83,7 +83,7 @@ export default function GiftCardActivity({
                     return {
                       text: `${label}: ${formatCurrency(value)}`,
                       fillStyle: backgroundColor,
-                      strokeStyle: '#ffffff20',
+                      strokeStyle: 'hsl(var(--border) / 0.5)',
                       lineWidth: 1,
                       hidden: false,
                       index: i
@@ -95,10 +95,12 @@ export default function GiftCardActivity({
             }
           },
           tooltip: {
-            backgroundColor: 'rgba(30, 41, 59, 0.8)', // slate-800 with alpha
-            borderColor: 'rgba(255, 255, 255, 0.1)',
+            backgroundColor: 'hsl(var(--card) / 0.8)',
+            borderColor: 'hsl(var(--border))',
             borderWidth: 1,
             padding: 10,
+            titleColor: 'hsl(var(--card-foreground))',
+            bodyColor: 'hsl(var(--muted-foreground))',
             bodyFont: {
               size: 12
             }
@@ -116,21 +118,21 @@ export default function GiftCardActivity({
   }, [data, isLoading, dateRange]);
 
   return (
-    <div className="bg-slate-800/30 backdrop-blur-sm p-6 rounded-xl border border-white/10 shadow-xl overflow-hidden">
+    <div className="bg-card backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl overflow-hidden">
       <div className="flex flex-row items-center justify-between">
         <div className="space-y-1">
-          <h2 className="text-xl font-bold flex items-center text-white">
-            <CreditCard size={20} className="mr-2 text-slate-400" />
+          <h2 className="text-xl font-bold flex items-center text-card-foreground">
+            <CreditCard size={20} className="mr-2 text-primary" />
             <span>Gift Card Activity</span>
           </h2>
           {data && !isLoading && (
-            <div className="flex items-center text-white/70 text-sm">
-              <TrendingUp size={16} className="mr-1 text-white" />
+            <div className="flex items-center text-muted-foreground text-sm">
+              <TrendingUp size={16} className="mr-1 text-primary" />
               <span>Total sales: {formatCurrency(data?.soldAmount || 0)}</span>
             </div>
           )}
         </div>
-        <div className="flex items-center px-3 py-1.5 bg-slate-400/10 text-slate-400 rounded-lg text-sm font-medium">
+        <div className="flex items-center px-3 py-1.5 bg-accent/30 text-primary rounded-lg text-sm font-medium">
           <CreditCard size={14} className="mr-1.5" />
           <span>Gift Cards</span>
         </div>
@@ -143,7 +145,7 @@ export default function GiftCardActivity({
           </div>
           <div className="mt-6 grid grid-cols-2 gap-4">
             {Array(4).fill(0).map((_, index) => (
-              <div key={index} className="bg-white/5 rounded-lg p-4">
+              <div key={index} className="bg-accent/20 rounded-lg p-4">
                 <Skeleton className="h-5 w-24 mb-2" />
                 <Skeleton className="h-7 w-16" />
               </div>
@@ -153,10 +155,10 @@ export default function GiftCardActivity({
       ) : (
         <>
           <div className="mt-4 flex items-center justify-between mb-4">
-            <h4 className="text-base font-medium text-white/90">
+            <h4 className="text-base font-medium text-card-foreground">
               {dateRange === 'yesterday' ? 'Gift Card Sales Yesterday' : 'Gift Card Sales Today'}
             </h4>
-            <span className="text-2xl font-bold text-slate-400">{formatCurrency(data?.soldAmount || 0)}</span>
+            <span className="text-2xl font-bold text-primary">{formatCurrency(data?.soldAmount || 0)}</span>
           </div>
           
           {/* Donut Chart for Gift Card Sales vs Redemptions */}
@@ -167,12 +169,12 @@ export default function GiftCardActivity({
             <div className="mt-4 space-y-4">
               <div>
                 <div className="flex justify-between text-sm mb-1">
-                  <span className="text-white/70">Gift Card Sales</span>
-                  <span className="font-semibold text-white">{formatCurrency(data?.soldAmount || 0)}</span>
+                  <span className="text-muted-foreground">Gift Card Sales</span>
+                  <span className="font-semibold text-card-foreground">{formatCurrency(data?.soldAmount || 0)}</span>
                 </div>
-                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                <div className="h-2 bg-accent/20 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-slate-500 rounded-full" 
+                    className="h-full bg-primary rounded-full" 
                     style={{ 
                       width: `${data?.soldAmount ? Math.min(100, (data.soldAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
                     }} 
@@ -182,12 +184,12 @@ export default function GiftCardActivity({
               
               <div>
                 <div className="flex justify-between text-sm mb-1">
-                  <span className="text-white/70">Gift Card Redemptions</span>
-                  <span className="font-semibold text-white">{formatCurrency(data?.redeemedAmount || 0)}</span>
+                  <span className="text-muted-foreground">Gift Card Redemptions</span>
+                  <span className="font-semibold text-card-foreground">{formatCurrency(data?.redeemedAmount || 0)}</span>
                 </div>
-                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                <div className="h-2 bg-accent/20 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-white/80 rounded-full" 
+                    className="h-full bg-accent rounded-full" 
                     style={{ 
                       width: `${data?.redeemedAmount ? Math.min(100, (data.redeemedAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
                     }} 
@@ -199,47 +201,47 @@ export default function GiftCardActivity({
           
           {/* Gift Card Metrics */}
           <div className="mt-6 grid grid-cols-2 gap-4">
-            <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
+            <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-slate-500/20 flex items-center justify-center mr-3">
-                  <CreditCard className="h-4 w-4 text-slate-400" />
+                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                  <CreditCard className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-white/60">Cards Sold</div>
-                  <div className="mt-1 text-xl font-bold text-white">{data?.soldCount || 0}</div>
+                  <div className="text-sm font-medium text-muted-foreground">Cards Sold</div>
+                  <div className="mt-1 text-xl font-bold text-card-foreground">{data?.soldCount || 0}</div>
                 </div>
               </div>
             </div>
-            <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
+            <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-white/20 flex items-center justify-center mr-3">
-                  <RefreshCcw className="h-4 w-4 text-white" />
+                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                  <RefreshCcw className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-white/60">Cards Redeemed</div>
-                  <div className="mt-1 text-xl font-bold text-white">{data?.redeemedCount || 0}</div>
+                  <div className="text-sm font-medium text-muted-foreground">Cards Redeemed</div>
+                  <div className="mt-1 text-xl font-bold text-card-foreground">{data?.redeemedCount || 0}</div>
                 </div>
               </div>
             </div>
-            <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
+            <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-slate-500/20 flex items-center justify-center mr-3">
-                  <DollarSign className="h-4 w-4 text-slate-400" />
+                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                  <DollarSign className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-white/60">Avg. Card Value</div>
-                  <div className="mt-1 text-xl font-bold text-white">{formatCurrency(data?.averageValue || 0)}</div>
+                  <div className="text-sm font-medium text-muted-foreground">Avg. Card Value</div>
+                  <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.averageValue || 0)}</div>
                 </div>
               </div>
             </div>
-            <div className="bg-white/5 rounded-xl p-4 border border-white/10 shadow-lg">
+            <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
               <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-white/20 flex items-center justify-center mr-3">
-                  <TrendingUp className="h-4 w-4 text-white" />
+                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
+                  <TrendingUp className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-white/60">Redemption Value</div>
-                  <div className="mt-1 text-xl font-bold text-white">{formatCurrency(data?.redeemedAmount || 0)}</div>
+                  <div className="text-sm font-medium text-muted-foreground">Redemption Value</div>
+                  <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.redeemedAmount || 0)}</div>
                 </div>
               </div>
             </div>
