@@ -4,7 +4,7 @@ import { fetchDailySummary, fetchDetailedTransactions } from "@/lib/squareApi";
 import { DateRange } from "@shared/schema";
 import { formatCurrency, formatPercentage, isPositiveChange } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
-import HourlyRevenueBarChart from "./HourlyRevenueBarChart";
+import SimpleBarChart from "./SimpleBarChart";
 import {
   ChevronUp,
   ChevronDown,
@@ -205,7 +205,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             <span>Today's pattern</span>
           </div>
         </div>
-        <HourlyRevenueBarChart
+        <SimpleBarChart
           dateRange={dateRange}
           customStartDate={customStartDate}
           customEndDate={customEndDate}
