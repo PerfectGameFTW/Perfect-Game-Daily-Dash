@@ -36,7 +36,7 @@ const formatDataForChart = (data: HourlyRevenue[]) => {
   // Log data to inspect
   console.log('Hourly Revenue Data from API:', data);
   
-  return data.map(item => {
+  const formattedData = data.map(item => {
     // For a real stacked chart, we would have multiple values here
     // Since we only have one value (total revenue), we'll use that for the primary series
     // Make sure we handle different data types correctly
@@ -48,6 +48,9 @@ const formatDataForChart = (data: HourlyRevenue[]) => {
       formattedAmount: formatCurrency(amount),
     };
   });
+  
+  console.log('Formatted chart data:', formattedData);
+  return formattedData;
 };
 
 // Chart configuration with colors
@@ -70,6 +73,7 @@ export default function HourlyRevenueBarChart({
   
   const chartData = useMemo(() => {
     if (!data || data.length === 0) return [];
+    console.log('Hourly Revenue Data for chart:', data);
     return formatDataForChart(data);
   }, [data]);
   
@@ -112,36 +116,46 @@ export default function HourlyRevenueBarChart({
     document.documentElement.style.setProperty('--color-sales', 'hsl(var(--primary))');
   }, []);
 
+  // Debug the issue - check if displayData contains the expected data
+  console.log('Display data for chart:', displayData);
+  
   return (
     <div className="relative h-[320px] w-full">
-      <ChartContainer config={chartConfig} className="h-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={displayData}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-            <XAxis
-              dataKey="hour"
-              tickLine={false}
-              tickMargin={10}
-              axisLine={false}
-              // Only show every 3rd hour label to prevent overcrowding
-              tickFormatter={(value, index) => index % 3 === 0 ? value.replace(/\s[AP]M$/, '') : ''}
-            />
-            <YAxis
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={(value) => `$${value}`}
-            />
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            <ChartLegend content={<ChartLegendContent />} />
-            <Bar
-              dataKey="sales"
-              fill="hsl(var(--primary))" // Use direct HSL value instead of var reference
-              radius={[4, 4, 0, 0]}
-              name="Sales"
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartContainer>
+      {/* Show debug info if there's an issue */}
+      {displayData.length > 0 ? (
+        <ChartContainer config={chartConfig} className="h-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={displayData}>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
+              <XAxis
+                dataKey="hour"
+                tickLine={false}
+                tickMargin={10}
+                axisLine={false}
+                // Only show every 3rd hour label to prevent overcrowding
+                tickFormatter={(value, index) => index % 3 === 0 ? value.replace(/\s[AP]M$/, '') : ''}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(value) => `$${value}`}
+              />
+              <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+              <ChartLegend content={<ChartLegendContent />} />
+              <Bar
+                dataKey="sales"
+                fill="hsl(var(--primary))" 
+                radius={[4, 4, 0, 0]}
+                name="Sales"
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartContainer>
+      ) : (
+        <div className="h-full flex items-center justify-center">
+          <p className="text-muted-foreground">Chart data is empty, but API returned: {data.length} hours</p>
+        </div>
+      )}
       
       {/* Optional additional information */}
       {peakHour && peakHour.amount > 0 && (
