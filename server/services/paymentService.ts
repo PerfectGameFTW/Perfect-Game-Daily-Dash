@@ -350,11 +350,11 @@ export class PaymentService {
     console.log('TIMEZONE DEBUG - Formatted for display:', formatHour(parseInt(formatInTimeZone(testDate, 'America/New_York', 'H'), 10)));
     
     // Query the database for hourly revenue
-    // This query extracts the hour from the timestamp in Eastern time (America/New_York)
-    // and aggregates the revenue by hour
+    // Extract UTC hours from timestamps (not Eastern time)
+    // so the frontend can properly convert them
     const result = await db.execute<{ hour: number, amount: number }>(sql`
       SELECT 
-        EXTRACT(HOUR FROM ${transactions.timestamp} AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') AS hour,
+        EXTRACT(HOUR FROM ${transactions.timestamp}) AS hour,
         COALESCE(SUM(${transactions.amount}), 0) AS amount
       FROM ${transactions}
       WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
@@ -389,11 +389,25 @@ export class PaymentService {
     }
     
     // Convert to array and format hours as strings like "12 AM", "1 PM", etc.
-    // The SQL query already extracted the Eastern Time hour, so we just need to format it
-    const hourlyRevenue = Object.entries(hourlyData).map(([hour, amount]) => ({
-      hour: formatHour(parseInt(hour, 10)),
-      amount
-    }));
+    // We need to convert UTC hours to Eastern Time before formatting
+    const hourlyRevenue = Object.entries(hourlyData).map(([hourStr, amount]) => {
+      const utcHour = parseInt(hourStr, 10);
+      
+      // Create a date object at the given UTC hour today
+      const utcDate = new Date();
+      utcDate.setUTCHours(utcHour, 0, 0, 0);
+      
+      // Convert to Eastern Time hour using date-fns-tz
+      const easternHour = parseInt(formatInTimeZone(utcDate, 'America/New_York', 'H'), 10);
+      
+      // Log the conversion for debugging
+      console.log(`TIMEZONE CONVERT - UTC hour ${utcHour} → Eastern hour ${easternHour}`);
+      
+      return {
+        hour: formatHour(easternHour),
+        amount
+      };
+    });
     
     // Sort by hour (0-23)
     hourlyRevenue.sort((a, b) => {
