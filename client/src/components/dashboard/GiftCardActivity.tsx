@@ -39,6 +39,10 @@ export default function GiftCardActivity({
     const ctx = chartRef.current.getContext('2d');
     if (!ctx) return;
 
+    // Custom colors for the chart - Pantone colors converted to hex
+    const primaryColor = '#0A3161'; // Pantone 653c
+    const secondaryColor = '#C4D600'; // Pantone 382c
+    
     chartInstance.current = new Chart(ctx, {
       type: 'doughnut',
       data: {
@@ -46,12 +50,12 @@ export default function GiftCardActivity({
         datasets: [{
           data: [data.soldAmount, data.redeemedAmount],
           backgroundColor: [
-            'hsl(var(--primary) / 0.9)',  // Primary color with alpha
-            'hsl(var(--accent) / 0.7)'    // Accent color with alpha
+            primaryColor + 'e6',  // Primary color with alpha (90%)
+            secondaryColor + 'b3'  // Secondary color with alpha (70%)
           ],
           borderColor: [
-            'hsl(var(--primary))',        // Primary color
-            'hsl(var(--accent) / 0.8)'    // Accent color with alpha
+            primaryColor,        // Primary color
+            secondaryColor + 'cc' // Secondary color with alpha (80%)
           ],
           borderWidth: 2,
           hoverOffset: 6,
@@ -169,9 +173,10 @@ export default function GiftCardActivity({
                 </div>
                 <div className="h-2 bg-accent/20 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-primary rounded-full" 
+                    className="h-full rounded-full" 
                     style={{ 
-                      width: `${data?.soldAmount ? Math.min(100, (data.soldAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
+                      width: `${data?.soldAmount ? Math.min(100, (data.soldAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%`,
+                      backgroundColor: '#0A3161' // Pantone 653c
                     }} 
                   />
                 </div>
@@ -184,9 +189,10 @@ export default function GiftCardActivity({
                 </div>
                 <div className="h-2 bg-accent/20 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-accent rounded-full" 
+                    className="h-full rounded-full" 
                     style={{ 
-                      width: `${data?.redeemedAmount ? Math.min(100, (data.redeemedAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%` 
+                      width: `${data?.redeemedAmount ? Math.min(100, (data.redeemedAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%`,
+                      backgroundColor: '#C4D600' // Pantone 382c
                     }} 
                   />
                 </div>
