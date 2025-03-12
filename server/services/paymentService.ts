@@ -14,7 +14,7 @@ import {
   type DateRange,
   type TransactionStatus
 } from '../../shared/schema';
-import { getEasternDateRange } from '../dateUtils';
+import { getEasternDateRange, formatHour } from '../dateUtils';
 
 export class PaymentError extends Error {
   constructor(message: string, public readonly code: string, public readonly details?: any) {
