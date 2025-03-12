@@ -116,14 +116,11 @@ export default function Dashboard() {
       case "giftcards":
         return (
           <div className="space-y-8">
-            <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl">
-              <h2 className="text-2xl font-bold mb-4 text-card-foreground">Gift Card Activity</h2>
-              <GiftCardActivity
-                dateRange={dateRange}
-                customStartDate={customStartDate}
-                customEndDate={customEndDate}
-              />
-            </div>
+            <GiftCardActivity
+              dateRange={dateRange}
+              customStartDate={customStartDate}
+              customEndDate={customEndDate}
+            />
           </div>
         );
       default:
