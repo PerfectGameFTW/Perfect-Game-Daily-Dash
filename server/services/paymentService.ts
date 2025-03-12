@@ -326,7 +326,7 @@ export class PaymentService {
    * @param dateRange The date range type (today, yesterday, etc.)
    * @param startDate Optional custom start date for custom ranges
    * @param endDate Optional custom end date for custom ranges
-   * @returns Array of hourly revenue data with all 24 hours populated
+   * @returns Array of hourly revenue data with all 24 hours populated, with hours in Eastern Time
    */
   async getHourlyRevenue(
     dateRange: DateRange,
@@ -342,7 +342,7 @@ export class PaymentService {
 }`);
     
     // Query the database for hourly revenue
-    // This complex query extracts the hour from the timestamp in Eastern time
+    // This query extracts the hour from the timestamp in Eastern time (America/New_York)
     // and aggregates the revenue by hour
     const result = await db.execute<{ hour: number, amount: number }>(sql`
       SELECT 
@@ -371,6 +371,7 @@ export class PaymentService {
     }
     
     // Convert to array and format hours as strings like "12 AM", "1 PM", etc.
+    // The SQL query already extracted the Eastern Time hour, so we just need to format it
     const hourlyRevenue = Object.entries(hourlyData).map(([hour, amount]) => ({
       hour: formatHour(parseInt(hour, 10)),
       amount
@@ -553,13 +554,6 @@ export class PaymentService {
     
     return results;
   }
-}
-
-// Helper function to format hour number to AM/PM string
-function formatHour(hour: number): string {
-  if (hour === 0) return '12 AM';
-  if (hour === 12) return '12 PM';
-  return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
 }
 
 // Create and export a singleton instance
