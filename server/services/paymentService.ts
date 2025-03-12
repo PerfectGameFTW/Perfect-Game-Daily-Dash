@@ -15,6 +15,7 @@ import {
   type TransactionStatus
 } from '../../shared/schema';
 import { getEasternDateRange, formatHour } from '../dateUtils';
+import { formatInTimeZone } from 'date-fns-tz';
 
 export class PaymentError extends Error {
   constructor(message: string, public readonly code: string, public readonly details?: any) {
@@ -341,6 +342,13 @@ export class PaymentService {
   endUTC: '${end.toISOString()}'
 }`);
     
+    // TEST DATA: Sample transaction for timezone debugging
+    const testDate = new Date('2025-03-11T01:30:00Z'); // 1:30 AM UTC
+    console.log('TIMEZONE DEBUG - Original UTC timestamp:', testDate.toISOString());
+    console.log('TIMEZONE DEBUG - Current Eastern hour:', formatInTimeZone(testDate, 'America/New_York', 'H'));
+    console.log('TIMEZONE DEBUG - SQL would extract this hour:', parseInt(formatInTimeZone(testDate, 'America/New_York', 'H'), 10));
+    console.log('TIMEZONE DEBUG - Formatted for display:', formatHour(parseInt(formatInTimeZone(testDate, 'America/New_York', 'H'), 10)));
+    
     // Query the database for hourly revenue
     // This query extracts the hour from the timestamp in Eastern time (America/New_York)
     // and aggregates the revenue by hour
@@ -356,6 +364,16 @@ export class PaymentService {
     `);
     
     console.log(`Raw hourly revenue query returned ${result.rows.length} rows`);
+    
+    // DEBUG: Log the first few rows to see the hour values
+    if (result.rows.length > 0) {
+      console.log('TIMEZONE DEBUG - First few result rows:');
+      result.rows.slice(0, 3).forEach((row, i) => {
+        console.log(`Row ${i}:`, row);
+        console.log(`Row ${i} hour (number):`, row.hour);
+        console.log(`Row ${i} formatted hour:`, formatHour(row.hour));
+      });
+    }
     
     // Create a map to hold all 24 hours with their amounts
     const hourlyData: Record<number, number> = {};
