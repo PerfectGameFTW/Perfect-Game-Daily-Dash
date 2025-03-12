@@ -230,7 +230,13 @@ export class GiftCardService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    console.log(`Getting gift card summary with UTC dates: ${start.toISOString()} to ${end.toISOString()}`);
+    console.log(`Getting gift card summary with UTC dates: {
+  dateRange: '${dateRange}',
+  startUTC: '${start.toISOString()}',
+  endUTC: '${end.toISOString()}',
+  startDate: ${startDate ? `'${startDate.toISOString()}'` : 'undefined'},
+  endDate: ${endDate ? `'${endDate.toISOString()}'` : 'undefined'}
+}`);
     
     // Query the database for gift card activations using Drizzle's SQL template
     // which properly handles parameterized queries
@@ -265,13 +271,15 @@ export class GiftCardService {
     const redeemedAmount = parseFloat(String(redemptionsResult.rows?.[0]?.redeemed_amount || '0')) || 0;
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
     
-    console.log(`Gift card summary processed values: {
-      soldCount: ${soldCount},
-      soldAmount: ${soldAmount},
-      redeemedCount: ${redeemedCount},
-      redeemedAmount: ${redeemedAmount},
-      averageValue: ${averageValue}
-    }`);
+    console.log(`Gift card summary calculated using proper Eastern timezone boundaries: {
+  dateRange: '${dateRange}',
+  soldCount: ${soldCount},
+  soldAmount: ${soldAmount},
+  redeemedCount: ${redeemedCount},
+  redeemedAmount: ${redeemedAmount},
+  averageValue: ${averageValue},
+  dateRangeStr: '${start.toISOString()} to ${end.toISOString()}'
+}`);
     
     return {
       soldCount,

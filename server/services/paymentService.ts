@@ -309,7 +309,13 @@ export class PaymentService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Query the database for the total revenue
+    console.log(`Getting total revenue with UTC dates: {
+  dateRange: '${dateRange}',
+  startUTC: '${start.toISOString()}',
+  endUTC: '${end.toISOString()}'
+}`);
+    
+    // Query the database for the total revenue - make sure we're using the right timezone boundaries
     const result = await db.select({
       totalRevenue: sql<number>`COALESCE(SUM(${transactions.amount}), 0)`,
     }).from(transactions)
@@ -318,7 +324,15 @@ export class PaymentService {
         eq(transactions.status, 'completed')
       ));
     
-    return result[0]?.totalRevenue || 0;
+    const totalRevenue = result[0]?.totalRevenue || 0;
+    
+    console.log(`Total revenue calculated using proper Eastern timezone boundaries: {
+  dateRange: '${dateRange}',
+  totalRevenue: ${totalRevenue},
+  dateRangeStr: '${start.toISOString()} to ${end.toISOString()}'
+}`);
+    
+    return totalRevenue;
   }
   
   /**
