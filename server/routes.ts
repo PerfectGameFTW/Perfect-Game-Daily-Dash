@@ -8,6 +8,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db"; // Import db directly
 import { pgStorage } from "./pgStorage"; // Keep this for other storage operations
+import { paymentService } from "./services/paymentService"; // Import for hourly revenue timezone fix
 import {
   dateRangeSchema,
   transactions,
@@ -327,7 +328,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const hourlyRevenue = await pgStorage.getHourlyRevenue(parsedDateRange.data, startDate, endDate);
+      // Use paymentService instead of pgStorage for hourly revenue
+      const hourlyRevenue = await paymentService.getHourlyRevenue(parsedDateRange.data, startDate, endDate);
+      
+      console.log(`Found ${hourlyRevenue.length} hourly revenue entries from payment service`);
 
       // Return the direct hourly revenue without additional processing
       res.json(hourlyRevenue);
