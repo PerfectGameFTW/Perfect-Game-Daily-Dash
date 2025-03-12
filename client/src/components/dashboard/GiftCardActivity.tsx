@@ -132,10 +132,6 @@ export default function GiftCardActivity({
             </div>
           )}
         </div>
-        <div className="flex items-center px-3 py-1.5 bg-accent/30 text-primary rounded-lg text-sm font-medium">
-          <CreditCard size={14} className="mr-1.5" />
-          <span>Gift Cards</span>
-        </div>
       </div>
       
       {isLoading ? (
