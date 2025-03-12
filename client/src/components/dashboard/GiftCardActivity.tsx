@@ -119,14 +119,13 @@ export default function GiftCardActivity({
 
   return (
     <div className="bg-card backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl overflow-hidden">
-      <div className="flex flex-row items-center justify-between">
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold flex items-center text-card-foreground">
-            <CreditCard size={20} className="mr-2 text-primary" />
-            <span>Gift Card Activity</span>
+      <div className="flex flex-col items-center justify-center">
+        <div className="space-y-1 text-center">
+          <h2 className="text-xl font-bold text-card-foreground">
+            Gift Card Activity
           </h2>
           {data && !isLoading && (
-            <div className="flex items-center text-muted-foreground text-sm">
+            <div className="flex items-center justify-center text-muted-foreground text-sm">
               <TrendingUp size={16} className="mr-1 text-primary" />
               <span>Total sales: {formatCurrency(data?.soldAmount || 0)}</span>
             </div>
