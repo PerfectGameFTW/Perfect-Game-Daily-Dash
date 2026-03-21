@@ -309,12 +309,6 @@ export class PaymentService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    console.log(`Getting total revenue with UTC dates: {
-  dateRange: '${dateRange}',
-  startUTC: '${start.toISOString()}',
-  endUTC: '${end.toISOString()}'
-}`);
-    
     // Query the database for the total revenue - make sure we're using the right timezone boundaries
     const result = await db.select({
       totalRevenue: sql<number>`COALESCE(SUM(${transactions.amount}), 0)`,
@@ -325,13 +319,6 @@ export class PaymentService {
       ));
     
     const totalRevenue = result[0]?.totalRevenue || 0;
-    
-    console.log(`Total revenue calculated using proper Eastern timezone boundaries: {
-  dateRange: '${dateRange}',
-  totalRevenue: ${totalRevenue},
-  dateRangeStr: '${start.toISOString()} to ${end.toISOString()}'
-}`);
-    
     return totalRevenue;
   }
   
@@ -351,18 +338,6 @@ export class PaymentService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    console.log(`Getting hourly revenue with UTC dates: {
-  startUTC: '${start.toISOString()}',
-  endUTC: '${end.toISOString()}'
-}`);
-    
-    // TEST DATA: Sample transaction for timezone debugging
-    const testDate = new Date('2025-03-11T01:30:00Z'); // 1:30 AM UTC
-    console.log('TIMEZONE DEBUG - Original UTC timestamp:', testDate.toISOString());
-    console.log('TIMEZONE DEBUG - Current Eastern hour:', formatInTimeZone(testDate, 'America/New_York', 'H'));
-    console.log('TIMEZONE DEBUG - SQL would extract this hour:', parseInt(formatInTimeZone(testDate, 'America/New_York', 'H'), 10));
-    console.log('TIMEZONE DEBUG - Formatted for display:', formatHour(parseInt(formatInTimeZone(testDate, 'America/New_York', 'H'), 10)));
-    
     // Query the database for hourly revenue
     // Extract UTC hours from timestamps (not Eastern time)
     // so the frontend can properly convert them
@@ -376,18 +351,6 @@ export class PaymentService {
       GROUP BY hour
       ORDER BY hour
     `);
-    
-    console.log(`Raw hourly revenue query returned ${result.rows.length} rows`);
-    
-    // DEBUG: Log the first few rows to see the hour values
-    if (result.rows.length > 0) {
-      console.log('TIMEZONE DEBUG - First few result rows:');
-      result.rows.slice(0, 3).forEach((row, i) => {
-        console.log(`Row ${i}:`, row);
-        console.log(`Row ${i} hour (number):`, row.hour);
-        console.log(`Row ${i} formatted hour:`, formatHour(row.hour));
-      });
-    }
     
     // Create a map to hold all 24 hours with their amounts
     const hourlyData: Record<number, number> = {};
@@ -413,10 +376,6 @@ export class PaymentService {
       
       // Convert to Eastern Time hour using date-fns-tz
       const easternHour = parseInt(formatInTimeZone(utcDate, 'America/New_York', 'H'), 10);
-      
-      // Log the conversion for debugging
-      console.log(`TIMEZONE CONVERT - UTC hour ${utcHour} → Eastern hour ${easternHour}`);
-      
       return {
         hour: formatHour(easternHour),
         amount
@@ -435,8 +394,6 @@ export class PaymentService {
       
       return hourA - hourB;
     });
-    
-    console.log(`Returning ${hourlyRevenue.length} hourly revenue entries with all hours populated`);
     
     return hourlyRevenue;
   }

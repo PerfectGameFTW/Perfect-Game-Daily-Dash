@@ -49,101 +49,6 @@ class PgStorage implements IStorage {
     const startUTC = start.toISOString();
     const endUTC = end.toISOString();
     
-    console.log(`Filtering transactions with UTC range: ${startUTC} to ${endUTC}`);
-    
-    // For direct SQL debugging when "today" is requested
-    // Extended debugging to query by hour to identify where the issue is
-    if (dateRange === 'today') {
-      const fullDebugResult = await db.execute(sql`
-        SELECT 
-          id, 
-          square_id, 
-          timestamp, 
-          amount, 
-          status 
-        FROM transactions
-        WHERE timestamp >= ${startUTC}::timestamp
-          AND timestamp <= ${endUTC}::timestamp
-          AND status = 'completed'
-        ORDER BY timestamp
-      `);
-      
-      console.log(`CRITICAL ISSUE - TODAY HAS ${fullDebugResult.rows.length} TRANSACTIONS`);
-      
-      // Calculate the actual sum to verify
-      let totalSum = 0;
-      for (const row of fullDebugResult.rows) {
-        totalSum += parseFloat(row.amount as string);
-      }
-      console.log(`MANUAL SUM OF TODAY'S TRANSACTIONS: $${totalSum.toFixed(2)}`);
-      
-      const debugResult = await db.execute(sql`
-        SELECT COUNT(*), SUM(amount) 
-        FROM transactions
-        WHERE timestamp >= ${startUTC}::timestamp
-          AND timestamp <= ${endUTC}::timestamp
-          ${status ? sql` AND status = ${status}` : sql``}
-      `);
-      
-      console.log('DEBUG SQL RESULT FOR TODAY:', {
-        count: debugResult.rows[0]?.count || 0,
-        sum: debugResult.rows[0]?.sum || 0,
-        dateRange,
-        startUTC,
-        endUTC,
-        status,
-        manualSum: totalSum
-      });
-      
-      // Add debug query to check hourly breakdown
-      const hourlyBreakdown = await db.execute(sql`
-        SELECT 
-          EXTRACT(HOUR FROM timestamp) as hour,
-          COUNT(*) as count,
-          SUM(amount) as total
-        FROM 
-          transactions
-        WHERE 
-          timestamp >= ${startUTC}::timestamp
-          AND timestamp <= ${endUTC}::timestamp
-          ${status ? sql` AND status = ${status}` : sql``}
-        GROUP BY 
-          EXTRACT(HOUR FROM timestamp)
-        ORDER BY 
-          hour
-      `);
-      
-      console.log('HOURLY BREAKDOWN FOR TODAY:');
-      for (const row of hourlyBreakdown.rows) {
-        console.log(`Hour ${row.hour}: Count ${row.count}, Total ${row.total}`);
-      }
-      
-      // Get some sample transactions in this range to see what's included
-      const sampleResult = await db.execute(sql`
-        SELECT id, square_id, timestamp, amount, status, category
-        FROM transactions
-        WHERE timestamp >= ${startUTC}::timestamp
-          AND timestamp <= ${endUTC}::timestamp
-          ${status ? sql` AND status = ${status}` : sql``}
-        ORDER BY timestamp ASC
-        LIMIT 5
-      `);
-      
-      if (sampleResult.rows.length > 0) {
-        console.log('Sample transactions in range:');
-        for (const row of sampleResult.rows) {
-          console.log({
-            id: row.id,
-            timestamp: row.timestamp,
-            amount: row.amount,
-            category: row.category,
-            status: row.status,
-            eastern: formatInTimeZone(new Date(row.timestamp as string), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
-          });
-        }
-      }
-    }
-    
     // Query directly using UTC timestamps
     const filteredTransactions = await db.execute(sql`
       SELECT * 
@@ -153,33 +58,6 @@ class PgStorage implements IStorage {
         ${status ? sql` AND status = ${status}` : sql``}
       ORDER BY timestamp DESC
     `);
-    
-    // Debug: Log count and first/last timestamps to understand what's included
-    if (filteredTransactions.rows.length > 0) {
-      console.log(`Found ${filteredTransactions.rows.length} transactions in range`);
-      const firstRow = filteredTransactions.rows[filteredTransactions.rows.length - 1]; // First chronologically
-      const lastRow = filteredTransactions.rows[0]; // Last chronologically (since DESC order)
-      
-      console.log('First transaction:', {
-        id: firstRow.id,
-        timestamp: firstRow.timestamp,
-        amount: firstRow.amount,
-        eastern: formatInTimeZone(new Date(firstRow.timestamp as string), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
-      });
-      
-      console.log('Last transaction:', {
-        id: lastRow.id,
-        timestamp: lastRow.timestamp,
-        amount: lastRow.amount,
-        eastern: formatInTimeZone(new Date(lastRow.timestamp as string), EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss xxx')
-      });
-      
-      // Calculate total
-      const total = filteredTransactions.rows.reduce((sum, row) => sum + Number(row.amount), 0);
-      console.log(`Total amount for ${dateRange}: ${total}`);
-    } else {
-      console.log(`No transactions found in range: ${startUTC} to ${endUTC}`);
-    }
     
     // Map the raw results to Transaction objects
     return filteredTransactions.rows.map(row => ({
@@ -253,16 +131,6 @@ class PgStorage implements IStorage {
     // Get UTC date range for the requested period
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Format dates for logging but use UTC for queries
-    const startUTC = start.toISOString();
-    const endUTC = end.toISOString();
-    
-    console.log('Getting daily summary with UTC dates:', { 
-      dateRange,
-      startUTC, 
-      endUTC
-    });
-    
     // Get completed transactions for the current period
     const currentTransactions = await this.getTransactions(dateRange, startDate, endDate, 'completed');
     
@@ -293,11 +161,6 @@ class PgStorage implements IStorage {
       previousEnd = new Date(start.getTime() - 1); // End just before current period starts
     }
     
-    console.log('Previous period UTC dates:', {
-      previousStartUTC: previousStart.toISOString(),
-      previousEndUTC: previousEnd.toISOString()
-    });
-    
     // Get previous period transactions using UTC timestamps
     const previousTransactions = await this.getTransactions(
       'custom', 
@@ -323,17 +186,6 @@ class PgStorage implements IStorage {
     const averageOrder = totalOrders === 0 ? 0 : totalRevenue / totalOrders;
     const previousAverage = previousOrders === 0 ? 0 : previousRevenue / previousOrders;
     const averageOrderChange = previousAverage === 0 ? 0 : (averageOrder - previousAverage) / previousAverage;
-    
-    // Log the calculation results
-    console.log('Daily summary calculated with UTC:', {
-      dateRange,
-      totalRevenue,
-      giftCardSales,
-      previousRevenue,
-      previousGiftCardSales,
-      totalOrders,
-      previousOrders
-    });
     
     return {
       totalRevenue,
@@ -369,14 +221,6 @@ class PgStorage implements IStorage {
     const startUTC = start.toISOString();
     const endUTC = end.toISOString();
     
-    console.log('Getting gift card summary with UTC dates:', { 
-      dateRange,
-      startUTC, 
-      endUTC,
-      startDate: startDate?.toISOString(),
-      endDate: endDate?.toISOString()
-    });
-    
     // Query to get gift cards sold directly from gift_cards table using UTC timestamps
     // Always use activation_amount as the source of truth for gift card sales
     const soldResult = await db.execute(sql`
@@ -410,16 +254,6 @@ class PgStorage implements IStorage {
     
     // Calculate average value
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
-    
-    console.log('Gift card summary calculated from database using UTC:', {
-      dateRange,
-      soldCount,
-      soldAmount,
-      redeemedCount,
-      redeemedAmount,
-      averageValue,
-      dateRangeStr: `${startUTC} to ${endUTC}`
-    });
     
     return {
       soldCount,
@@ -530,14 +364,6 @@ class PgStorage implements IStorage {
     const startUTC = start.toISOString();
     const endUTC = end.toISOString();
 
-    console.log('Getting gift card sales with UTC dates:', { 
-      dateRange,
-      startUTC, 
-      endUTC,
-      startDate: startDate?.toISOString(),
-      endDate: endDate?.toISOString()
-    });
-
     // Query gift_cards table using activation_amount as the source of truth
     // This is the most accurate representation of gift card sales
     const giftCardsResult = await db.execute(sql`
@@ -552,16 +378,7 @@ class PgStorage implements IStorage {
     `);
 
     const giftCardSales = Number(giftCardsResult.rows[0]?.total_activation) || 0;
-    const giftCardCount = Number(giftCardsResult.rows[0]?.card_count) || 0;
-    
-    console.log('Gift card sales calculated from database using UTC:', {
-      dateRange,
-      // Gift card activations from gift_cards table - this is our source of truth
-      giftCardSales,
-      giftCardCount,
-      dateRangeStr: `${startUTC} to ${endUTC}`
-    });
-    
+
     // Return just the gift card sales from activation_amount
     // This eliminates potential double-counting issues
     return giftCardSales;

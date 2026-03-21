@@ -198,8 +198,6 @@ export class OrderService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    console.log(`Filtering orders with UTC range: ${start.toISOString()} to ${end.toISOString()}`);
-    
     // Build query with proper filters
     const baseQuery = db.select().from(orders)
       .where(between(orders.createdAt, start, end))
