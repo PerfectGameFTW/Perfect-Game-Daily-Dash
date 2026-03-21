@@ -558,11 +558,14 @@ async function runHistoricalSync(startDate: Date): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
-  // After all date chunks, sync all gift cards and run the activation backfill
-  console.log(`${label} Syncing all gift cards...`);
+  // After all date chunks, run the resumable Activities-API gift card reconciliation.
+  // This replaces the old syncGiftCards() (listGiftCards — no date filter, arbitrary order,
+  // loses progress on restart).  The new method pages through ALL ACTIVATE events ASC,
+  // checkpointing after each page so restarts resume mid-scan.
+  console.log(`${label} Syncing all gift cards via Activities API (resumable)...`);
   try {
-    const gcResult = await syncService.syncGiftCards();
-    console.log(`${label} Gift cards: processed=${gcResult.processed} created=${gcResult.created}`);
+    const gcResult = await syncService.syncGiftCardsHistoricalBackfill();
+    console.log(`${label} Gift cards: processed=${gcResult.processed} created=${gcResult.created} updated=${gcResult.updated} failed=${gcResult.failed} pages=${gcResult.pagesProcessed} finished=${gcResult.finished}`);
   } catch (err) {
     console.error(`${label} Gift card sync error:`, err);
   }
