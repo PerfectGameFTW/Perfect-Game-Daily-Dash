@@ -882,7 +882,7 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
         undefined,                        // endTime
         50,                              // max per page
         cursor,
-        undefined                         // sortOrder – Square returns newest first by default
+        'DESC'                            // sortOrder – explicit descending for deterministic cutoff
       );
 
       const activities = (response.result as any)?.giftCardActivities ?? [];
@@ -916,6 +916,10 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
       console.error(`[IncrementalGiftCardSync] Error on page ${pageCount}:`, error);
       break;
     }
+  }
+
+  if (pageCount >= MAX_PAGES && !reachedCutoff) {
+    console.warn(`[IncrementalGiftCardSync] WARNING: Page cap (${MAX_PAGES} pages / ${MAX_PAGES * 50} events) reached without hitting the time cutoff. Some activations in this window may have been skipped — the next cycle will retry with the same watermark.`);
   }
 
   console.log(`[IncrementalGiftCardSync] Found ${results.length} ACTIVATE events since ${since.toISOString()}`);

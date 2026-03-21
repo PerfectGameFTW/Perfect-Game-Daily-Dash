@@ -819,6 +819,12 @@ export class SyncService {
 
     let state = await this.getSyncState(SYNC_TYPE);
 
+    // Concurrency guard — skip if a previous run is still in progress
+    if (state?.status === 'in_progress') {
+      console.log('[IncrementalGiftCardSync] Previous run still in progress — skipping this cycle');
+      return { processed: 0, created: 0, updated: 0, failed: 0, sinceDate: 'skipped' };
+    }
+
     // Determine the lookback cutoff (with overlap buffer)
     const lastWatermark: Date = (state?.lastSyncedAt && state.status === 'completed')
       ? new Date(state.lastSyncedAt)
