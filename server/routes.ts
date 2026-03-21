@@ -868,22 +868,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         console.log("Starting gift card sync process...");
 
-        // Fetch all gift cards from Square
-        const squareGiftCards = await squareClient.fetchGiftCards();
-        console.log(`Fetched ${squareGiftCards.length} gift cards from Square`);
+        // Fetch gift cards and activation amounts from Activities API in parallel
+        const [squareGiftCards, activationMap] = await Promise.all([
+          squareClient.fetchGiftCards(),
+          squareClient.fetchGiftCardActivitiesMap()
+        ]);
+        console.log(`Fetched ${squareGiftCards.length} gift cards from Square; activation amounts for ${activationMap.size} cards`);
 
         // Process each gift card – update if exists, otherwise insert new record
         for (const card of squareGiftCards) {
           try {
             // Process the Square gift card data to ensure it's safe for JSON serialization
             const safeCard = ensureSerializable(card);
-
-            console.log(`Processing gift card ${safeCard.id}:`, {
-              gan: safeCard.gan,
-              createdAt: safeCard.createdAt || 'unknown',
-              balanceMoney: safeCard.balanceMoney,
-              balance_money: safeCard.balance_money
-            });
 
             // Attempt to find an existing gift card record by squareId
             const existingCard = await db.query.giftCards.findFirst({
@@ -898,6 +894,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               amount = Number(safeCard.balance_money.amount) / 100;
             }
 
+            // Determine activation amount from the Activities API (most accurate source)
+            const activationAmountFromApi = activationMap.get(safeCard.id);
+
             // Extract the actual purchase date from Square data if available
             // Otherwise use existing date or today's date as fallback
             let purchaseDate = new Date();
@@ -907,36 +906,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
               purchaseDate = existingCard.purchaseDate;
             }
 
-            console.log(`Gift card ${safeCard.id} computed values:`, {
-              amount: amount,
-              purchaseDate: purchaseDate.toISOString()
-            });
-
             if (existingCard) {
               // Update the existing gift card record
+              // Always update activation_amount when we have a value from the Activities API
+              const updatePayload: Record<string, any> = {
+                amount: amount,
+                squareData: safeCard,
+                ...(safeCard.createdAt ? { purchaseDate: purchaseDate } : {})
+              };
+              if (activationAmountFromApi !== undefined && activationAmountFromApi > 0) {
+                updatePayload.activationAmount = activationAmountFromApi;
+              }
               await db.update(giftCards)
-                .set({
-                  amount: amount,
-                  squareData: safeCard,
-                  // Only update purchase date if we got a new date from Square
-                  ...(safeCard.createdAt ? { purchaseDate: purchaseDate } : {})
-                })
+                .set(updatePayload)
                 .where(eq(giftCards.squareId, safeCard.id));
-              console.log(`Updated gift card ${safeCard.id} with amount $${amount.toFixed(2)}`);
+              console.log(`Updated gift card ${safeCard.id} with amount $${amount.toFixed(2)}, activation $${activationAmountFromApi ?? existingCard.activationAmount ?? 'null'}`);
             } else {
               // Insert a new gift card record
-              const newCard = {
+              const newCard: Record<string, any> = {
                 squareId: safeCard.id,
                 gan: safeCard.gan || '',
                 amount: amount,
                 squareData: safeCard,
                 purchaseDate: purchaseDate,
                 status: 'ACTIVE',
-                isActive: true
+                isActive: true,
+                ...(activationAmountFromApi !== undefined && activationAmountFromApi > 0
+                  ? { activationAmount: activationAmountFromApi }
+                  : {})
               };
 
               await db.insert(giftCards).values(newCard);
-              console.log(`Inserted new gift card ${safeCard.id} with amount $${amount.toFixed(2)} and purchase date ${purchaseDate.toISOString()}`);
+              console.log(`Inserted new gift card ${safeCard.id} with amount $${amount.toFixed(2)}, activation $${activationAmountFromApi ?? 'null'}`);
             }
 
             giftCardProcessed++;

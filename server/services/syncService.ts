@@ -708,19 +708,26 @@ export class SyncService {
         errorMessage: null
       });
       
-      // Fetch gift cards from Square API with a stricter timeout
+      // Fetch gift cards and their activation amounts in parallel
       let squareGiftCards: any[] = [];
+      let activationMap = new Map<string, number>();
       try {
         const fetchPromise = squareClient.fetchGiftCards();
+        const activitiesPromise = squareClient.fetchGiftCardActivitiesMap();
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Gift card fetch timed out after 30 seconds')), 30000);
+          setTimeout(() => reject(new Error('Gift card fetch timed out after 60 seconds')), 60000);
         });
-        
-        squareGiftCards = await Promise.race([fetchPromise, timeoutPromise]) as any[];
-        
+
+        [squareGiftCards, activationMap] = await Promise.all([
+          Promise.race([fetchPromise, timeoutPromise]) as Promise<any[]>,
+          activitiesPromise
+        ]);
+
         if (!squareGiftCards || !Array.isArray(squareGiftCards)) {
           throw new Error('Failed to fetch gift cards: Invalid response format');
         }
+
+        console.log(`Fetched ${squareGiftCards.length} gift cards; activation amounts for ${activationMap.size} cards from Activities API`);
       } catch (error) {
         console.error('Error fetching gift cards:', error);
         await this.updateSyncState(state.id, {
@@ -730,7 +737,7 @@ export class SyncService {
         });
         throw error;
       }
-      
+
       // Set a much stricter limit to prevent processing too many cards at once
       const maxCardsToProcess = 50; // Significantly reduced to prevent hanging
       const cardsToProcess = squareGiftCards.slice(0, maxCardsToProcess);
@@ -754,8 +761,11 @@ export class SyncService {
             break;
           }
           
-          // Convert Square gift card to our data model
-          const giftCardData = squareClient.convertSquareGiftCardToGiftCard(squareGiftCard);
+          // Convert Square gift card to our data model, passing activation amount
+          // from the Gift Card Activities API if available.
+          const squareId = squareGiftCard.id || squareGiftCard.squareId;
+          const activationAmountFromApi = squareId ? activationMap.get(squareId) : undefined;
+          const giftCardData = squareClient.convertSquareGiftCardToGiftCard(squareGiftCard, activationAmountFromApi);
           
           // Check if gift card exists
           let existingGiftCard;

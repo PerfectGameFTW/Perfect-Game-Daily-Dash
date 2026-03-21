@@ -46,6 +46,7 @@ import {
   LocationsApi,
   PaymentsApi,
   GiftCardsApi,
+  GiftCardActivitiesApi,
   CatalogApi,
   ApiError
 } from 'square';
@@ -100,6 +101,7 @@ const ordersApi = new OrdersApi(squareClient);
 const locationsApi = new LocationsApi(squareClient);
 const paymentsApi = new PaymentsApi(squareClient);
 const giftCardsApi = new GiftCardsApi(squareClient);
+const giftCardActivitiesApi = new GiftCardActivitiesApi(squareClient);
 const catalogApi = new CatalogApi(squareClient);
 
 // Update the fetchOrders method to better handle order data
@@ -670,7 +672,9 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
 }
 
 // Convert Square gift card to our GiftCard model
-export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): InsertGiftCard {
+// Pass activationAmountOverride (in dollars) when you already have the activation amount
+// from the Gift Card Activities API – this is preferred over the balance-based fallback.
+export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>, activationAmountOverride?: number): InsertGiftCard {
   // Convert the input to safe format first
   const safeGiftCard = processSafeSquareData(giftCard);
 
@@ -712,24 +716,26 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
     amount = Number(safeGiftCard.balance_money.amount) / 100;
   }
 
-  // Determine the activation amount from ganMoney (Gift Card Activity)
-  // If not available, use either the provided value or fall back to calculating
-  let activationAmount = 0;
-  
-  // Try to get the original activation amount from ganMoney if available
-  if (safeGiftCard.ganMoney?.amount) {
+  // Determine the activation amount.
+  // Priority order:
+  //   1. Caller-supplied override from the Gift Card Activities API (most accurate)
+  //   2. ganMoney field (rarely present, legacy path)
+  //   3. Leave as null/0 – the backfill job will correct it later
+  let activationAmount: number | null = null;
+
+  if (activationAmountOverride !== undefined && activationAmountOverride > 0) {
+    activationAmount = activationAmountOverride;
+    console.log(`Using Activities API activation amount for card ${safeGiftCard.id}: $${activationAmount}`);
+  } else if (safeGiftCard.ganMoney?.amount) {
     activationAmount = Number(safeGiftCard.ganMoney.amount) / 100;
+    console.log(`Found ganMoney activation amount for card ${safeGiftCard.id}: $${activationAmount}`);
   } else if (safeGiftCard.gan_money?.amount) {
     activationAmount = Number(safeGiftCard.gan_money.amount) / 100;
-  }
-  
-  // If we couldn't find the activation amount, default to the current amount
-  // This will be updated later if we find redemption data
-  if (activationAmount === 0) {
-    activationAmount = amount;
-    console.log(`No direct activation amount found for card ${safeGiftCard.id}, using current balance: $${amount}`);
+    console.log(`Found gan_money activation amount for card ${safeGiftCard.id}: $${activationAmount}`);
   } else {
-    console.log(`Found activation amount for card ${safeGiftCard.id}: $${activationAmount}`);
+    // Do NOT fall back to the current balance – that value is wrong for spent cards
+    // and misleading for partially-spent cards.  Leave null; backfill will fix it.
+    console.log(`No activation amount source found for card ${safeGiftCard.id} – will be null until backfill runs`);
   }
 
   console.log(`Processing gift card ${safeGiftCard.id} with current balance: $${amount}, activation amount: $${activationAmount}`);
@@ -772,6 +778,73 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
   };
 
   return card;
+}
+
+/**
+ * Fetch a map of gift card activation amounts from Square's Gift Card Activities API.
+ * Returns a Map keyed by Square gift card ID (e.g. "gftc:...") with the activation
+ * amount in dollars as the value.  Only ACTIVATE events are fetched.
+ *
+ * This is the authoritative source for the original load value of a gift card because
+ * the card-listing API only returns the *current* balance, not the original amount.
+ */
+export async function fetchGiftCardActivitiesMap(): Promise<Map<string, number>> {
+  const activationMap = new Map<string, number>();
+
+  if (!process.env.SQUARE_LOCATION_ID) {
+    console.error('Square location ID is not configured, cannot fetch gift card activities');
+    return activationMap;
+  }
+
+  let cursor: string | undefined = undefined;
+  let pageCount = 0;
+  const MAX_PAGES = 200; // 200 pages × 50 items = 10,000 activities max
+
+  console.log('Fetching ACTIVATE gift card activities from Square...');
+
+  while (pageCount < MAX_PAGES) {
+    pageCount++;
+    try {
+      const response = await giftCardActivitiesApi.listGiftCardActivities(
+        undefined,          // giftCardId – omit to get all cards
+        'ACTIVATE',         // type
+        process.env.SQUARE_LOCATION_ID,
+        undefined,          // beginTime
+        undefined,          // endTime
+        50,                 // limit (max per page)
+        cursor,             // cursor for pagination
+        undefined           // sortOrder
+      );
+
+      // SDK maps gift_card_activities → giftCardActivities (camelCase)
+      const activities = (response.result as any)?.giftCardActivities ?? [];
+
+      for (const activity of activities) {
+        const giftCardId = activity.giftCardId;
+        if (!giftCardId) continue;
+
+        const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
+        if (amountCents !== undefined && amountCents !== null) {
+          const amountDollars = Number(amountCents) / 100;
+          // Keep the first ACTIVATE event if there are multiple (shouldn't happen)
+          if (!activationMap.has(giftCardId)) {
+            activationMap.set(giftCardId, amountDollars);
+          }
+        }
+      }
+
+      console.log(`Gift card activities page ${pageCount}: ${activities.length} ACTIVATE events (total mapped: ${activationMap.size})`);
+
+      cursor = (response.result as any)?.cursor ?? undefined;
+      if (!cursor) break; // No more pages
+    } catch (error) {
+      console.error(`Error fetching gift card activities page ${pageCount}:`, error);
+      break;
+    }
+  }
+
+  console.log(`fetchGiftCardActivitiesMap complete: ${activationMap.size} cards with activation amounts`);
+  return activationMap;
 }
 
 // Fetch gift cards from Square API with enhanced error handling

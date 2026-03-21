@@ -14,7 +14,7 @@
 import { db, sql } from '../db';
 import { giftCards, orders, transactions } from '@shared/schema';
 import { and, count, eq, isNull } from 'drizzle-orm';
-import { fetchOrders, fetchGiftCards } from '../squareClient';
+import { fetchOrders, fetchGiftCards, fetchGiftCardActivitiesMap } from '../squareClient';
 import { pgStorage } from '../pgStorage';
 
 // Import the GiftCard type directly from schema
@@ -287,6 +287,88 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
   console.log(`Gift card fix completed: ${result.updated} updated, ${result.alreadyCorrect} already correct, ${result.withoutActivation} without activation`);
   
   return result;
+}
+
+/**
+ * Backfill gift card activation amounts using Square's Gift Card Activities API.
+ *
+ * This is the PREFERRED repair function.  It fetches all ACTIVATE events directly
+ * from Square, which always contain the exact original load amount regardless of
+ * whether the card has been spent or not.  Cards not found via the Activities API
+ * fall back to the order-matching strategy in fixAllGiftCardActivationAmounts().
+ *
+ * Returns a summary of how many cards were updated.
+ */
+export async function backfillGiftCardActivationAmounts(): Promise<{
+  totalCards: number;
+  updatedViaActivitiesApi: number;
+  updatedViaOrderMatch: number;
+  stillUnresolved: number;
+}> {
+  console.log('Starting backfill of gift card activation amounts via Activities API...');
+
+  // 1. Fetch all cards from DB that need repair (null or zero activation amount)
+  const result = await db.execute(sql`
+    SELECT id, square_id, gan, activation_amount
+    FROM gift_cards
+    WHERE activation_amount IS NULL OR activation_amount = 0
+    ORDER BY id
+  `);
+  const cardsNeedingRepair = result.rows as Array<{
+    id: number;
+    square_id: string;
+    gan: string | null;
+    activation_amount: number | null;
+  }>;
+
+  console.log(`${cardsNeedingRepair.length} gift cards need activation amount repair`);
+
+  if (cardsNeedingRepair.length === 0) {
+    return { totalCards: 0, updatedViaActivitiesApi: 0, updatedViaOrderMatch: 0, stillUnresolved: 0 };
+  }
+
+  // 2. Fetch activation map from the Activities API
+  const activationMap = await fetchGiftCardActivitiesMap();
+  console.log(`Activities API returned activation amounts for ${activationMap.size} cards`);
+
+  let updatedViaActivitiesApi = 0;
+  const remainingCards: typeof cardsNeedingRepair = [];
+
+  // 3. Apply Activities API amounts first
+  for (const card of cardsNeedingRepair) {
+    const amount = activationMap.get(card.square_id);
+    if (amount !== undefined && amount > 0) {
+      await db.execute(sql`
+        UPDATE gift_cards
+        SET activation_amount = ${amount}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${card.id}
+      `);
+      updatedViaActivitiesApi++;
+    } else {
+      remainingCards.push(card);
+    }
+  }
+
+  console.log(`Activities API backfill: updated ${updatedViaActivitiesApi}, ${remainingCards.length} still need order matching`);
+
+  // 4. For cards still unresolved, fall back to order matching
+  let updatedViaOrderMatch = 0;
+  if (remainingCards.length > 0) {
+    console.log(`Falling back to order-matching for ${remainingCards.length} cards...`);
+    // Re-use the existing order-match logic
+    const orderMatchResult = await fixAllGiftCardActivationAmounts();
+    updatedViaOrderMatch = orderMatchResult.updated;
+  }
+
+  const stillUnresolved = remainingCards.length - updatedViaOrderMatch;
+  console.log(`Backfill complete: ${updatedViaActivitiesApi} via Activities API, ${updatedViaOrderMatch} via order matching, ${stillUnresolved} unresolved`);
+
+  return {
+    totalCards: cardsNeedingRepair.length,
+    updatedViaActivitiesApi,
+    updatedViaOrderMatch,
+    stillUnresolved
+  };
 }
 
 /**

@@ -352,19 +352,18 @@ export function createApiRouter(): Router {
    */
   router.post('/fix-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
     try {
-      // Import the enhanced gift card activation fix service
-      const { fixAllGiftCardActivationAmounts } = await import('../services/enhancedGiftCardFix');
+      // Use the Activities-API-first backfill (preferred) with order-matching fallback
+      const { backfillGiftCardActivationAmounts } = await import('../services/enhancedGiftCardFix');
       
-      // Run the comprehensive fix for ALL cards
-      const result = await fixAllGiftCardActivationAmounts();
+      const result = await backfillGiftCardActivationAmounts();
       
       res.json({
         success: true,
-        message: `Fixed ${result.updated} gift cards with accurate activation amounts and order links`,
+        message: `Backfill complete: ${result.updatedViaActivitiesApi} via Activities API, ${result.updatedViaOrderMatch} via order matching, ${result.stillUnresolved} unresolved`,
         result
       });
     } catch (error) {
-      console.error('Error fixing ALL gift card activation amounts:', error);
+      console.error('Error backfilling gift card activation amounts:', error);
       next(error);
     }
   });
