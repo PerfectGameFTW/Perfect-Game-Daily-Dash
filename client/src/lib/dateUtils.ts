@@ -18,32 +18,45 @@ export function formatInTimezone(date: Date, format: string, timezone: string = 
 
 export function getFormattedDate(dateRange: DateRange, customStartDate?: Date, customEndDate?: Date): string {
   const now = new Date();
+  // Always format in Eastern Time so labels match the business day boundaries used in queries
+  const todayET = formatInTimeZone(now, EASTERN_TIMEZONE, 'MMMM d, yyyy');
+  const todayETDate = formatInTimeZone(now, EASTERN_TIMEZONE, 'yyyy-MM-dd');
 
   switch (dateRange) {
     case "today":
-      return format(now, "MMMM d, yyyy");
-    case "yesterday":
-      return format(subDays(now, 1), "MMMM d, yyyy");
-    case "last7days":
-      return `${format(subDays(now, 6), "MMM d")} - ${format(now, "MMM d, yyyy")}`;
-    case "last30days":
-      return `${format(subDays(now, 29), "MMM d")} - ${format(now, "MMM d, yyyy")}`;
+      return todayET;
+    case "yesterday": {
+      const [y, m, d] = todayETDate.split('-').map(Number);
+      const yest = new Date(y, m - 1, d - 1);
+      return format(yest, 'MMMM d, yyyy');
+    }
+    case "last7days": {
+      const [y, m, d] = todayETDate.split('-').map(Number);
+      const start = new Date(y, m - 1, d - 6);
+      return `${format(start, 'MMM d')} - ${todayET}`;
+    }
+    case "last30days": {
+      const [y, m, d] = todayETDate.split('-').map(Number);
+      const start = new Date(y, m - 1, d - 29);
+      return `${format(start, 'MMM d')} - ${todayET}`;
+    }
     case "thisMonth":
-      return format(now, "MMMM yyyy");
+      return formatInTimeZone(now, EASTERN_TIMEZONE, 'MMMM yyyy');
     case "lastMonth": {
-      const lastMonth = subDays(startOfMonth(now), 1);
-      return format(lastMonth, "MMMM yyyy");
+      const [y, m] = todayETDate.split('-').map(Number);
+      const lastMonthDate = new Date(y, m - 2, 1);
+      return format(lastMonthDate, 'MMMM yyyy');
     }
     case "custom":
       if (!customStartDate || !customEndDate) {
-        return format(now, "MMMM d, yyyy");
+        return todayET;
       }
-      if (format(customStartDate, "yyyy-MM-dd") === format(customEndDate, "yyyy-MM-dd")) {
-        return format(customStartDate, "MMMM d, yyyy");
+      if (formatInTimeZone(customStartDate, EASTERN_TIMEZONE, 'yyyy-MM-dd') === formatInTimeZone(customEndDate, EASTERN_TIMEZONE, 'yyyy-MM-dd')) {
+        return formatInTimeZone(customStartDate, EASTERN_TIMEZONE, 'MMMM d, yyyy');
       }
-      return `${format(customStartDate, "MMM d")} - ${format(customEndDate, "MMM d, yyyy")}`;
+      return `${formatInTimeZone(customStartDate, EASTERN_TIMEZONE, 'MMM d')} - ${formatInTimeZone(customEndDate, EASTERN_TIMEZONE, 'MMM d, yyyy')}`;
     default:
-      return format(now, "MMMM d, yyyy");
+      return todayET;
   }
 }
 
@@ -65,9 +78,10 @@ export function navigateDate(
     customEndDate: customEndDate?.toISOString() 
   });
 
-  const today = new Date();
-  // Set to midnight in local timezone for consistent date comparisons
-  today.setHours(0, 0, 0, 0);
+  // Use Eastern Time "today" so navigation boundaries match dashboard business day boundaries
+  const nowET = formatInTimeZone(new Date(), EASTERN_TIMEZONE, 'yyyy-MM-dd');
+  const [ty, tm, td] = nowET.split('-').map(Number);
+  const today = new Date(ty, tm - 1, td); // plain local date, midnight — used only for comparisons
 
   // Normalize input dates to midnight for consistent comparison
   let normalizedStartDate: Date | undefined;
