@@ -24,7 +24,6 @@ const fetchHourlyData = async (dateRange: DateRange, startDate?: Date, endDate?:
     url += `&endDate=${endDate.toISOString()}`;
   }
   
-  console.log("Fetching hourly data with URL:", url);
   const response = await fetch(url);
   
   if (!response.ok) {
@@ -55,10 +54,6 @@ export default function SimpleBarChart({
     queryKey: ['hourly-revenue-simple', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchHourlyData(dateRange, customStartDate, customEndDate),
   });
-  
-  console.log("Simple bar chart data:", data);
-  console.log("Loading state:", isLoading);
-  console.log("Error state:", error);
   
   if (isLoading) {
     return (

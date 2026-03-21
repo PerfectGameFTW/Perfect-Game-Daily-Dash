@@ -9,7 +9,6 @@ import { DateRange } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import useMobile from "@/hooks/use-mobile";
 import { queryClient } from "@/lib/queryClient";
-import { CreditCard, BarChart3 } from "lucide-react";
 import GiftCardActivity from "@/components/dashboard/GiftCardActivity";
 
 export default function Dashboard() {
@@ -24,26 +23,11 @@ export default function Dashboard() {
   const { toast } = useToast();
 
   const handleDateRangeChange = (newRange: DateRange, start?: Date, end?: Date) => {
-    console.log('Dashboard date range change:', { 
-      newRange, 
-      start: start?.toISOString(), 
-      end: end?.toISOString(),
-      currentRange: dateRange,
-      currentStart: customStartDate?.toISOString(),
-      currentEnd: customEndDate?.toISOString()
-    });
-
     queryClient.invalidateQueries();
 
     setDateRange(newRange);
     setCustomStartDate(start);
     setCustomEndDate(end);
-
-    console.log('Date state updated:', {
-      newDateRange: newRange,
-      newStartDate: start?.toISOString(),
-      newEndDate: end?.toISOString()
-    });
 
     const queryKeys = [
       ['/api/summary', newRange, start?.toISOString(), end?.toISOString()],
@@ -56,9 +40,6 @@ export default function Dashboard() {
         queryClient.invalidateQueries({ queryKey: key });
       });
 
-      console.log('Query cache keys after invalidation:', 
-        queryClient.getQueryCache().getAll().map(q => q.queryKey)
-      );
     }, 10);
   };
 

@@ -42,11 +42,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     retryDelay: 1000,
   });
   
-  // Direct logging when data is available
-  if (data) {
-    console.log('🔍 Summary data received in StatsSummary component:', data);
-  }
-
   if (isLoading || isDetailedLoading) {
     return (
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -59,16 +54,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
       </div>
     );
   }
-
-  // Calculate adjusted sales (some items may need to be subtracted)
-  // Debug log to verify values
-  console.log('API Response Data:', {
-    totalRevenue: data?.totalRevenue,
-    refunds: detailedTransactions?.refunds,
-    discounts: detailedTransactions?.discountsAndComps,
-    revenueChange: data?.revenueChange,
-    giftCardSales: data?.giftCardSales
-  });
 
   // Ensure we're working with numbers even if API returns strings
   const totalRevenue = typeof data?.totalRevenue === 'number' ? data?.totalRevenue : parseFloat(data?.totalRevenue || '0');
