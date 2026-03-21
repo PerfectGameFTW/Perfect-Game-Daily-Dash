@@ -370,8 +370,10 @@ export class PaymentService {
     const hourlyRevenue = Object.entries(hourlyData).map(([hourStr, amount]) => {
       const utcHour = parseInt(hourStr, 10);
 
-      // Create a date object at the given UTC hour today
-      const utcDate = new Date();
+      // Anchor the conversion to the query's start date so that DST offset
+      // matches the historical period being viewed (e.g., EST for winter data
+      // viewed during summer, not today's EDT offset).
+      const utcDate = new Date(start);
       utcDate.setUTCHours(utcHour, 0, 0, 0);
 
       // Convert to Eastern Time hour (0–23)
