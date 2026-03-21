@@ -351,13 +351,12 @@ export async function backfillGiftCardActivationAmounts(): Promise<{
 
   console.log(`Activities API backfill: updated ${updatedViaActivitiesApi}, ${remainingCards.length} still need order matching`);
 
-  // 4. For cards still unresolved, fall back to order matching
+  // 4. For cards still unresolved, try order-matching — but ONLY for the unresolved
+  //    subset so we never touch cards already fixed by the Activities API.
   let updatedViaOrderMatch = 0;
   if (remainingCards.length > 0) {
-    console.log(`Falling back to order-matching for ${remainingCards.length} cards...`);
-    // Re-use the existing order-match logic
-    const orderMatchResult = await fixAllGiftCardActivationAmounts();
-    updatedViaOrderMatch = orderMatchResult.updated;
+    console.log(`Falling back to order-matching for ${remainingCards.length} remaining cards...`);
+    updatedViaOrderMatch = await fixActivationAmountsViaOrderMatch(remainingCards);
   }
 
   const stillUnresolved = remainingCards.length - updatedViaOrderMatch;
@@ -369,6 +368,110 @@ export async function backfillGiftCardActivationAmounts(): Promise<{
     updatedViaOrderMatch,
     stillUnresolved
   };
+}
+
+/**
+ * Internal helper: attempt order-matching activation amounts for a specific
+ * subset of gift cards.  Only processes the provided list — never touches
+ * cards outside it — so it cannot overwrite data from the Activities API.
+ */
+async function fixActivationAmountsViaOrderMatch(
+  cards: Array<{ id: number; square_id: string; gan: string | null; activation_amount: number | null }>
+): Promise<number> {
+  if (cards.length === 0) return 0;
+
+  // Fetch orders from Square (2-year window)
+  const twoYearsAgo = new Date();
+  twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+  const squareOrders = await fetchOrders(twoYearsAgo);
+  console.log(`Order-match fallback: fetched ${squareOrders.length} Square orders`);
+
+  // Also fetch full DB records for the remaining cards (need createdAt for temporal match)
+  const cardIds = cards.map(c => c.id);
+  const dbCardsResult = await db.execute(sql`
+    SELECT id, square_id, gan, created_at, activation_amount, activation_order_id, activation_square_order_id
+    FROM gift_cards
+    WHERE id = ANY(${cardIds})
+  `);
+  const dbCards = dbCardsResult.rows as Array<{
+    id: number;
+    square_id: string;
+    gan: string | null;
+    created_at: Date;
+    activation_amount: number | null;
+    activation_order_id: number | null;
+    activation_square_order_id: string | null;
+  }>;
+
+  let updated = 0;
+
+  for (const giftCard of dbCards) {
+    try {
+      // a. Try direct Square Order ID match
+      if (giftCard.activation_square_order_id) {
+        const match = squareOrders.find(o => o.id === giftCard.activation_square_order_id);
+        if (match) {
+          const orderAmount = extractGiftCardAmountFromOrder(match, giftCard.gan || undefined);
+          if (orderAmount > 0) {
+            const orderFromDb = await getOrCreateOrderInDb(match);
+            await updateGiftCardActivation(giftCard.id, orderAmount, orderFromDb.id, match.id);
+            updated++;
+            continue;
+          }
+        }
+      }
+
+      // b. GAN match in order line items
+      if (giftCard.gan) {
+        const ganMatch = squareOrders.find(order =>
+          order.lineItems?.some((item: any) =>
+            item.note?.includes(giftCard.gan) ||
+            item.variationName?.includes(giftCard.gan) ||
+            item.name?.includes(giftCard.gan)
+          )
+        );
+        if (ganMatch) {
+          const orderAmount = extractGiftCardAmountFromOrder(ganMatch, giftCard.gan);
+          if (orderAmount > 0) {
+            const orderFromDb = await getOrCreateOrderInDb(ganMatch);
+            await updateGiftCardActivation(giftCard.id, orderAmount, orderFromDb.id, ganMatch.id);
+            updated++;
+            continue;
+          }
+        }
+      }
+
+      // c. Temporal match (within 15 minutes) limited to gift-card line items
+      const cardTime = new Date(giftCard.created_at).getTime();
+      const nearbyOrders = squareOrders.filter(o => {
+        const diff = Math.abs(new Date(o.createdAt).getTime() - cardTime);
+        return diff < 15 * 60 * 1000;
+      }).filter(o =>
+        o.lineItems?.some((item: any) =>
+          item.name?.toLowerCase().includes('gift') ||
+          item.catalogObjectId?.toLowerCase().includes('gift')
+        )
+      );
+
+      if (nearbyOrders.length > 0) {
+        nearbyOrders.sort((a, b) =>
+          Math.abs(new Date(a.createdAt).getTime() - cardTime) -
+          Math.abs(new Date(b.createdAt).getTime() - cardTime)
+        );
+        const best = nearbyOrders[0];
+        const orderAmount = extractGiftCardAmountFromOrder(best, giftCard.gan || undefined);
+        if (orderAmount > 0) {
+          const orderFromDb = await getOrCreateOrderInDb(best);
+          await updateGiftCardActivation(giftCard.id, orderAmount, orderFromDb.id, best.id);
+          updated++;
+        }
+      }
+    } catch (err) {
+      console.error(`Order-match fallback error for card ${giftCard.id}:`, err);
+    }
+  }
+
+  return updated;
 }
 
 /**
@@ -425,7 +528,7 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
         updated: false,
         activationAmount: activationAmount,
         orderId: activationOrderId,
-        squareOrderId: activationSquareOrderId,
+        squareOrderId: activationSquareOrderId ?? undefined,
         source: 'Already has activation data'
       };
     }

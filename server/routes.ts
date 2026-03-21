@@ -909,27 +909,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (existingCard) {
               // Update the existing gift card record
               // Always update activation_amount when we have a value from the Activities API
-              const updatePayload: Record<string, any> = {
-                amount: amount,
+              const updatePayload: Partial<typeof giftCards.$inferInsert> = {
+                amount,
                 squareData: safeCard,
-                ...(safeCard.createdAt ? { purchaseDate: purchaseDate } : {})
+                ...(safeCard.createdAt ? { purchaseDate } : {}),
+                ...(activationAmountFromApi !== undefined && activationAmountFromApi > 0
+                  ? { activationAmount: activationAmountFromApi }
+                  : {})
               };
-              if (activationAmountFromApi !== undefined && activationAmountFromApi > 0) {
-                updatePayload.activationAmount = activationAmountFromApi;
-              }
               await db.update(giftCards)
                 .set(updatePayload)
                 .where(eq(giftCards.squareId, safeCard.id));
               console.log(`Updated gift card ${safeCard.id} with amount $${amount.toFixed(2)}, activation $${activationAmountFromApi ?? existingCard.activationAmount ?? 'null'}`);
             } else {
               // Insert a new gift card record
-              const newCard: Record<string, any> = {
+              const newCard: typeof giftCards.$inferInsert = {
                 squareId: safeCard.id,
                 gan: safeCard.gan || '',
-                amount: amount,
+                amount,
                 squareData: safeCard,
-                purchaseDate: purchaseDate,
-                status: 'ACTIVE',
+                purchaseDate,
                 isActive: true,
                 ...(activationAmountFromApi !== undefined && activationAmountFromApi > 0
                   ? { activationAmount: activationAmountFromApi }
