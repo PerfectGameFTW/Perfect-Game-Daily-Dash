@@ -483,8 +483,9 @@ export function createApiRouter(): Router {
   });
 
   /**
-   * Resumable Gift Card Historical Backfill
-   * POST /api/sync/gift-cards-backfill
+   * Resumable Gift Card Full Reconciliation (canonical path)
+   * POST /api/sync/gift-cards/full   — spec-required name
+   * POST /api/sync/gift-cards-backfill — legacy alias kept for backwards compat
    *
    * Pages through ALL Square ACTIVATE events (oldest first) via the Activities API,
    * upserting each gift card with the correct UTC purchase_date and activation amount.
@@ -494,21 +495,24 @@ export function createApiRouter(): Router {
    * Call repeatedly (each call processes up to 20 pages / 1,000 events) until the
    * response shows `finished: true`.
    */
-  router.post('/sync/gift-cards-backfill', async (_req: Request, res: Response, next: NextFunction) => {
+  async function handleGiftCardFullSync(_req: Request, res: Response, next: NextFunction) {
     try {
       const result = await syncService.syncGiftCardsHistoricalBackfill();
       res.json({
         success: true,
         message: result.finished
-          ? `Backfill complete! processed=${result.processed} created=${result.created} updated=${result.updated} failed=${result.failed} pages=${result.pagesProcessed}`
-          : `Backfill in progress — call again to continue. processed=${result.processed} created=${result.created} updated=${result.updated} failed=${result.failed} pages=${result.pagesProcessed}`,
+          ? `Full sync complete! processed=${result.processed} created=${result.created} updated=${result.updated} failed=${result.failed} pages=${result.pagesProcessed}`
+          : `Full sync in progress — call again to continue. processed=${result.processed} created=${result.created} updated=${result.updated} failed=${result.failed} pages=${result.pagesProcessed}`,
         result,
       });
     } catch (error) {
-      console.error('[API] Gift card backfill error:', error);
+      console.error('[API] Gift card full sync error:', error);
       next(error);
     }
-  });
+  }
+
+  router.post('/sync/gift-cards/full', handleGiftCardFullSync);
+  router.post('/sync/gift-cards-backfill', handleGiftCardFullSync);
 
   return router;
 }
