@@ -50,7 +50,7 @@ export function getFormattedDate(dateRange: DateRange, customStartDate?: Date, c
 
   switch (dateRange) {
     case "today":
-      return formatInTimeZone(todayET, EASTERN_TIMEZONE, 'MMMM d, yyyy');
+      return format(todayET, 'MMMM d, yyyy');
     case "yesterday": {
       const yest = subDays(todayET, 1);
       return format(yest, 'MMMM d, yyyy');
