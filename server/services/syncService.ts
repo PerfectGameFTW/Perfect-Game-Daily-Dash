@@ -894,7 +894,7 @@ export class SyncService {
         status: `Processing ${uniqueActivations.size} unique activations`
       });
 
-      for (const [giftCardId, activationAmountDollars] of uniqueActivations) {
+      for (const [giftCardId, activationAmountDollars] of Array.from(uniqueActivations)) {
         try {
           if (existingSquareIds.has(giftCardId)) {
             // Card already exists — fill in activation amount if still null

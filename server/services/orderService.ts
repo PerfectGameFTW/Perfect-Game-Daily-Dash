@@ -201,16 +201,11 @@ export class OrderService {
     console.log(`Filtering orders with UTC range: ${start.toISOString()} to ${end.toISOString()}`);
     
     // Build query with proper filters
-    let query = db.select().from(orders)
+    const baseQuery = db.select().from(orders)
       .where(between(orders.createdAt, start, end))
       .orderBy(desc(orders.createdAt));
     
-    // Add limit if provided
-    if (limit && limit > 0) {
-      query = query.limit(limit);
-    }
-    
-    return await query;
+    return await (limit && limit > 0 ? baseQuery.limit(limit) : baseQuery);
   }
   
   /**

@@ -425,7 +425,7 @@ export function createApiRouter(): Router {
         if (!byType[row.syncType]) {
           byType[row.syncType] = {
             lastSyncedAt: row.lastSyncedAt,
-            status: row.status,
+            status: row.status ?? '',
             processedCount: row.processedCount,
           };
         }

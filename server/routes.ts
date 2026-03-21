@@ -1,3 +1,9 @@
+declare global {
+  interface BigInt {
+    toJSON(): string;
+  }
+}
+
 if (typeof BigInt.prototype.toJSON !== 'function') {
   BigInt.prototype.toJSON = function() {
     return this.toString();
@@ -1038,6 +1044,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create a sample gift card (for testing only)
       const sampleGiftCard = {
+        id: 1,
         squareId: "gftc:test-gift-card-id",
         gan: "1234567890",
         amount: 50.0,
@@ -1085,7 +1092,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Create a gift card redemption record
         const redemption = {
-          giftCardId: sampleGiftCard.squareId,
+          giftCardId: sampleGiftCard.id,
           transactionId: createdTransaction.id,
           amount: transaction.amount,
           timestamp: new Date(),

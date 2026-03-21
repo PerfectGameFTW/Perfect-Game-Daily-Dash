@@ -73,7 +73,7 @@ class PgStorage implements IStorage {
       // Calculate the actual sum to verify
       let totalSum = 0;
       for (const row of fullDebugResult.rows) {
-        totalSum += parseFloat(row.amount);
+        totalSum += parseFloat(row.amount as string);
       }
       console.log(`MANUAL SUM OF TODAY'S TRANSACTIONS: $${totalSum.toFixed(2)}`);
       
@@ -186,9 +186,9 @@ class PgStorage implements IStorage {
       id: Number(row.id),
       amount: Number(row.amount),
       status: row.status as TransactionStatus,
-      category: row.category,
-      timestamp: new Date(row.timestamp),
-      squareId: row.square_id,
+      categoryId: row.category_id as string,
+      timestamp: new Date(row.timestamp as string),
+      squareId: row.square_id as string,
       orderId: row.order_id ? Number(row.order_id) : null,
       squareData: row.square_data
     }));
