@@ -365,37 +365,30 @@ export class PaymentService {
       hourlyData[row.hour] = row.amount;
     }
     
-    // Convert to array and format hours as strings like "12 AM", "1 PM", etc.
-    // We need to convert UTC hours to Eastern Time before formatting
+    // Convert to array, tracking the Eastern hour number alongside the display label
+    // so we can sort in 6 AM-first business-day order without re-parsing strings.
     const hourlyRevenue = Object.entries(hourlyData).map(([hourStr, amount]) => {
       const utcHour = parseInt(hourStr, 10);
-      
+
       // Create a date object at the given UTC hour today
       const utcDate = new Date();
       utcDate.setUTCHours(utcHour, 0, 0, 0);
-      
-      // Convert to Eastern Time hour using date-fns-tz
+
+      // Convert to Eastern Time hour (0–23)
       const easternHour = parseInt(formatInTimeZone(utcDate, 'America/New_York', 'H'), 10);
       return {
+        etHour: easternHour,
         hour: formatHour(easternHour),
-        amount
+        amount,
       };
     });
-    
-    // Sort by hour (0-23)
-    hourlyRevenue.sort((a, b) => {
-      const hourA = a.hour.includes('AM') 
-        ? (a.hour === '12 AM' ? 0 : parseInt(a.hour.split(' ')[0], 10))
-        : (a.hour === '12 PM' ? 12 : parseInt(a.hour.split(' ')[0], 10) + 12);
-      
-      const hourB = b.hour.includes('AM')
-        ? (b.hour === '12 AM' ? 0 : parseInt(b.hour.split(' ')[0], 10))
-        : (b.hour === '12 PM' ? 12 : parseInt(b.hour.split(' ')[0], 10) + 12);
-      
-      return hourA - hourB;
-    });
-    
-    return hourlyRevenue;
+
+    // Sort in business-day order: 6 AM → 7 AM → … → 11 PM → 12 AM → 1 AM → … → 5 AM
+    // Shift hours so that 6 maps to 0, 7 to 1, …, 5 (AM next day) to 23.
+    const businessDayKey = (h: number) => (h >= 6 ? h - 6 : h + 18);
+    hourlyRevenue.sort((a, b) => businessDayKey(a.etHour) - businessDayKey(b.etHour));
+
+    return hourlyRevenue.map(({ hour, amount }) => ({ hour, amount }));
   }
   
   /**
