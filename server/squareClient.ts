@@ -464,7 +464,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     let cursor: string | undefined = undefined;
     let hasMorePages = true;
     let pageCount = 0;
-    const MAX_PAGES = 10; // Temporarily reduced for testing
+    const MAX_PAGES = 50; // Allow up to 50 pages (5,000 payments) per sync
     const TIMEOUT = 5 * 60 * 1000; // 5 minute timeout
 
     while (hasMorePages && pageCount < MAX_PAGES) {
@@ -678,7 +678,8 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>): 
   let purchaseDate: Date;
   try {
     // Parse the Square API timestamp string as UTC (Square provides timestamps in UTC)
-    const utcPurchaseDate = new Date(safeGiftCard.created_at);
+    // Square SDK returns camelCase (createdAt), with snake_case (created_at) as a fallback
+    const utcPurchaseDate = new Date(safeGiftCard.createdAt || safeGiftCard.created_at);
 
     // Validate the date
     if (isNaN(utcPurchaseDate.getTime())) {
