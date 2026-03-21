@@ -192,6 +192,7 @@ export class DashboardService {
     refunds: number;
     discountsAndComps: number;
     giftCardSales: number;
+    totalTransactions: number;
   }> {
     // Get date range parameters
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
@@ -266,7 +267,8 @@ export class DashboardService {
       taxes,
       refunds,
       discountsAndComps,
-      giftCardSales
+      giftCardSales,
+      totalTransactions: payments.length
     };
   }
 }
