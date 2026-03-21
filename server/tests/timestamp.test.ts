@@ -2,53 +2,72 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { pgStorage } from '../pgStorage';
 import { db } from '../db';
 import { sql } from 'drizzle-orm';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
-import { EASTERN_TIMEZONE, toUTCStorage, getUTCDateRange, formatInEasternTime } from '../dateUtils';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+import { EASTERN_TIMEZONE, getEasternDateRange } from '../dateUtils';
 
 describe('Timestamp Handling', () => {
-  // Generate unique ID for each test
   const getUniqueTestId = () => `TEST_TIMESTAMP_ORDER_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-  // Sample test data
   const getTestOrder = (overrides = {}) => ({
     squareId: getUniqueTestId(),
     status: 'COMPLETED',
     totalMoney: 100,
     totalTax: 8,
     totalDiscount: 0,
-    createdAt: new Date('2025-02-28T12:00:00Z'), // Noon UTC
+    createdAt: new Date('2025-02-28T12:00:00Z'),
     source: 'TEST',
     squareData: {},
     ...overrides
   });
 
-  // Clean up test orders before each test
   beforeEach(async () => {
     await db.execute(sql`DELETE FROM orders WHERE square_id LIKE 'TEST_TIMESTAMP_ORDER%'`);
   });
 
   describe('DateUtils Functions', () => {
-    it('should convert dates to UTC for storage', () => {
-      const eastern = new Date('2025-02-28T07:00:00-05:00'); // 7am ET
-      const utc = toUTCStorage(eastern);
+    it('should correctly convert ET wall-clock time to UTC', () => {
+      // 7am Eastern Standard Time (UTC-5) = noon UTC
+      const utc = fromZonedTime('2025-02-28T07:00:00', EASTERN_TIMEZONE);
       expect(utc.toISOString()).toBe('2025-02-28T12:00:00.000Z');
     });
 
-    it('should format timestamps in Eastern Time', () => {
-      const utc = new Date('2025-02-28T12:00:00Z'); // Noon UTC
-      const formatted = formatInEasternTime(utc);
-      expect(formatted).toContain('07:00:00'); // Should show 7am
-      expect(formatted).toContain('EST'); // Should indicate Eastern timezone
+    it('should format UTC timestamps correctly in Eastern Time', () => {
+      const utc = new Date('2025-02-28T12:00:00Z'); // Noon UTC = 7am EST
+      const formatted = formatInTimeZone(utc, EASTERN_TIMEZONE, 'HH:mm:ss zzz');
+      expect(formatted).toContain('07:00:00');
+      expect(formatted).toMatch(/EST|EDT/);
     });
 
-    it('should handle timezone boundaries', () => {
-      const { start, end } = getUTCDateRange('today');
-      const startET = formatInTimeZone(start, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
-      const endET = formatInTimeZone(end, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+    it('should use 6am ET as the business day start boundary', () => {
+      const { start, end } = getEasternDateRange('today');
+      const startTime = formatInTimeZone(start, EASTERN_TIMEZONE, 'HH:mm:ss');
+      const endTime   = formatInTimeZone(end,   EASTERN_TIMEZONE, 'HH:mm:ss');
+      const startDate = formatInTimeZone(start, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+      const endDate   = formatInTimeZone(end,   EASTERN_TIMEZONE, 'yyyy-MM-dd');
 
-      expect(startET).toMatch(/00:00:00$/); // Should start at midnight ET
-      expect(endET).toMatch(/23:59:59$/);   // Should end at 11:59:59 ET
-      expect(startET.split(' ')[0]).toBe(endET.split(' ')[0]); // Same ET date
+      // Business day must start at 6am ET
+      expect(startTime).toBe('06:00:00');
+      // Business day must end at 05:59:59 ET (next calendar day)
+      expect(endTime).toMatch(/^05:59:59/);
+      // Start and end are on different calendar dates
+      expect(startDate).not.toBe(endDate);
+    });
+
+    it('should return yesterday as a distinct prior business day', () => {
+      const { start: todayStart } = getEasternDateRange('today');
+      const { start: yesterdayStart, end: yesterdayEnd } = getEasternDateRange('yesterday');
+
+      const todayStartDate     = formatInTimeZone(todayStart,     EASTERN_TIMEZONE, 'yyyy-MM-dd');
+      const yesterdayStartDate = formatInTimeZone(yesterdayStart, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+      const yesterdayEndDate   = formatInTimeZone(yesterdayEnd,   EASTERN_TIMEZONE, 'yyyy-MM-dd');
+      const yesterdayStartTime = formatInTimeZone(yesterdayStart, EASTERN_TIMEZONE, 'HH:mm:ss');
+
+      // Yesterday's start must be one calendar day before today's start
+      expect(yesterdayStartDate).not.toBe(todayStartDate);
+      // Yesterday's window must also start at 6am ET
+      expect(yesterdayStartTime).toBe('06:00:00');
+      // Yesterday's end (05:59:59 ET next day) lands on today's calendar date
+      expect(yesterdayEndDate).toBe(todayStartDate);
     });
   });
 
@@ -67,7 +86,7 @@ describe('Timestamp Handling', () => {
 
     it('should handle closed_at timestamp correctly', async () => {
       const orderWithClosedAt = getTestOrder({
-        closedAt: new Date('2025-02-28T14:00:00Z') // 2 PM UTC
+        closedAt: new Date('2025-02-28T14:00:00Z')
       });
 
       const savedOrder = await pgStorage.createOrder(orderWithClosedAt);
@@ -82,73 +101,53 @@ describe('Timestamp Handling', () => {
     });
   });
 
-  describe('Date Range Queries', () => {
+  describe('6am Business Day Boundary Queries', () => {
     beforeEach(async () => {
-      // First clean up any existing test data
       await db.execute(sql`DELETE FROM orders WHERE square_id LIKE 'TEST_TIMESTAMP_ORDER%'`);
 
-      // Create test orders spanning midnight ET
-      const orders = [
-        // Feb 27 in ET (11:59 PM ET = Feb 28 04:59 UTC)
-        getTestOrder({ createdAt: new Date('2025-02-28T04:59:00Z') }), 
+      // EST offset is UTC-5 (February is always EST, not EDT)
+      // Feb 27 business day: Feb 27 06:00 ET (11:00 UTC) → Feb 28 05:59 ET (10:59 UTC)
+      // Feb 28 business day: Feb 28 06:00 ET (11:00 UTC) → Mar 01 05:59 ET (10:59 UTC)
+      const testOrders = [
+        // In the Feb 27 business day (before 6am ET on Feb 28 = before 11:00 UTC Feb 28)
+        getTestOrder({ createdAt: new Date('2025-02-28T04:59:00Z') }), // 11:59 PM ET Feb 27
 
-        // Feb 28 in ET
-        getTestOrder({ createdAt: new Date('2025-02-28T05:01:00Z') }), // 12:01 AM ET
-        getTestOrder({ createdAt: new Date('2025-02-28T16:00:00Z') }), // 11:00 AM ET
-        getTestOrder({ createdAt: new Date('2025-03-01T04:59:00Z') }), // 11:59 PM ET
+        // In the Feb 28 business day (6am Feb 28 ET = 11:00 UTC Feb 28, through 5:59am Mar 1 ET)
+        getTestOrder({ createdAt: new Date('2025-02-28T11:01:00Z') }), // 6:01 AM ET Feb 28
+        getTestOrder({ createdAt: new Date('2025-02-28T16:00:00Z') }), // 11:00 AM ET Feb 28
+        getTestOrder({ createdAt: new Date('2025-03-01T04:59:00Z') }), // 11:59 PM ET Feb 28
 
-        // Mar 1 in ET (12:01 AM ET = Mar 1 05:01 UTC)
-        getTestOrder({ createdAt: new Date('2025-03-01T05:01:00Z') })
+        // In the Mar 1 business day (6am Mar 1 ET = 11:00 UTC Mar 1)
+        getTestOrder({ createdAt: new Date('2025-03-01T11:01:00Z') })  // 6:01 AM ET Mar 1
       ];
 
-      for (const order of orders) {
-        const saved = await pgStorage.createOrder(order);
-        console.log(`Created test order ${saved.id}:`, {
-          utc: order.createdAt.toISOString(),
-          et: formatInTimeZone(order.createdAt, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss')
-        });
+      for (const order of testOrders) {
+        await pgStorage.createOrder(order);
       }
     });
 
-    it('should handle single day ranges correctly in Eastern Time', async () => {
-      // Query orders for Feb 28 Eastern Time
+    it('should count orders in a 6am–6am business day window', async () => {
+      // Feb 28 business day: 2025-02-28T11:00:00Z → 2025-03-01T10:59:59Z
       const result = await db.execute(sql`
-        WITH orders_in_et AS (
-          SELECT *, created_at AT TIME ZONE 'America/New_York' as created_at_et
-          FROM orders
-          WHERE square_id LIKE 'TEST_TIMESTAMP_ORDER%'
-        )
-        SELECT COUNT(*)
-        FROM orders_in_et
-        WHERE DATE(created_at_et) = '2025-02-28'::date
+        SELECT COUNT(*) FROM orders
+        WHERE square_id LIKE 'TEST_TIMESTAMP_ORDER%'
+          AND created_at >= '2025-02-28T11:00:00Z'
+          AND created_at <  '2025-03-01T11:00:00Z'
       `);
 
-      // Log current count
-      console.log('Single day query count:', result.rows[0].count);
-
-      // Should include orders between midnight and 11:59pm ET on Feb 28 (3 orders)
+      // Should include the 3 orders in the Feb 28 business day
       expect(Number(result.rows[0].count)).toBe(3);
     });
 
-    it('should handle multi-day ranges correctly', async () => {
-      // Query orders for Feb 28 and Mar 1 Eastern Time
+    it('should correctly exclude early-morning orders from the current business day', async () => {
+      // The 11:59 PM ET order (04:59 UTC Feb 28) is in the Feb 27 business day, not Feb 28
       const result = await db.execute(sql`
-        WITH orders_in_et AS (
-          SELECT *, created_at AT TIME ZONE 'America/New_York' as created_at_et
-          FROM orders
-          WHERE square_id LIKE 'TEST_TIMESTAMP_ORDER%'
-        )
-        SELECT COUNT(*)
-        FROM orders_in_et
-        WHERE DATE(created_at_et) >= '2025-02-28'::date
-          AND DATE(created_at_et) <= '2025-03-01'::date
+        SELECT COUNT(*) FROM orders
+        WHERE square_id LIKE 'TEST_TIMESTAMP_ORDER%'
+          AND created_at < '2025-02-28T11:00:00Z'
       `);
 
-      // Log current count
-      console.log('Multi-day query count:', result.rows[0].count);
-
-      // Should include all orders from midnight Feb 28 to 11:59pm Mar 1 (4 orders)
-      expect(Number(result.rows[0].count)).toBe(4);
+      expect(Number(result.rows[0].count)).toBe(1);
     });
   });
 });
