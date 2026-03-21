@@ -866,12 +866,11 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
 
   let cursor: string | undefined;
   let pageCount = 0;
-  const MAX_PAGES = 50; // 50 × 50 = 2,500 activities max per incremental run
 
   console.log(`[IncrementalGiftCardSync] Fetching ACTIVATE activities since ${since.toISOString()} (newest-first, stopping at cutoff)`);
 
   let reachedCutoff = false;
-  while (pageCount < MAX_PAGES && !reachedCutoff) {
+  while (!reachedCutoff) {
     pageCount++;
     try {
       const response = await giftCardActivitiesApi.listGiftCardActivities(
@@ -880,7 +879,7 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
         process.env.SQUARE_LOCATION_ID,
         undefined,                        // beginTime – no date filter (Square rejects it alone)
         undefined,                        // endTime
-        50,                              // max per page
+        50,                               // max per page
         cursor,
         'DESC'                            // sortOrder – explicit descending for deterministic cutoff
       );
@@ -911,18 +910,14 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
       console.log(`[IncrementalGiftCardSync] Page ${pageCount}: ${activities.length} events scanned, ${results.length} new since cutoff${reachedCutoff ? ' (cutoff reached)' : ''}`);
 
       cursor = (response.result as any)?.cursor ?? undefined;
-      if (!cursor || activities.length === 0) break;
+      if (!cursor || activities.length === 0) break; // no more pages from Square
     } catch (error) {
       console.error(`[IncrementalGiftCardSync] Error on page ${pageCount}:`, error);
       break;
     }
   }
 
-  if (pageCount >= MAX_PAGES && !reachedCutoff) {
-    console.warn(`[IncrementalGiftCardSync] WARNING: Page cap (${MAX_PAGES} pages / ${MAX_PAGES * 50} events) reached without hitting the time cutoff. Some activations in this window may have been skipped — the next cycle will retry with the same watermark.`);
-  }
-
-  console.log(`[IncrementalGiftCardSync] Found ${results.length} ACTIVATE events since ${since.toISOString()}`);
+  console.log(`[IncrementalGiftCardSync] Found ${results.length} ACTIVATE events since ${since.toISOString()} (${pageCount} page${pageCount !== 1 ? 's' : ''} scanned)`);
   return results;
 }
 
