@@ -646,6 +646,12 @@ export class SyncService {
    * 
    * @returns Object with sync results
    */
+  /**
+   * @deprecated Use syncGiftCardsHistoricalBackfill() instead.
+   * This listGiftCards-based path is retained for reference only and must NOT
+   * be called by any active sync path (scheduler, routes, or runHistoricalSync).
+   * All full-sync entrypoints route to the Activities-API-based canonical method.
+   */
   async syncGiftCards(): Promise<{
     processed: number;
     created: number;
@@ -1067,14 +1073,20 @@ export class SyncService {
             cardData.purchaseDate = createdAt;
 
             if (existingSquareIds.has(giftCardId)) {
-              // Card exists — upsert current balance, active status, activation amount,
-              // and corrected purchase_date.
+              // Card exists — upsert current balance and active status from Square.
+              // For purchaseDate, keep the EARLIEST activation event: since the backfill
+              // iterates ASC (oldest first), a later activation event should NOT overwrite
+              // a purchase_date that was set from an earlier event.
+              // We enforce this with a WHERE guard: only update purchase_date if the stored
+              // value is newer (i.e., null or > createdAt).
               await db.update(giftCards)
                 .set({
                   amount: cardData.amount,
                   isActive: cardData.isActive,
                   activationAmount: activationAmountDollars,
-                  purchaseDate: createdAt,
+                  // Only overwrite purchase_date if the stored value is null or LATER
+                  // than this event (keeps earliest activation timestamp)
+                  purchaseDate: sql`CASE WHEN ${giftCards.purchaseDate} IS NULL OR ${giftCards.purchaseDate} > ${createdAt} THEN ${createdAt} ELSE ${giftCards.purchaseDate} END`,
                   updatedAt: new Date()
                 })
                 .where(eq(giftCards.squareId, giftCardId));
