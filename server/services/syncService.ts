@@ -803,8 +803,19 @@ export class SyncService {
         }
       }
       
-      // If successful, run the gift card activation amount fix
-      await giftCardService.fixGiftCardActivationAmounts();
+      // If successful, fill in any null activation amounts using the Activities API.
+      // The activation amounts were already fetched above and applied per card, so
+      // this is a safety net for any cards that slipped through (e.g. network retry
+      // edge cases).  We intentionally skip the old balance-derived fixer here
+      // because current_balance is NOT a reliable proxy for original activation amount.
+      try {
+        const { backfillGiftCardActivationAmounts } = await import('./enhancedGiftCardFix');
+        const backfillResult = await backfillGiftCardActivationAmounts();
+        console.log('Post-sync activation backfill:', backfillResult);
+      } catch (backfillErr) {
+        // Non-fatal: log and continue so the sync still completes successfully
+        console.error('Post-sync activation backfill failed (non-fatal):', backfillErr);
+      }
       
       // Update state to completed
       await this.updateSyncState(state.id, {

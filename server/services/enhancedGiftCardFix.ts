@@ -302,39 +302,42 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
 export async function backfillGiftCardActivationAmounts(): Promise<{
   totalCards: number;
   updatedViaActivitiesApi: number;
+  correctedViaActivitiesApi: number;
   updatedViaOrderMatch: number;
   stillUnresolved: number;
 }> {
   console.log('Starting backfill of gift card activation amounts via Activities API...');
 
-  // 1. Fetch all cards from DB that need repair (null or zero activation amount)
+  // 1. Fetch ALL cards from DB — both null/zero (missing) and positive (possibly wrong)
+  //    Cards with trusted order links (activation_order_id IS NOT NULL) are skipped
+  //    because they were set via authoritative order matching and should not be overwritten.
   const result = await db.execute(sql`
     SELECT id, square_id, gan, activation_amount
     FROM gift_cards
-    WHERE activation_amount IS NULL OR activation_amount = 0
+    WHERE activation_order_id IS NULL
     ORDER BY id
   `);
-  const cardsNeedingRepair = result.rows as Array<{
+  const allCards = result.rows as Array<{
     id: number;
     square_id: string;
     gan: string | null;
     activation_amount: number | null;
   }>;
 
-  console.log(`${cardsNeedingRepair.length} gift cards need activation amount repair`);
+  const cardsNeedingRepair = allCards.filter(c => c.activation_amount === null || c.activation_amount === 0);
+  const cardsWithPositiveAmount = allCards.filter(c => c.activation_amount !== null && (c.activation_amount as number) > 0);
 
-  if (cardsNeedingRepair.length === 0) {
-    return { totalCards: 0, updatedViaActivitiesApi: 0, updatedViaOrderMatch: 0, stillUnresolved: 0 };
-  }
+  console.log(`${cardsNeedingRepair.length} cards missing activation amount, ${cardsWithPositiveAmount.length} cards with existing positive amount to cross-check`);
 
-  // 2. Fetch activation map from the Activities API
+  // 2. Fetch activation map from the Activities API (authoritative source)
   const activationMap = await fetchGiftCardActivitiesMap();
   console.log(`Activities API returned activation amounts for ${activationMap.size} cards`);
 
   let updatedViaActivitiesApi = 0;
+  let correctedViaActivitiesApi = 0;
   const remainingCards: typeof cardsNeedingRepair = [];
 
-  // 3. Apply Activities API amounts first
+  // 3a. Fill in null/zero activation amounts from the Activities API
   for (const card of cardsNeedingRepair) {
     const amount = activationMap.get(card.square_id);
     if (amount !== undefined && amount > 0) {
@@ -349,7 +352,26 @@ export async function backfillGiftCardActivationAmounts(): Promise<{
     }
   }
 
-  console.log(`Activities API backfill: updated ${updatedViaActivitiesApi}, ${remainingCards.length} still need order matching`);
+  // 3b. Cross-check cards with existing positive amounts against the Activities API.
+  //     If the Activities API has a DIFFERENT value, prefer the authoritative API value.
+  for (const card of cardsWithPositiveAmount) {
+    const apiAmount = activationMap.get(card.square_id);
+    if (apiAmount !== undefined && apiAmount > 0) {
+      const storedAmount = card.activation_amount as number;
+      // Use a small tolerance (< $0.01) to avoid floating-point noise
+      if (Math.abs(apiAmount - storedAmount) > 0.01) {
+        console.log(`Correcting card ${card.id}: stored $${storedAmount} → API $${apiAmount}`);
+        await db.execute(sql`
+          UPDATE gift_cards
+          SET activation_amount = ${apiAmount}, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${card.id}
+        `);
+        correctedViaActivitiesApi++;
+      }
+    }
+  }
+
+  console.log(`Activities API backfill: ${updatedViaActivitiesApi} filled, ${correctedViaActivitiesApi} corrected, ${remainingCards.length} still need order matching`);
 
   // 4. For cards still unresolved, try order-matching — but ONLY for the unresolved
   //    subset so we never touch cards already fixed by the Activities API.
@@ -360,11 +382,12 @@ export async function backfillGiftCardActivationAmounts(): Promise<{
   }
 
   const stillUnresolved = remainingCards.length - updatedViaOrderMatch;
-  console.log(`Backfill complete: ${updatedViaActivitiesApi} via Activities API, ${updatedViaOrderMatch} via order matching, ${stillUnresolved} unresolved`);
+  console.log(`Backfill complete: ${updatedViaActivitiesApi} filled + ${correctedViaActivitiesApi} corrected via Activities API, ${updatedViaOrderMatch} via order matching, ${stillUnresolved} unresolved`);
 
   return {
-    totalCards: cardsNeedingRepair.length,
+    totalCards: cardsNeedingRepair.length + cardsWithPositiveAmount.length,
     updatedViaActivitiesApi,
+    correctedViaActivitiesApi,
     updatedViaOrderMatch,
     stillUnresolved
   };
