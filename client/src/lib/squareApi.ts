@@ -176,7 +176,8 @@ export const fetchDetailedTransactions = async (
         taxes: typeof response.taxes === 'number' ? response.taxes : parseFloat(response.taxes || '0'),
         refunds: typeof response.refunds === 'number' ? response.refunds : parseFloat(response.refunds || '0'),
         discountsAndComps: typeof response.discountsAndComps === 'number' ? response.discountsAndComps : parseFloat(response.discountsAndComps || '0'),
-        giftCardSales: typeof response.giftCardSales === 'number' ? response.giftCardSales : parseFloat(response.giftCardSales || '0')
+        giftCardSales: typeof response.giftCardSales === 'number' ? response.giftCardSales : parseFloat(response.giftCardSales || '0'),
+        totalTransactions: typeof response.totalTransactions === 'number' ? response.totalTransactions : parseInt(response.totalTransactions || '0', 10)
       };
       
       console.log('⭐ Processed detailed transactions data:', processedResponse);
@@ -198,7 +199,8 @@ export const fetchDetailedTransactions = async (
         taxes: typeof data.taxes === 'number' ? data.taxes : parseFloat(data.taxes || '0'),
         refunds: typeof data.refunds === 'number' ? data.refunds : parseFloat(data.refunds || '0'),
         discountsAndComps: typeof data.discountsAndComps === 'number' ? data.discountsAndComps : parseFloat(data.discountsAndComps || '0'),
-        giftCardSales: typeof data.giftCardSales === 'number' ? data.giftCardSales : parseFloat(data.giftCardSales || '0')
+        giftCardSales: typeof data.giftCardSales === 'number' ? data.giftCardSales : parseFloat(data.giftCardSales || '0'),
+        totalTransactions: typeof data.totalTransactions === 'number' ? data.totalTransactions : parseInt(data.totalTransactions || '0', 10)
       };
       
       console.log('⭐ Processed detailed transactions JSON data:', processedData);
@@ -215,7 +217,8 @@ export const fetchDetailedTransactions = async (
       taxes: 0,
       refunds: 0,
       discountsAndComps: 0,
-      giftCardSales: 0
+      giftCardSales: 0,
+      totalTransactions: 0
     };
   } catch (error) {
     console.error('⭐ Error fetching detailed transactions:', error);

@@ -301,4 +301,5 @@ export interface DetailedTransactionBreakdown {
   refunds: number;
   discountsAndComps: number;
   giftCardSales: number;
+  totalTransactions: number;
 }
