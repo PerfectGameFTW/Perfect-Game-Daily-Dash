@@ -65,57 +65,15 @@ export default function Header({
                 : format(today, 'MMM d, yyyy');
   }
   
-  console.log('Display date:', {
-    displayDate,
-    dateRange,
-    customStartDate: customStartDate?.toISOString(),
-    customEndDate: customEndDate?.toISOString()
-  });
-
   const handlePrevDate = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent the drawer from opening
-    console.log('Clicked previous arrow, current state:', {
-      dateRange,
-      customStartDate: customStartDate?.toISOString(),
-      customEndDate: customEndDate?.toISOString()
-    });
-    
+    e.stopPropagation();
     const result = navigateDate('prev', dateRange, customStartDate, customEndDate);
-    
-    console.log('Navigation result:', {
-      newDateRange: result.dateRange,
-      newStartDate: result.startDate?.toISOString(),
-      newEndDate: result.endDate?.toISOString()
-    });
-    
-    // For debugging - add a detailed log about which path we're taking
-    if (dateRange === 'today' && !customStartDate) {
-      console.log('🔍 Going from TODAY to YESTERDAY via arrow');
-    } else if (dateRange === 'yesterday' && !customStartDate) {
-      console.log('🔍 Going from YESTERDAY to custom date via arrow');
-    } else if (customStartDate) {
-      console.log('🔍 Navigating from custom date', customStartDate, 'to previous day');
-    }
-    
     onDateRangeChange(result.dateRange, result.startDate, result.endDate);
   };
 
   const handleNextDate = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent the drawer from opening
-    console.log('Clicked next arrow, current state:', {
-      dateRange,
-      customStartDate: customStartDate?.toISOString(),
-      customEndDate: customEndDate?.toISOString()
-    });
-    
+    e.stopPropagation();
     const result = navigateDate('next', dateRange, customStartDate, customEndDate);
-    
-    console.log('Navigation result:', {
-      newDateRange: result.dateRange,
-      newStartDate: result.startDate?.toISOString(),
-      newEndDate: result.endDate?.toISOString()
-    });
-    
     onDateRangeChange(result.dateRange, result.startDate, result.endDate);
   };
 

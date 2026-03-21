@@ -698,12 +698,6 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>, a
       // Previously this called toZonedTime() which creates a misleading JS Date whose
       // .toISOString() returns Eastern local time labeled as UTC (off by 4-5 hours).
       purchaseDate = utcPurchaseDate;
-
-      console.log(`Gift card ${safeGiftCard.id} purchase date:`, {
-        original: safeGiftCard.createdAt || safeGiftCard.created_at,
-        utc: utcPurchaseDate.toISOString(),
-        eastern: formatInTimeZone(utcPurchaseDate, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
-      });
     }
   } catch (error) {
     console.warn(`Error processing purchase date for gift card ${safeGiftCard.id}, using current date instead:`, error);
@@ -727,20 +721,12 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>, a
 
   if (activationAmountOverride !== undefined && activationAmountOverride > 0) {
     activationAmount = activationAmountOverride;
-    console.log(`Using Activities API activation amount for card ${safeGiftCard.id}: $${activationAmount}`);
   } else if (safeGiftCard.ganMoney?.amount) {
     activationAmount = Number(safeGiftCard.ganMoney.amount) / 100;
-    console.log(`Found ganMoney activation amount for card ${safeGiftCard.id}: $${activationAmount}`);
   } else if (safeGiftCard.gan_money?.amount) {
     activationAmount = Number(safeGiftCard.gan_money.amount) / 100;
-    console.log(`Found gan_money activation amount for card ${safeGiftCard.id}: $${activationAmount}`);
-  } else {
-    // Do NOT fall back to the current balance – that value is wrong for spent cards
-    // and misleading for partially-spent cards.  Leave null; backfill will fix it.
-    console.log(`No activation amount source found for card ${safeGiftCard.id} – will be null until backfill runs`);
   }
-
-  console.log(`Processing gift card ${safeGiftCard.id} with current balance: $${amount}, activation amount: $${activationAmount}`);
+  // If no activation amount found, leave null — backfill will resolve it later.
 
   // Extract GAN (Gift Card Account Number) if available
   let gan = '';
@@ -764,9 +750,6 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>, a
     }
   }
   
-  if (gan) {
-    console.log(`Found GAN ${gan} for gift card ${safeGiftCard.id}`);
-  }
 
   const card: InsertGiftCard = {
     squareId: safeGiftCard.id,
@@ -1005,7 +988,6 @@ export async function fetchGiftCards(): Promise<any[]> {
 
     while (hasMorePages) {
       pageCount++;
-      console.log(`Fetching gift cards page ${pageCount}${cursor ? ' with cursor' : ''}`);
 
       try {
         const response = await giftCardsApi.listGiftCards(
@@ -1024,16 +1006,7 @@ export async function fetchGiftCards(): Promise<any[]> {
         // Process each gift card to ensure it's safe for database storage
         const safeGiftCards = response.result.giftCards.map(card => {
           try {
-            const safeCard = processSafeSquareData(card);
-
-            // Log amount information for debugging
-            if (safeCard.balanceMoney?.amount) {
-              console.log(`Card ${safeCard.id} balance: $${Number(safeCard.balanceMoney.amount) / 100}`);
-            } else if (safeCard.balance_money?.amount) {
-              console.log(`Card ${safeCard.id} balance: $${Number(safeCard.balance_money.amount) / 100}`);
-            }
-
-            return safeCard;
+            return processSafeSquareData(card);
           } catch (error) {
             console.error(`Error processing gift card:`, error);
             return null;
@@ -1041,8 +1014,6 @@ export async function fetchGiftCards(): Promise<any[]> {
         }).filter(card => card !== null); // Remove any cards that failed processing
 
         allGiftCards = [...allGiftCards, ...safeGiftCards];
-        console.log(`Processed ${safeGiftCards.length} gift cards on page ${pageCount}. Total so far: ${allGiftCards.length}`);
-
         cursor = response.result.cursor;
         hasMorePages = !!cursor;
 

@@ -999,10 +999,12 @@ export class SyncService {
 
     let state = await this.getSyncState(SYNC_TYPE);
 
-    // Concurrency guard
+    // Concurrency guard: allow 3 minutes for a run to complete before treating it as stuck.
+    // (Each call completes in <1 min with the pre-loaded card map — 30 min was too long,
+    //  and would block the startup loop for ages after a server restart.)
     if (state?.status === 'in_progress') {
       const elapsed = state.lastSyncedAt ? Date.now() - new Date(state.lastSyncedAt).getTime() : Infinity;
-      if (elapsed < 30 * 60 * 1000) {
+      if (elapsed < 3 * 60 * 1000) {
         console.log('[HistoricalGiftCardBackfill] Previous run still in progress — skipping');
         return { processed: 0, created: 0, updated: 0, failed: 0, pagesProcessed: 0, finished: false };
       }
@@ -1037,6 +1039,18 @@ export class SyncService {
       });
     }
 
+    // Pre-load ALL Square gift cards into a map (squareId → card data).
+    // This avoids per-card API calls inside the activation-event loop — instead we
+    // do a single bulk fetch up front and look up cards from the in-memory map.
+    console.log('[HistoricalGiftCardBackfill] Pre-loading all Square gift cards...');
+    const allSquareCards = await squareClient.fetchGiftCards();
+    const squareCardMap = new Map<string, any>();
+    for (const card of allSquareCards) {
+      const id = card.id || card.squareId;
+      if (id) squareCardMap.set(id, card);
+    }
+    console.log(`[HistoricalGiftCardBackfill] Pre-loaded ${squareCardMap.size} Square cards`);
+
     // Load all existing squareIds once for fast lookup
     const existingRows = await db.select({ squareId: giftCards.squareId }).from(giftCards);
     const existingSquareIds = new Set(existingRows.map(r => r.squareId));
@@ -1057,14 +1071,17 @@ export class SyncService {
 
         for (const { giftCardId, activationAmountDollars, createdAt } of activities) {
           try {
-            // Fetch the live card from Square for every activation event so we always
-            // refresh the current balance (amount) and active status, not just the
-            // activation amount / purchase date.
-            const squareCard = await squareClient.fetchGiftCardById(giftCardId);
+            // Look up from the pre-loaded map — avoids a per-card API call.
+            // Fall back to fetchGiftCardById only for cards not in the bulk list
+            // (e.g., cancelled/expired cards Square omits from listGiftCards).
+            let squareCard = squareCardMap.get(giftCardId);
             if (!squareCard) {
-              console.warn(`[HistoricalGiftCardBackfill] Could not fetch card ${giftCardId} from Square`);
-              failed++;
-              continue;
+              squareCard = await squareClient.fetchGiftCardById(giftCardId);
+              if (!squareCard) {
+                console.warn(`[HistoricalGiftCardBackfill] Could not resolve card ${giftCardId}`);
+                failed++;
+                continue;
+              }
             }
 
             // Build the canonical card data (with correct UTC purchase_date)
@@ -1077,15 +1094,11 @@ export class SyncService {
               // For purchaseDate, keep the EARLIEST activation event: since the backfill
               // iterates ASC (oldest first), a later activation event should NOT overwrite
               // a purchase_date that was set from an earlier event.
-              // We enforce this with a WHERE guard: only update purchase_date if the stored
-              // value is newer (i.e., null or > createdAt).
               await db.update(giftCards)
                 .set({
                   amount: cardData.amount,
                   isActive: cardData.isActive,
                   activationAmount: activationAmountDollars,
-                  // Only overwrite purchase_date if the stored value is null or LATER
-                  // than this event (keeps earliest activation timestamp)
                   purchaseDate: sql`CASE WHEN ${giftCards.purchaseDate} IS NULL OR ${giftCards.purchaseDate} > ${createdAt} THEN ${createdAt} ELSE ${giftCards.purchaseDate} END`,
                   updatedAt: new Date()
                 })

@@ -41,6 +41,49 @@ export function startScheduler(): void {
 
   console.log('[Scheduler] Frequent sync scheduled every 5 minutes');
   console.log('[Scheduler] Nightly deep sync scheduled at 3:00 AM Eastern Time');
+
+  // On startup: if the historical gift card backfill has never completed,
+  // run it in the background until finished so the dashboard has complete data.
+  runBackfillUntilComplete().catch(err => {
+    console.error('[Scheduler] Startup backfill error:', err);
+  });
+}
+
+/**
+ * Runs the gift card historical backfill in a loop until finished.
+ * Called once on startup (background, non-blocking).
+ * Skips immediately if the backfill was already completed in a previous run.
+ */
+async function runBackfillUntilComplete(): Promise<void> {
+  // Check if backfill is already done before doing any API work
+  const existingState = await syncService.getSyncState('giftCards_historical');
+  if (existingState?.isComplete && existingState.status === 'completed') {
+    console.log('[Scheduler] Gift card historical backfill already complete — skipping startup run');
+    return;
+  }
+
+  console.log('[Scheduler] Starting gift card historical backfill in background...');
+  let callCount = 0;
+  const MAX_CALLS = 50; // safety cap — prevents infinite loops
+
+  while (callCount < MAX_CALLS) {
+    callCount++;
+    try {
+      const result = await syncService.syncGiftCardsHistoricalBackfill();
+      console.log(`[Scheduler] Backfill pass ${callCount}: processed=${result.processed} created=${result.created} updated=${result.updated} pages=${result.pagesProcessed} finished=${result.finished}`);
+      if (result.finished) {
+        console.log('[Scheduler] Gift card historical backfill complete.');
+        return;
+      }
+      // Brief pause between passes to avoid overwhelming Square API
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } catch (err) {
+      console.error(`[Scheduler] Backfill pass ${callCount} failed:`, err);
+      // Wait 30 seconds before retrying after an error
+      await new Promise(resolve => setTimeout(resolve, 30000));
+    }
+  }
+  console.warn(`[Scheduler] Backfill reached safety cap of ${MAX_CALLS} calls — will continue at next nightly run`);
 }
 
 /**
