@@ -244,7 +244,9 @@ export function createApiRouter(): Router {
           result = await syncService.syncPayments(startDate, endDate);
           break;
         case 'gift_cards':
-          result = await syncService.syncGiftCards();
+          // Route to the canonical Activities-API-based full reconciliation
+          // (resumable, cursor-checkpointed) instead of the legacy listGiftCards path
+          result = await syncService.syncGiftCardsHistoricalBackfill();
           break;
         case 'gift_card_redemptions':
           console.log('Starting gift card redemption synchronization');
@@ -276,10 +278,11 @@ export function createApiRouter(): Router {
           break;
         case 'all':
           // Run all sync operations in parallel
+          // Gift cards use the canonical resumable Activities-API path
           const [ordersResult, paymentsResult, giftCardsResult, redemptionsResult] = await Promise.all([
             syncService.syncOrders(startDate, endDate),
             syncService.syncPayments(startDate, endDate),
-            syncService.syncGiftCards(),
+            syncService.syncGiftCardsHistoricalBackfill(),
             syncService.syncGiftCardRedemptions(startDate, endDate)
           ]);
           

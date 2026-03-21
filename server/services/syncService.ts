@@ -1051,31 +1051,36 @@ export class SyncService {
 
         for (const { giftCardId, activationAmountDollars, createdAt } of activities) {
           try {
+            // Fetch the live card from Square for every activation event so we always
+            // refresh the current balance (amount) and active status, not just the
+            // activation amount / purchase date.
+            const squareCard = await squareClient.fetchGiftCardById(giftCardId);
+            if (!squareCard) {
+              console.warn(`[HistoricalGiftCardBackfill] Could not fetch card ${giftCardId} from Square`);
+              failed++;
+              continue;
+            }
+
+            // Build the canonical card data (with correct UTC purchase_date)
+            const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
+            // Use the authoritative createdAt from the Activities API event (correct UTC)
+            cardData.purchaseDate = createdAt;
+
             if (existingSquareIds.has(giftCardId)) {
-              // Card exists — update activation amount only if null, and fix purchase_date timezone
+              // Card exists — upsert current balance, active status, activation amount,
+              // and corrected purchase_date.
               await db.update(giftCards)
                 .set({
+                  amount: cardData.amount,
+                  isActive: cardData.isActive,
                   activationAmount: activationAmountDollars,
-                  // Fix purchase_date timezone bug: re-write with the Activities API createdAt
-                  // which is an authoritative UTC timestamp from Square
                   purchaseDate: createdAt,
                   updatedAt: new Date()
                 })
                 .where(eq(giftCards.squareId, giftCardId));
               updated++;
             } else {
-              // Brand-new card — fetch from Square and insert with correct UTC purchase_date
-              const squareCard = await squareClient.fetchGiftCardById(giftCardId);
-              if (!squareCard) {
-                console.warn(`[HistoricalGiftCardBackfill] Could not fetch card ${giftCardId} from Square`);
-                failed++;
-                continue;
-              }
-
-              // Override purchaseDate with the authoritative createdAt from the activity
-              const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
-              cardData.purchaseDate = createdAt; // authoritative UTC from Activities API
-
+              // Brand-new card — insert it
               await giftCardService.createGiftCard(cardData);
               existingSquareIds.add(giftCardId);
               created++;
