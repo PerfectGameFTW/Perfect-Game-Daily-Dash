@@ -55,7 +55,7 @@ import {
   GiftCard, InsertGiftCard,
   Category, TransactionStatus, syncState, InsertOrder, InsertOrderLineItem, InsertOrderModifier, InsertOrderDiscount
 } from '@shared/schema';
-import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
+import { formatInTimeZone } from 'date-fns-tz';
 import dotenv from 'dotenv';
 //import { db } from './db'; // Import db directly instead of pgStorage
 import { eq } from 'drizzle-orm';
@@ -691,16 +691,18 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>, a
       console.warn(`Invalid purchase date for gift card ${safeGiftCard.id}, using current date instead`);
       purchaseDate = new Date();
     } else {
-      // Convert the UTC timestamp to a date in Eastern timezone
-      // This preserves the exact same moment in time but represents it in Eastern timezone
-      // This ensures that midnight-to-midnight in Eastern time is properly preserved
-      purchaseDate = toZonedTime(utcPurchaseDate, EASTERN_TIMEZONE);
+      // Store the raw UTC timestamp directly.
+      // The database uses timestamptz so it stores the true moment in time.
+      // Date-range queries use getEasternDateRange() which converts ET business day
+      // boundaries to UTC before querying — so we MUST keep purchaseDate in UTC here.
+      // Previously this called toZonedTime() which creates a misleading JS Date whose
+      // .toISOString() returns Eastern local time labeled as UTC (off by 4-5 hours).
+      purchaseDate = utcPurchaseDate;
 
-      // Log the timestamp conversion for debugging
-      console.log(`Gift card ${safeGiftCard.id} purchase date conversion:`, {
-        original: safeGiftCard.created_at,
+      console.log(`Gift card ${safeGiftCard.id} purchase date:`, {
+        original: safeGiftCard.createdAt || safeGiftCard.created_at,
         utc: utcPurchaseDate.toISOString(),
-        eastern: formatInTimeZone(purchaseDate, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
+        eastern: formatInTimeZone(utcPurchaseDate, EASTERN_TIMEZONE, 'yyyy-MM-dd HH:mm:ss zzz')
       });
     }
   } catch (error) {
@@ -845,6 +847,63 @@ export async function fetchGiftCardActivitiesMap(): Promise<Map<string, number>>
 
   console.log(`fetchGiftCardActivitiesMap complete: ${activationMap.size} cards with activation amounts`);
   return activationMap;
+}
+
+/**
+ * Fetch a single page of ACTIVATE gift card activities.
+ * Used by the historical backfill to page through all activities with
+ * a saved cursor so the job is resumable across server restarts.
+ *
+ * @param cursor  Cursor from the previous page (undefined for first page)
+ * @param sortOrder 'ASC' to page oldest-first (backfill), 'DESC' for incremental
+ * @returns       Activities on this page plus the next cursor (undefined = last page)
+ */
+export async function fetchGiftCardActivitiesPage(
+  cursor: string | undefined,
+  sortOrder: 'ASC' | 'DESC' = 'DESC'
+): Promise<{
+  activities: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date }>;
+  nextCursor: string | undefined;
+}> {
+  if (!process.env.SQUARE_LOCATION_ID) {
+    console.error('[GiftCardActivitiesPage] Square location ID is not configured');
+    return { activities: [], nextCursor: undefined };
+  }
+
+  try {
+    const response = await giftCardActivitiesApi.listGiftCardActivities(
+      undefined,                        // giftCardId – all cards
+      'ACTIVATE',                       // type filter
+      process.env.SQUARE_LOCATION_ID,
+      undefined,                        // beginTime
+      undefined,                        // endTime
+      50,                               // max per page
+      cursor,
+      sortOrder
+    );
+
+    const rawActivities = (response.result as any)?.giftCardActivities ?? [];
+    const nextCursor: string | undefined = (response.result as any)?.cursor ?? undefined;
+
+    const activities: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date }> = [];
+    for (const activity of rawActivities) {
+      const giftCardId = activity.giftCardId;
+      if (!giftCardId) continue;
+      const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
+      if (amountCents == null) continue;
+      const createdAt = activity.createdAt ? new Date(activity.createdAt) : new Date(0);
+      activities.push({
+        giftCardId,
+        activationAmountDollars: Number(amountCents) / 100,
+        createdAt,
+      });
+    }
+
+    return { activities, nextCursor };
+  } catch (error) {
+    console.error('[GiftCardActivitiesPage] Error fetching page:', error);
+    throw error;
+  }
 }
 
 /**

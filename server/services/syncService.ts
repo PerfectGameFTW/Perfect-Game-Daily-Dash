@@ -736,7 +736,7 @@ export class SyncService {
               // Update balance, active status, and activation amount if we now have it
               await db.update(giftCards)
                 .set({
-                  currentBalance: cardData.currentBalance,
+                  amount: cardData.amount,
                   isActive: cardData.isActive,
                   ...(cardData.activationAmount != null ? { activationAmount: cardData.activationAmount } : {}),
                   updatedAt: new Date()
@@ -957,6 +957,181 @@ export class SyncService {
       });
       console.error('[IncrementalGiftCardSync] Fatal error:', error);
       return { processed, created, updated, failed, sinceDate: since.toISOString() };
+    }
+  }
+
+  /**
+   * Resumable historical gift card backfill via Activities API.
+   *
+   * Unlike syncGiftCards() which uses listGiftCards (no date filter, arbitrary order,
+   * loses progress on restart), this method:
+   *   1. Pages through ALL ACTIVATE events ASC (oldest → newest) using the Activities API.
+   *   2. Saves the API cursor after every page using the 'giftCards_historical' sync key.
+   *   3. On restart it reads the saved cursor and resumes mid-scan — no data is re-processed
+   *      from the beginning.
+   *   4. For each activation event it UPSERTs the card with the correct UTC purchase_date
+   *      (fixing the timezone bug for any newly inserted records) and the authoritative
+   *      activation amount from the event.
+   *
+   * This is the fix for the March 9-20 gap: those 228 cards live in pages that were
+   * never reached before a server restart when using listGiftCards.
+   */
+  async syncGiftCardsHistoricalBackfill(): Promise<{
+    processed: number;
+    created: number;
+    updated: number;
+    failed: number;
+    pagesProcessed: number;
+    finished: boolean;
+  }> {
+    const SYNC_TYPE = 'giftCards_historical';
+    let processed = 0;
+    let created = 0;
+    let updated = 0;
+    let failed = 0;
+    let pagesProcessed = 0;
+
+    let state = await this.getSyncState(SYNC_TYPE);
+
+    // Concurrency guard
+    if (state?.status === 'in_progress') {
+      const elapsed = state.lastSyncedAt ? Date.now() - new Date(state.lastSyncedAt).getTime() : Infinity;
+      if (elapsed < 30 * 60 * 1000) {
+        console.log('[HistoricalGiftCardBackfill] Previous run still in progress — skipping');
+        return { processed: 0, created: 0, updated: 0, failed: 0, pagesProcessed: 0, finished: false };
+      }
+      console.log('[HistoricalGiftCardBackfill] Previous run appears stuck — restarting');
+    }
+
+    // Read saved cursor from errorMessage field (repurposed as a checkpoint store)
+    let savedCursor: string | undefined = undefined;
+    if (state?.errorMessage?.startsWith('cursor:')) {
+      savedCursor = state.errorMessage.slice('cursor:'.length) || undefined;
+      console.log(`[HistoricalGiftCardBackfill] Resuming from saved cursor (${savedCursor?.slice(0, 20)}...)`);
+    } else {
+      console.log('[HistoricalGiftCardBackfill] Starting from beginning (no saved cursor)');
+    }
+
+    // Mark as in_progress
+    if (!state) {
+      state = await this.createSyncState({
+        syncType: SYNC_TYPE,
+        lastSyncedAt: new Date(),
+        isComplete: false,
+        processedCount: 0,
+        totalCount: 0,
+        status: 'in_progress',
+        errorMessage: savedCursor ? `cursor:${savedCursor}` : null
+      });
+    } else {
+      await this.updateSyncState(state.id, {
+        isComplete: false,
+        status: 'in_progress',
+        lastSyncedAt: new Date(),
+      });
+    }
+
+    // Load all existing squareIds once for fast lookup
+    const existingRows = await db.select({ squareId: giftCards.squareId }).from(giftCards);
+    const existingSquareIds = new Set(existingRows.map(r => r.squareId));
+
+    let currentCursor = savedCursor;
+    let finished = false;
+
+    try {
+      // Process up to 20 pages per call (1,000 activities) to keep response times reasonable.
+      // The endpoint will be called again to continue from where we left off.
+      const MAX_PAGES_PER_CALL = 20;
+
+      for (let page = 0; page < MAX_PAGES_PER_CALL; page++) {
+        const { activities, nextCursor } = await squareClient.fetchGiftCardActivitiesPage(currentCursor, 'ASC');
+        pagesProcessed++;
+
+        console.log(`[HistoricalGiftCardBackfill] Page ${page + 1}: ${activities.length} ACTIVATE events (cursor: ${currentCursor?.slice(0, 20) ?? 'start'})`);
+
+        for (const { giftCardId, activationAmountDollars, createdAt } of activities) {
+          try {
+            if (existingSquareIds.has(giftCardId)) {
+              // Card exists — update activation amount only if null, and fix purchase_date timezone
+              await db.update(giftCards)
+                .set({
+                  activationAmount: activationAmountDollars,
+                  // Fix purchase_date timezone bug: re-write with the Activities API createdAt
+                  // which is an authoritative UTC timestamp from Square
+                  purchaseDate: createdAt,
+                  updatedAt: new Date()
+                })
+                .where(eq(giftCards.squareId, giftCardId));
+              updated++;
+            } else {
+              // Brand-new card — fetch from Square and insert with correct UTC purchase_date
+              const squareCard = await squareClient.fetchGiftCardById(giftCardId);
+              if (!squareCard) {
+                console.warn(`[HistoricalGiftCardBackfill] Could not fetch card ${giftCardId} from Square`);
+                failed++;
+                continue;
+              }
+
+              // Override purchaseDate with the authoritative createdAt from the activity
+              const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
+              cardData.purchaseDate = createdAt; // authoritative UTC from Activities API
+
+              await giftCardService.createGiftCard(cardData);
+              existingSquareIds.add(giftCardId);
+              created++;
+            }
+            processed++;
+          } catch (err) {
+            failed++;
+            console.error(`[HistoricalGiftCardBackfill] Failed for card ${giftCardId}:`, err);
+          }
+        }
+
+        currentCursor = nextCursor;
+
+        // Save cursor checkpoint after each page so restarts resume here
+        await this.updateSyncState(state.id, {
+          processedCount: (state.processedCount || 0) + processed,
+          status: `in_progress — page ${pagesProcessed} processed`,
+          errorMessage: currentCursor ? `cursor:${currentCursor}` : 'cursor:done'
+        });
+
+        if (!nextCursor) {
+          finished = true;
+          break;
+        }
+      }
+
+      if (finished) {
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: new Date(),
+          processedCount: (state.processedCount || 0) + processed,
+          errorMessage: null // clear cursor checkpoint — done
+        });
+        console.log(`[HistoricalGiftCardBackfill] COMPLETE — processed=${processed} created=${created} updated=${updated} failed=${failed}`);
+      } else {
+        await this.updateSyncState(state.id, {
+          isComplete: false,
+          status: `paused — call again to continue (${pagesProcessed} pages this run)`,
+          lastSyncedAt: new Date(),
+          processedCount: (state.processedCount || 0) + processed,
+          // errorMessage already updated with cursor above
+        });
+        console.log(`[HistoricalGiftCardBackfill] Paused after ${pagesProcessed} pages — cursor saved, call again to continue`);
+      }
+
+      return { processed, created, updated, failed, pagesProcessed, finished };
+    } catch (error) {
+      // Save current cursor so we can resume from last successful page
+      await this.updateSyncState(state.id, {
+        isComplete: false,
+        status: 'error — will resume from checkpoint on next call',
+        errorMessage: currentCursor ? `cursor:${currentCursor}` : (savedCursor ? `cursor:${savedCursor}` : null)
+      });
+      console.error('[HistoricalGiftCardBackfill] Error:', error);
+      throw error;
     }
   }
 }

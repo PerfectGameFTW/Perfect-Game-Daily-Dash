@@ -174,6 +174,7 @@ export const giftCards = pgTable("gift_cards", {
   purchaseDate: timestamp("purchase_date", { withTimezone: true }).notNull(),
   squareData: jsonb("square_data"),
   gan: text("gan"), // Gift Card Account Number for matching with orders
+  activationPaymentId: integer("activation_payment_id"), // FK to payments.id (exists in DB, payments table not in Drizzle schema)
   activationOrderId: integer("activation_order_id").references(() => orders.id), // Link to order when activated
   activationSquareOrderId: text("activation_square_order_id"), // Original Square order ID for matching
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),

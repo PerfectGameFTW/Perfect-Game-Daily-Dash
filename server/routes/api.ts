@@ -482,6 +482,34 @@ export function createApiRouter(): Router {
     }
   });
 
+  /**
+   * Resumable Gift Card Historical Backfill
+   * POST /api/sync/gift-cards-backfill
+   *
+   * Pages through ALL Square ACTIVATE events (oldest first) via the Activities API,
+   * upserting each gift card with the correct UTC purchase_date and activation amount.
+   * Saves a cursor checkpoint after every page so the job resumes from where it left
+   * off if the server restarts mid-scan — fixing the March 9-20 data gap.
+   *
+   * Call repeatedly (each call processes up to 20 pages / 1,000 events) until the
+   * response shows `finished: true`.
+   */
+  router.post('/sync/gift-cards-backfill', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await syncService.syncGiftCardsHistoricalBackfill();
+      res.json({
+        success: true,
+        message: result.finished
+          ? `Backfill complete! processed=${result.processed} created=${result.created} updated=${result.updated} failed=${result.failed} pages=${result.pagesProcessed}`
+          : `Backfill in progress — call again to continue. processed=${result.processed} created=${result.created} updated=${result.updated} failed=${result.failed} pages=${result.pagesProcessed}`,
+        result,
+      });
+    } catch (error) {
+      console.error('[API] Gift card backfill error:', error);
+      next(error);
+    }
+  });
+
   return router;
 }
 
