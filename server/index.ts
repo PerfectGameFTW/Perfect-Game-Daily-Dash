@@ -5,6 +5,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { db, sql, pool } from "./db"; // Import db, sql and pool
 import { authService } from "./services/authService";
+import { startScheduler } from "./services/schedulerService";
 
 const app = express();
 app.use(express.json());
@@ -136,6 +137,8 @@ async function exitWithError(error: unknown) {
       host: "0.0.0.0"
     }, () => {
       log(`✓ Server ready and listening on port ${port}`);
+      // Start nightly sync scheduler (3 AM Eastern Time every day)
+      startScheduler();
     });
 
   } catch (error) {

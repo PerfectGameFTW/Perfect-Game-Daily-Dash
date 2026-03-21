@@ -1,9 +1,10 @@
-import { ChevronLeft, ChevronRight, Calendar, RotateCw, BarChart, Activity } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, RotateCw, Activity, Clock } from "lucide-react";
 import { DateRange } from "@shared/schema";
-import { format, isSameDay, subDays } from "date-fns";
-import { navigateDate, getFormattedDate } from "@/lib/dateUtils";
+import { format, isSameDay, subDays, formatDistanceToNow } from "date-fns";
+import { navigateDate } from "@/lib/dateUtils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
 
 interface HeaderProps {
   dateRange: DateRange;
@@ -24,6 +25,17 @@ export default function Header({
   onSync,
   isSyncing = false
 }: HeaderProps) {
+  const { data: syncStatus } = useQuery<{ overallLastSynced: string | null }>({
+    queryKey: ['/api/sync/status'],
+    refetchInterval: 60000,
+  });
+
+  const lastSyncedLabel = (() => {
+    if (!syncStatus?.overallLastSynced) return null;
+    const d = new Date(syncStatus.overallLastSynced);
+    return formatDistanceToNow(d, { addSuffix: true });
+  })();
+
   // Format the current display date 
   const today = new Date();
   
@@ -160,8 +172,23 @@ export default function Header({
               </TooltipProvider>
             </div>
             
-            {onSync && (
-              <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3">
+              {lastSyncedLabel && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-default">
+                        <Clock className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Synced {lastSyncedLabel}</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>Last data sync from Square</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              {onSync && (
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -181,8 +208,8 @@ export default function Header({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>

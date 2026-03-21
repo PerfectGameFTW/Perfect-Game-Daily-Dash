@@ -397,6 +397,151 @@ export function createApiRouter(): Router {
   
   // Use gift card fixer router for dedicated API endpoints
   router.use(giftCardFixerRouter);
-  
+
+  /**
+   * Sync Status API
+   * GET /api/sync/status
+   *
+   * Returns the most recent sync timestamps for every sync type so the UI can
+   * display a "last synced" indicator.
+   */
+  router.get('/sync/status', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { db } = await import('../db');
+      const { syncState } = await import('../../shared/schema');
+      const { desc } = await import('drizzle-orm');
+
+      const rows = await db
+        .select()
+        .from(syncState)
+        .orderBy(desc(syncState.lastSyncedAt));
+
+      // Collapse to one row per syncType (most recent)
+      const byType: Record<string, { lastSyncedAt: Date | null; status: string; processedCount: number | null }> = {};
+      for (const row of rows) {
+        if (!byType[row.syncType]) {
+          byType[row.syncType] = {
+            lastSyncedAt: row.lastSyncedAt,
+            status: row.status,
+            processedCount: row.processedCount,
+          };
+        }
+      }
+
+      // Overall "last synced" = most recent completed sync across all types
+      const completedSyncs = rows.filter(r => r.status === 'completed' && r.lastSyncedAt);
+      const overallLastSynced = completedSyncs.length > 0
+        ? completedSyncs.reduce((latest, r) =>
+            r.lastSyncedAt! > latest ? r.lastSyncedAt! : latest,
+            completedSyncs[0].lastSyncedAt!
+          )
+        : null;
+
+      res.json({ success: true, byType, overallLastSynced });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Historical Catch-up Sync API
+   * POST /api/sync/historical
+   *
+   * Kicks off a background process that loops through monthly date chunks from
+   * startDate (default: 2 years ago) through today, calling syncOrders and
+   * syncPayments for each chunk.  Also runs a full gift card sync and activation
+   * backfill at the end.
+   *
+   * Returns 202 immediately so the HTTP request never times out.
+   */
+  router.post('/sync/historical', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const twoYearsAgo = new Date();
+      twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+
+      let startDate = twoYearsAgo;
+      if (req.body?.startDate) {
+        const parsed = new Date(req.body.startDate);
+        if (!isNaN(parsed.getTime())) {
+          startDate = parsed;
+        }
+      }
+
+      res.status(202).json({
+        success: true,
+        message: `Historical sync started from ${startDate.toISOString().slice(0, 10)}. This runs in the background — check server logs for progress.`,
+        startDate: startDate.toISOString(),
+      });
+
+      // Run in background — no await so the HTTP response is sent first
+      runHistoricalSync(startDate).catch(err => {
+        console.error('[HistoricalSync] Unhandled error:', err);
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   return router;
+}
+
+/**
+ * Background historical sync worker.
+ * Processes one month at a time to avoid API rate limits and memory pressure.
+ */
+async function runHistoricalSync(startDate: Date): Promise<void> {
+  const { backfillGiftCardActivationAmounts } = await import('../services/enhancedGiftCardFix');
+
+  const label = `[HistoricalSync ${new Date().toISOString()}]`;
+  console.log(`${label} Starting from ${startDate.toISOString().slice(0, 10)}`);
+
+  const now = new Date();
+  let chunkStart = new Date(startDate);
+  let chunkIndex = 0;
+
+  while (chunkStart < now) {
+    const chunkEnd = new Date(chunkStart);
+    chunkEnd.setMonth(chunkEnd.getMonth() + 1);
+    if (chunkEnd > now) chunkEnd.setTime(now.getTime());
+
+    const label2 = `${label} [chunk ${++chunkIndex} ${chunkStart.toISOString().slice(0, 10)}→${chunkEnd.toISOString().slice(0, 10)}]`;
+    console.log(`${label2} Syncing orders...`);
+
+    try {
+      const ordersResult = await syncService.syncOrders(chunkStart, chunkEnd);
+      console.log(`${label2} Orders: processed=${ordersResult.processed} created=${ordersResult.created}`);
+    } catch (err) {
+      console.error(`${label2} Orders sync error (continuing):`, err);
+    }
+
+    try {
+      const paymentsResult = await syncService.syncPayments(chunkStart, chunkEnd);
+      console.log(`${label2} Payments: processed=${paymentsResult.processed} created=${paymentsResult.created}`);
+    } catch (err) {
+      console.error(`${label2} Payments sync error (continuing):`, err);
+    }
+
+    chunkStart = new Date(chunkEnd);
+    // Small pause between chunks to be kind to the Square API rate limits
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+
+  // After all date chunks, sync all gift cards and run the activation backfill
+  console.log(`${label} Syncing all gift cards...`);
+  try {
+    const gcResult = await syncService.syncGiftCards();
+    console.log(`${label} Gift cards: processed=${gcResult.processed} created=${gcResult.created}`);
+  } catch (err) {
+    console.error(`${label} Gift card sync error:`, err);
+  }
+
+  console.log(`${label} Running activation backfill...`);
+  try {
+    const backfillResult = await backfillGiftCardActivationAmounts();
+    console.log(`${label} Backfill: filled=${backfillResult.updatedViaActivitiesApi} corrected=${backfillResult.correctedViaActivitiesApi} unresolved=${backfillResult.stillUnresolved}`);
+  } catch (err) {
+    console.error(`${label} Backfill error:`, err);
+  }
+
+  console.log(`${label} Historical sync complete across ${chunkIndex} monthly chunks.`);
 }
