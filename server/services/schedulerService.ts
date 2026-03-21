@@ -6,12 +6,13 @@
  * EVERY 5 MINUTES — keeps the dashboard current throughout the day:
  *   1. Payments  — last 15 minutes (3x the interval for safe overlap)
  *   2. Orders    — last 15 minutes
- *   3. Gift cards — full Square list (has built-in lock against overlapping runs)
+ *   3. Gift cards — INCREMENTAL: only fetches ACTIVATE events since last sync
+ *      (fast, seconds not minutes; new cards appear within one 5-min cycle)
  *
  * NIGHTLY 3 AM ET — slower housekeeping:
- *   1. Payments  — last 3 days (catches anything the 5-min runs may have missed)
- *   2. Orders    — last 3 days
- *   3. Gift cards — full sync
+ *   1. Gift cards — full Square list scan for reconciliation
+ *   2. Payments  — last 3 days (catches anything the 5-min runs may have missed)
+ *   3. Orders    — last 3 days
  *   4. Activation backfill — fills null activation amounts via Activities API
  */
 
@@ -44,9 +45,9 @@ export function startScheduler(): void {
 
 /**
  * Runs every 5 minutes.
- * Syncs payments and orders for the last 15 minutes, and triggers
- * a full gift card list refresh (the gift card sync has its own
- * overlap guard so concurrent runs are skipped automatically).
+ * Syncs payments and orders for the last 15 minutes.
+ * Gift cards use the fast incremental path: only ACTIVATE events since the
+ * last incremental sync are fetched, so new cards appear within one cycle.
  */
 export async function runFrequentSync(): Promise<void> {
   const label = `[Sync ${new Date().toISOString()}]`;
@@ -71,14 +72,12 @@ export async function runFrequentSync(): Promise<void> {
   }
 
   try {
-    const result = await syncService.syncGiftCards();
-    if (result.alreadyRunning) {
-      // Previous gift card sync still in progress — skip silently
-    } else if (result.created > 0 || result.updated > 0) {
-      console.log(`${label} Gift cards: +${result.created} new, ${result.updated} updated`);
+    const result = await syncService.syncIncrementalGiftCards();
+    if (result.created > 0 || result.updated > 0) {
+      console.log(`${label} Gift cards (incremental): +${result.created} new, ${result.updated} updated (since ${result.sinceDate})`);
     }
   } catch (err) {
-    console.error(`${label} Gift card sync failed:`, err);
+    console.error(`${label} Incremental gift card sync failed:`, err);
   }
 }
 

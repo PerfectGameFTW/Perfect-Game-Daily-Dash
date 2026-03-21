@@ -785,6 +785,151 @@ export class SyncService {
       throw new SyncError('Failed to sync gift cards', 'SYNC_ERROR', error instanceof Error ? error.message : error);
     }
   }
+
+  /**
+   * Incremental gift card sync — runs every 5 minutes.
+   *
+   * Instead of re-scanning all 8,000+ Square gift cards, this method:
+   *   1. Finds the timestamp of the last incremental sync (defaults to 7 days ago).
+   *   2. Fetches only ACTIVATE activities since that timestamp from Square.
+   *   3. For each new activation: if the card isn't in the DB yet, fetches the full
+   *      card from Square and inserts it; if it already exists, updates its
+   *      activation amount.
+   *
+   * This means new gift cards appear in the dashboard within one 5-minute cycle
+   * regardless of how large the total card count grows.
+   */
+  async syncIncrementalGiftCards(): Promise<{
+    processed: number;
+    created: number;
+    updated: number;
+    failed: number;
+    sinceDate: string;
+  }> {
+    let processed = 0;
+    let created = 0;
+    let updated = 0;
+    let failed = 0;
+
+    // Determine the lookback window
+    const SYNC_TYPE = 'giftCards_incremental';
+    let state = await this.getSyncState(SYNC_TYPE);
+
+    // Default lookback: 7 days on first run, otherwise use the last sync time
+    const DEFAULT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+    const since: Date = (state?.lastSyncedAt && state.status === 'completed')
+      ? new Date(state.lastSyncedAt)
+      : new Date(Date.now() - DEFAULT_LOOKBACK_MS);
+
+    console.log(`[IncrementalGiftCardSync] Looking back to ${since.toISOString()}`);
+
+    // Upsert sync state to in_progress
+    if (!state) {
+      state = await this.createSyncState({
+        syncType: SYNC_TYPE,
+        lastSyncedAt: new Date(),
+        isComplete: false,
+        processedCount: 0,
+        totalCount: 0,
+        status: 'in_progress',
+        errorMessage: null
+      });
+    } else {
+      await this.updateSyncState(state.id, {
+        isComplete: false,
+        status: 'in_progress',
+        lastSyncedAt: new Date(),
+        errorMessage: null
+      });
+    }
+
+    try {
+      // Fetch ACTIVATE events since last sync
+      const recentActivations = await squareClient.fetchRecentGiftCardActivations(since);
+
+      if (recentActivations.length === 0) {
+        console.log('[IncrementalGiftCardSync] No new activations found.');
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: new Date(),
+          processedCount: 0
+        });
+        return { processed: 0, created: 0, updated: 0, failed: 0, sinceDate: since.toISOString() };
+      }
+
+      console.log(`[IncrementalGiftCardSync] Processing ${recentActivations.length} new activations`);
+
+      // Load existing squareIds for fast lookup
+      const existingRows = await db.select({ squareId: giftCards.squareId }).from(giftCards);
+      const existingSquareIds = new Set(existingRows.map(r => r.squareId));
+
+      await this.updateSyncState(state.id, {
+        totalCount: recentActivations.length,
+        status: `Processing ${recentActivations.length} new activations`
+      });
+
+      for (const activation of recentActivations) {
+        try {
+          const { giftCardId, activationAmountDollars } = activation;
+
+          if (existingSquareIds.has(giftCardId)) {
+            // Card exists — update activation amount if it was null
+            await db.update(giftCards)
+              .set({
+                activationAmount: activationAmountDollars,
+                updatedAt: new Date()
+              })
+              .where(
+                and(
+                  eq(giftCards.squareId, giftCardId),
+                  isNull(giftCards.activationAmount)
+                )
+              );
+            updated++;
+          } else {
+            // Brand-new card — fetch it from Square and insert
+            const squareCard = await squareClient.fetchGiftCardById(giftCardId);
+            if (!squareCard) {
+              console.warn(`[IncrementalGiftCardSync] Could not fetch card ${giftCardId} from Square`);
+              failed++;
+              processed++;
+              continue;
+            }
+
+            const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
+            await giftCardService.createGiftCard(cardData);
+            existingSquareIds.add(giftCardId);
+            created++;
+          }
+
+          processed++;
+        } catch (err) {
+          failed++;
+          console.error(`[IncrementalGiftCardSync] Failed for card ${activation.giftCardId}:`, err);
+        }
+      }
+
+      console.log(`[IncrementalGiftCardSync] Done — processed=${processed} created=${created} updated=${updated} failed=${failed}`);
+
+      await this.updateSyncState(state.id, {
+        isComplete: true,
+        status: 'completed',
+        lastSyncedAt: new Date(),
+        processedCount: processed
+      });
+
+      return { processed, created, updated, failed, sinceDate: since.toISOString() };
+    } catch (error) {
+      await this.updateSyncState(state.id, {
+        isComplete: true,
+        status: 'error',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error'
+      });
+      console.error('[IncrementalGiftCardSync] Fatal error:', error);
+      return { processed, created, updated, failed, sinceDate: since.toISOString() };
+    }
+  }
 }
 
 // Create and export a singleton instance

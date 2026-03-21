@@ -847,6 +847,96 @@ export async function fetchGiftCardActivitiesMap(): Promise<Map<string, number>>
   return activationMap;
 }
 
+/**
+ * Fetch ACTIVATE gift card activities created after `since`.
+ * Used by the incremental sync to quickly find only new gift card activations
+ * without re-scanning the entire 8,000+ card list.
+ */
+export async function fetchRecentGiftCardActivations(since: Date): Promise<Array<{
+  giftCardId: string;
+  activationAmountDollars: number;
+  createdAt: Date;
+}>> {
+  const results: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date }> = [];
+
+  if (!process.env.SQUARE_LOCATION_ID) {
+    console.error('[IncrementalGiftCardSync] Square location ID is not configured');
+    return results;
+  }
+
+  let cursor: string | undefined;
+  let pageCount = 0;
+  const MAX_PAGES = 50; // 50 × 50 = 2,500 activities max per incremental run
+
+  console.log(`[IncrementalGiftCardSync] Fetching ACTIVATE activities since ${since.toISOString()} (newest-first, stopping at cutoff)`);
+
+  let reachedCutoff = false;
+  while (pageCount < MAX_PAGES && !reachedCutoff) {
+    pageCount++;
+    try {
+      const response = await giftCardActivitiesApi.listGiftCardActivities(
+        undefined,                        // giftCardId – all cards
+        'ACTIVATE',                       // type filter
+        process.env.SQUARE_LOCATION_ID,
+        undefined,                        // beginTime – no date filter (Square rejects it alone)
+        undefined,                        // endTime
+        50,                              // max per page
+        cursor,
+        undefined                         // sortOrder – Square returns newest first by default
+      );
+
+      const activities = (response.result as any)?.giftCardActivities ?? [];
+
+      for (const activity of activities) {
+        const giftCardId = activity.giftCardId;
+        if (!giftCardId) continue;
+
+        // Stop processing once we hit activities older than our cutoff
+        const activityTime = activity.createdAt ? new Date(activity.createdAt) : new Date(0);
+        if (activityTime <= since) {
+          reachedCutoff = true;
+          break;
+        }
+
+        const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
+        if (amountCents == null) continue;
+
+        results.push({
+          giftCardId,
+          activationAmountDollars: Number(amountCents) / 100,
+          createdAt: activityTime,
+        });
+      }
+
+      console.log(`[IncrementalGiftCardSync] Page ${pageCount}: ${activities.length} events scanned, ${results.length} new since cutoff${reachedCutoff ? ' (cutoff reached)' : ''}`);
+
+      cursor = (response.result as any)?.cursor ?? undefined;
+      if (!cursor || activities.length === 0) break;
+    } catch (error) {
+      console.error(`[IncrementalGiftCardSync] Error on page ${pageCount}:`, error);
+      break;
+    }
+  }
+
+  console.log(`[IncrementalGiftCardSync] Found ${results.length} ACTIVATE events since ${since.toISOString()}`);
+  return results;
+}
+
+/**
+ * Fetch a single gift card from Square by its Square ID.
+ * Used during incremental sync to retrieve the full card object for new activations.
+ */
+export async function fetchGiftCardById(squareId: string): Promise<any | null> {
+  try {
+    const response = await giftCardsApi.retrieveGiftCard(squareId);
+    if (!response.result.giftCard) return null;
+    return processSafeSquareData(response.result.giftCard);
+  } catch (error) {
+    console.error(`[IncrementalGiftCardSync] Error fetching card ${squareId}:`, error);
+    return null;
+  }
+}
+
 // Fetch gift cards from Square API with enhanced error handling
 export async function fetchGiftCards(): Promise<any[]> {
   try {
