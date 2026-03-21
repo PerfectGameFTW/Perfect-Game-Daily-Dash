@@ -11,6 +11,7 @@ import { db } from '../db';
 import { eq, and, between, desc, asc, sql, isNull, gt } from 'drizzle-orm';
 import { 
   syncState,
+  giftCards,
   type SyncState,
   type InsertSyncState
 } from '../../shared/schema';
@@ -652,40 +653,23 @@ export class SyncService {
     failed: number;
     alreadyRunning?: boolean;
   }> {
-    // Initialize counters
     let processed = 0;
     let created = 0;
     let updated = 0;
     let failed = 0;
-    
+
     try {
-      // Get or create sync state
+      // Guard against concurrent runs
       let state = await this.getSyncState('giftCards');
-      
-      // Check if a sync is already in progress and prevent duplicate runs
       if (state && state.status === 'in_progress') {
-        const lastSyncTime = state.lastSyncedAt ? new Date(state.lastSyncedAt) : new Date(0);
-        const currentTime = new Date();
-        const timeDifference = currentTime.getTime() - lastSyncTime.getTime();
-        const timeThreshold = 30 * 60 * 1000; // 30 minutes in milliseconds
-        
-        // If the last sync started less than 30 minutes ago and is still marked as in_progress,
-        // we consider it potentially stuck
-        if (timeDifference < timeThreshold) {
-          console.log(`Sync for gift cards already in progress. Started at ${lastSyncTime.toISOString()}`);
-          return { 
-            processed: state.processedCount || 0, 
-            created, 
-            updated, 
-            failed, 
-            alreadyRunning: true 
-          };
-        } else {
-          // If it's been running for more than 30 minutes, we'll assume it's stuck and restart it
-          console.log(`Previous gift cards sync appears to be stuck (running for ${Math.round(timeDifference/60000)} minutes). Restarting...`);
+        const elapsed = Date.now() - new Date(state.lastSyncedAt!).getTime();
+        if (elapsed < 30 * 60 * 1000) {
+          console.log(`[GiftCardSync] Already in progress since ${state.lastSyncedAt}`);
+          return { processed: state.processedCount || 0, created, updated, failed, alreadyRunning: true };
         }
+        console.log(`[GiftCardSync] Previous run appears stuck (${Math.round(elapsed / 60000)}m), restarting`);
       }
-      
+
       if (!state) {
         state = await this.createSyncState({
           syncType: 'giftCards',
@@ -697,152 +681,108 @@ export class SyncService {
           errorMessage: null
         });
       }
-      
-      // Update state to in progress
+
       await this.updateSyncState(state.id, {
         isComplete: false,
         status: 'in_progress',
-        lastSyncedAt: new Date(), // Update the timestamp to now
+        lastSyncedAt: new Date(),
         processedCount: 0,
         totalCount: 0,
         errorMessage: null
       });
-      
-      // Fetch gift cards and their activation amounts in parallel
+
+      // Fetch all cards + activation amounts from Square in parallel
       let squareGiftCards: any[] = [];
       let activationMap = new Map<string, number>();
       try {
-        const fetchPromise = squareClient.fetchGiftCards();
-        const activitiesPromise = squareClient.fetchGiftCardActivitiesMap();
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Gift card fetch timed out after 60 seconds')), 60000);
-        });
-
         [squareGiftCards, activationMap] = await Promise.all([
-          Promise.race([fetchPromise, timeoutPromise]) as Promise<any[]>,
-          activitiesPromise
+          squareClient.fetchGiftCards(),
+          squareClient.fetchGiftCardActivitiesMap()
         ]);
-
-        if (!squareGiftCards || !Array.isArray(squareGiftCards)) {
-          throw new Error('Failed to fetch gift cards: Invalid response format');
-        }
-
-        console.log(`Fetched ${squareGiftCards.length} gift cards; activation amounts for ${activationMap.size} cards from Activities API`);
+        if (!Array.isArray(squareGiftCards)) throw new Error('Invalid gift card response format');
+        console.log(`[GiftCardSync] Fetched ${squareGiftCards.length} cards from Square; ${activationMap.size} activation amounts`);
       } catch (error) {
-        console.error('Error fetching gift cards:', error);
         await this.updateSyncState(state.id, {
           isComplete: true,
           status: 'error',
-          errorMessage: error instanceof Error ? error.message : 'Unknown error during fetch'
+          errorMessage: error instanceof Error ? error.message : 'Fetch failed'
         });
         throw error;
       }
 
-      // Set a much stricter limit to prevent processing too many cards at once
-      const maxCardsToProcess = 50; // Significantly reduced to prevent hanging
-      const cardsToProcess = squareGiftCards.slice(0, maxCardsToProcess);
-      console.log(`Processing ${cardsToProcess.length} out of ${squareGiftCards.length} gift cards`);
-      
-      // Update state with total items
       await this.updateSyncState(state.id, {
-        totalCount: cardsToProcess.length,
-        status: `Found ${cardsToProcess.length} gift cards to sync${cardsToProcess.length < squareGiftCards.length ? ' (limited to prevent timeout)' : ''}`
+        totalCount: squareGiftCards.length,
+        status: `Processing all ${squareGiftCards.length} gift cards`
       });
-      
-      // Process each gift card with a watchdog timer
-      const syncStartTime = Date.now();
-      const maxSyncTime = 2 * 60 * 1000; // 2 minutes maximum sync time
-      
-      for (const squareGiftCard of cardsToProcess) {
-        try {
-          // Check if we've exceeded the maximum sync time
-          if (Date.now() - syncStartTime > maxSyncTime) {
-            console.log('Maximum sync time reached, stopping sync to prevent hanging');
-            break;
-          }
-          
-          // Convert Square gift card to our data model, passing activation amount
-          // from the Gift Card Activities API if available.
-          const squareId = squareGiftCard.id || squareGiftCard.squareId;
-          const activationAmountFromApi = squareId ? activationMap.get(squareId) : undefined;
-          const giftCardData = squareClient.convertSquareGiftCardToGiftCard(squareGiftCard, activationAmountFromApi);
-          
-          // Check if gift card exists
-          let existingGiftCard;
+
+      // Load all existing squareIds from our DB in one query so we can
+      // distinguish new cards from existing ones without a DB round-trip per card.
+      const existingRows = await db.select({ squareId: giftCards.squareId }).from(giftCards);
+      const existingSquareIds = new Set(existingRows.map(r => r.squareId));
+      console.log(`[GiftCardSync] DB has ${existingSquareIds.size} existing cards`);
+
+      // Process in batches of 100 to avoid large single transactions
+      const BATCH = 100;
+      for (let i = 0; i < squareGiftCards.length; i += BATCH) {
+        const batch = squareGiftCards.slice(i, i + BATCH);
+
+        for (const squareCard of batch) {
           try {
-            // Ensure gan is a string and not null/undefined
-            const gan = giftCardData.gan || '';
-            if (gan) {
-              existingGiftCard = await giftCardService.getGiftCardByGAN(gan);
+            const squareId = squareCard.id || squareCard.squareId;
+            const activationAmount = squareId ? activationMap.get(squareId) : undefined;
+            const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmount);
+
+            if (existingSquareIds.has(squareId)) {
+              // Update balance, active status, and activation amount if we now have it
+              await db.update(giftCards)
+                .set({
+                  currentBalance: cardData.currentBalance,
+                  isActive: cardData.isActive,
+                  ...(cardData.activationAmount != null ? { activationAmount: cardData.activationAmount } : {}),
+                  updatedAt: new Date()
+                })
+                .where(eq(giftCards.squareId, squareId));
+              updated++;
+            } else {
+              // Brand-new card — insert it
+              await giftCardService.createGiftCard(cardData);
+              existingSquareIds.add(squareId); // prevent duplicate inserts in same run
+              created++;
             }
-          } catch (error) {
-            // Gift card doesn't exist, which is fine
+            processed++;
+          } catch (err) {
+            failed++;
+            console.error(`[GiftCardSync] Failed card ${squareCard.id}:`, err);
           }
-          
-          if (existingGiftCard) {
-            // Gift card exists, skip for now (could implement update logic here)
-            updated++;
-          } else {
-            // Gift card doesn't exist, create it
-            await giftCardService.createGiftCard(giftCardData);
-            created++;
-          }
-          
-          processed++;
-          
-          // Update sync state progress
-          if (processed % 10 === 0 || processed === cardsToProcess.length) {
-            await this.updateSyncState(state.id, {
-              processedCount: processed,
-              status: `Processed ${processed} of ${cardsToProcess.length} gift cards`
-            });
-          }
-        } catch (error) {
-          failed++;
-          console.error('Failed to process gift card:', error);
         }
+
+        // Update progress every batch
+        await this.updateSyncState(state.id, {
+          processedCount: processed,
+          status: `Processed ${processed} of ${squareGiftCards.length} gift cards`
+        });
       }
-      
-      // If successful, fill in any null activation amounts using the Activities API.
-      // The activation amounts were already fetched above and applied per card, so
-      // this is a safety net for any cards that slipped through (e.g. network retry
-      // edge cases).  We intentionally skip the old balance-derived fixer here
-      // because current_balance is NOT a reliable proxy for original activation amount.
-      try {
-        const { backfillGiftCardActivationAmounts } = await import('./enhancedGiftCardFix');
-        const backfillResult = await backfillGiftCardActivationAmounts();
-        console.log('Post-sync activation backfill:', backfillResult);
-      } catch (backfillErr) {
-        // Non-fatal: log and continue so the sync still completes successfully
-        console.error('Post-sync activation backfill failed (non-fatal):', backfillErr);
-      }
-      
-      // Update state to completed
+
+      console.log(`[GiftCardSync] Done — processed=${processed} created=${created} updated=${updated} failed=${failed}`);
+
       await this.updateSyncState(state.id, {
         isComplete: true,
         status: 'completed',
         lastSyncedAt: new Date(),
         processedCount: processed
       });
-      
+
       return { processed, created, updated, failed };
     } catch (error) {
-      // Update state to error
-      const state = await this.getSyncState('giftCards');
-      
-      if (state) {
-        await this.updateSyncState(state.id, {
+      const s = await this.getSyncState('giftCards');
+      if (s) {
+        await this.updateSyncState(s.id, {
           isComplete: true,
           status: 'error',
           errorMessage: error instanceof Error ? error.message : 'Unknown error'
         });
       }
-      
-      throw new SyncError(
-        'Failed to sync gift cards',
-        'SYNC_ERROR',
-        error instanceof Error ? error.message : error
-      );
+      throw new SyncError('Failed to sync gift cards', 'SYNC_ERROR', error instanceof Error ? error.message : error);
     }
   }
 }
