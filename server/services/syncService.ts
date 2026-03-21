@@ -790,14 +790,13 @@ export class SyncService {
    * Incremental gift card sync — runs every 5 minutes.
    *
    * Instead of re-scanning all 8,000+ Square gift cards, this method:
-   *   1. Finds the timestamp of the last incremental sync (defaults to 7 days ago).
-   *   2. Fetches only ACTIVATE activities since that timestamp from Square.
-   *   3. For each new activation: if the card isn't in the DB yet, fetches the full
-   *      card from Square and inserts it; if it already exists, updates its
-   *      activation amount.
-   *
-   * This means new gift cards appear in the dashboard within one 5-minute cycle
-   * regardless of how large the total card count grows.
+   *   1. Reads the last successful sync watermark (defaults to 7 days ago on first run).
+   *   2. Uses a 2-minute overlap on the lookback window to avoid dropping boundary events.
+   *   3. Fetches ACTIVATE activities from Square, stopping once events are older than the window.
+   *   4. Deduplicates by giftCardId (keeps highest activation amount per card).
+   *   5. For each unique new activation: fetches the card and upserts it.
+   *   6. Only advances the watermark to the run-start time when ALL cards succeed.
+   *      If any card fails, the watermark is unchanged so the next cycle retries.
    */
   async syncIncrementalGiftCards(): Promise<{
     processed: number;
@@ -811,23 +810,28 @@ export class SyncService {
     let updated = 0;
     let failed = 0;
 
-    // Determine the lookback window
+    // Capture run start before any I/O — this becomes the new watermark on success
+    const runStartedAt = new Date();
+
     const SYNC_TYPE = 'giftCards_incremental';
+    const OVERLAP_MS = 2 * 60 * 1000;          // 2-min overlap to catch boundary events
+    const DEFAULT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+
     let state = await this.getSyncState(SYNC_TYPE);
 
-    // Default lookback: 7 days on first run, otherwise use the last sync time
-    const DEFAULT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
-    const since: Date = (state?.lastSyncedAt && state.status === 'completed')
+    // Determine the lookback cutoff (with overlap buffer)
+    const lastWatermark: Date = (state?.lastSyncedAt && state.status === 'completed')
       ? new Date(state.lastSyncedAt)
-      : new Date(Date.now() - DEFAULT_LOOKBACK_MS);
+      : new Date(runStartedAt.getTime() - DEFAULT_LOOKBACK_MS);
+    const since = new Date(lastWatermark.getTime() - OVERLAP_MS);
 
-    console.log(`[IncrementalGiftCardSync] Looking back to ${since.toISOString()}`);
+    console.log(`[IncrementalGiftCardSync] Window: ${since.toISOString()} → ${runStartedAt.toISOString()} (overlap=${OVERLAP_MS / 1000}s)`);
 
-    // Upsert sync state to in_progress
+    // Upsert sync state to in_progress (do NOT advance lastSyncedAt yet)
     if (!state) {
       state = await this.createSyncState({
         syncType: SYNC_TYPE,
-        lastSyncedAt: new Date(),
+        lastSyncedAt: lastWatermark, // keep old watermark until this run succeeds
         isComplete: false,
         processedCount: 0,
         totalCount: 0,
@@ -838,13 +842,13 @@ export class SyncService {
       await this.updateSyncState(state.id, {
         isComplete: false,
         status: 'in_progress',
-        lastSyncedAt: new Date(),
         errorMessage: null
+        // intentionally NOT updating lastSyncedAt here
       });
     }
 
     try {
-      // Fetch ACTIVATE events since last sync
+      // Fetch ACTIVATE events in the window
       const recentActivations = await squareClient.fetchRecentGiftCardActivations(since);
 
       if (recentActivations.length === 0) {
@@ -852,29 +856,36 @@ export class SyncService {
         await this.updateSyncState(state.id, {
           isComplete: true,
           status: 'completed',
-          lastSyncedAt: new Date(),
+          lastSyncedAt: runStartedAt, // advance watermark — no work to do
           processedCount: 0
         });
         return { processed: 0, created: 0, updated: 0, failed: 0, sinceDate: since.toISOString() };
       }
 
-      console.log(`[IncrementalGiftCardSync] Processing ${recentActivations.length} new activations`);
+      // Deduplicate by giftCardId — keep highest activation amount in case of duplicates
+      const uniqueActivations = new Map<string, number>();
+      for (const { giftCardId, activationAmountDollars } of recentActivations) {
+        const existing = uniqueActivations.get(giftCardId) ?? 0;
+        if (activationAmountDollars > existing) {
+          uniqueActivations.set(giftCardId, activationAmountDollars);
+        }
+      }
 
-      // Load existing squareIds for fast lookup
+      console.log(`[IncrementalGiftCardSync] Processing ${uniqueActivations.size} unique activations (${recentActivations.length} raw events)`);
+
+      // Load existing squareIds for fast lookup (avoids per-card DB query)
       const existingRows = await db.select({ squareId: giftCards.squareId }).from(giftCards);
       const existingSquareIds = new Set(existingRows.map(r => r.squareId));
 
       await this.updateSyncState(state.id, {
-        totalCount: recentActivations.length,
-        status: `Processing ${recentActivations.length} new activations`
+        totalCount: uniqueActivations.size,
+        status: `Processing ${uniqueActivations.size} unique activations`
       });
 
-      for (const activation of recentActivations) {
+      for (const [giftCardId, activationAmountDollars] of uniqueActivations) {
         try {
-          const { giftCardId, activationAmountDollars } = activation;
-
           if (existingSquareIds.has(giftCardId)) {
-            // Card exists — update activation amount if it was null
+            // Card already exists — fill in activation amount if still null
             await db.update(giftCards)
               .set({
                 activationAmount: activationAmountDollars,
@@ -888,36 +899,47 @@ export class SyncService {
               );
             updated++;
           } else {
-            // Brand-new card — fetch it from Square and insert
+            // Brand-new card — fetch from Square and insert
             const squareCard = await squareClient.fetchGiftCardById(giftCardId);
             if (!squareCard) {
-              console.warn(`[IncrementalGiftCardSync] Could not fetch card ${giftCardId} from Square`);
+              console.warn(`[IncrementalGiftCardSync] Could not fetch card ${giftCardId} from Square — will retry next cycle`);
               failed++;
-              processed++;
               continue;
             }
 
             const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
             await giftCardService.createGiftCard(cardData);
-            existingSquareIds.add(giftCardId);
+            existingSquareIds.add(giftCardId); // prevent double-insert in same run
             created++;
           }
 
           processed++;
         } catch (err) {
           failed++;
-          console.error(`[IncrementalGiftCardSync] Failed for card ${activation.giftCardId}:`, err);
+          console.error(`[IncrementalGiftCardSync] Failed for card ${giftCardId}:`, err);
         }
       }
 
       console.log(`[IncrementalGiftCardSync] Done — processed=${processed} created=${created} updated=${updated} failed=${failed}`);
 
-      await this.updateSyncState(state.id, {
-        isComplete: true,
-        status: 'completed',
-        lastSyncedAt: new Date(),
-        processedCount: processed
-      });
+      if (failed === 0) {
+        // Advance watermark to run-start time — next cycle picks up from here
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: runStartedAt,
+          processedCount: processed
+        });
+      } else {
+        // Keep existing watermark so next cycle retries the failed cards
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: `completed_with_errors (${failed} cards failed — will retry)`,
+          processedCount: processed,
+          errorMessage: `${failed} card(s) failed; watermark not advanced so next cycle retries`
+        });
+        console.warn(`[IncrementalGiftCardSync] ${failed} card(s) failed — watermark held at ${lastWatermark.toISOString()} for retry`);
+      }
 
       return { processed, created, updated, failed, sinceDate: since.toISOString() };
     } catch (error) {
@@ -925,6 +947,7 @@ export class SyncService {
         isComplete: true,
         status: 'error',
         errorMessage: error instanceof Error ? error.message : 'Unknown error'
+        // watermark NOT advanced — entire run retried next cycle
       });
       console.error('[IncrementalGiftCardSync] Fatal error:', error);
       return { processed, created, updated, failed, sinceDate: since.toISOString() };
