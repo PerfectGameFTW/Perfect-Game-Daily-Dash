@@ -222,12 +222,7 @@ export class DashboardService {
         ? (typeof rawData === 'string' ? JSON.parse(rawData) : rawData)
         : {};
       
-      // Process based on type
-      if (squareData.category === 'partywirks') {
-        partywirks += payment.amount;
-      } else if (squareData.category === 'tripleseat') {
-        tripleseat += payment.amount;
-      }
+      // Partywirks/Tripleseat are identified by order source — handled below via orders loop
       
       // Tips: Square stores tipMoney as a Money object { amount (cents), currency }
       if (squareData.tipMoney?.amount) {
@@ -246,7 +241,7 @@ export class DashboardService {
     // Get order data to calculate discounts
     const orders = await orderService.getOrdersByDateRange(dateRange, startDate, endDate);
     
-    // Taxes, service charges, and discounts all come from orders
+    // Taxes, service charges, discounts, and 3rd-party sources all come from orders
     for (const order of orders) {
       if (order.totalTax) {
         taxes += order.totalTax;
@@ -254,8 +249,20 @@ export class DashboardService {
       if (order.totalDiscount) {
         discountsAndComps += order.totalDiscount;
       }
+
+      // Partywirks and Tripleseat identified by order source name
+      const src: string = order.source || '';
+      if (src === 'Perfect Game Partywirks') {
+        partywirks += order.totalMoney || 0;
+      } else if (src === 'Tripleseat') {
+        tripleseat += order.totalMoney || 0;
+      }
+
       // Service charges are stored in the order's raw Square JSON
-      const orderData = order.squareData as any;
+      const rawOrderData = (order as any).square_data ?? order.squareData;
+      const orderData: any = rawOrderData
+        ? (typeof rawOrderData === 'string' ? JSON.parse(rawOrderData) : rawOrderData)
+        : {};
       if (orderData?.serviceCharges && Array.isArray(orderData.serviceCharges)) {
         for (const charge of orderData.serviceCharges) {
           if (charge.appliedMoney?.amount) {

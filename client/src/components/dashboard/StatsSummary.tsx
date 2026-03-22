@@ -228,6 +228,16 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <span className="text-muted-foreground">Gift Card Sales</span>
               <span className="text-card-foreground font-medium">{formatCurrency(data?.giftCardSales || 0)}</span>
             </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Partywirks</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.partywirks || 0)}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Tripleseat</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.tripleseat || 0)}</span>
+            </div>
             
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Gross Revenue</span>
