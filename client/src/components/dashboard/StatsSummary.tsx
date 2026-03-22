@@ -15,7 +15,6 @@ import {
   Receipt,
   Tag,
   CreditCard,
-  BadgeDollarSign,
   Percent,
   Award,
   Wallet,
@@ -199,23 +198,42 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           </div>
         </div>
         
-        {/* Tips */}
+        {/* Web Res Deposits */}
         <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
-              <h3 className="text-sm font-medium text-muted-foreground">Tips</h3>
-              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(detailedTransactions?.tips || 0)}</p>
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-medium text-muted-foreground">Web Res Deposits</h3>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
+                      <p className="font-semibold mb-1">Web Res Deposits = Bowling Web Res + Laser Tag Web Res</p>
+                      <p>Total deposits collected through online reservations (bowling and laser tag). These are activated as gift cards in Square when the reservation is made.</p>
+                      {(detailedTransactions?.bowlingWebResDeposits || 0) > 0 && <p>Bowling: {formatCurrency(detailedTransactions?.bowlingWebResDeposits || 0)}</p>}
+                      {(detailedTransactions?.laserTagWebResDeposits || 0) > 0 && <p>Laser Tag: {formatCurrency(detailedTransactions?.laserTagWebResDeposits || 0)}</p>}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency((detailedTransactions?.bowlingWebResDeposits || 0) + (detailedTransactions?.laserTagWebResDeposits || 0))}</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
-              <BadgeDollarSign className="h-6 w-6 text-primary" />
+              <Receipt className="h-6 w-6 text-primary" />
             </div>
           </div>
           
           <div className="mt-4 flex items-center">
             <span className="text-xs text-muted-foreground">
-              {(detailedTransactions?.tips || 0) > 0 
-                ? `${((detailedTransactions?.tips || 0) / (data?.totalRevenue || 1) * 100).toFixed(1)}% of sales` 
-                : "No tips in this period"}
+              {(detailedTransactions?.bowlingWebResDeposits || 0) > 0 && (detailedTransactions?.laserTagWebResDeposits || 0) > 0
+                ? `Bowling: ${formatCurrency(detailedTransactions?.bowlingWebResDeposits || 0)} · Laser Tag: ${formatCurrency(detailedTransactions?.laserTagWebResDeposits || 0)}`
+                : (detailedTransactions?.bowlingWebResDeposits || 0) > 0
+                  ? "All from bowling reservations"
+                  : (detailedTransactions?.laserTagWebResDeposits || 0) > 0
+                    ? "All from laser tag reservations"
+                    : "No web res deposits in this period"}
             </span>
           </div>
         </div>
