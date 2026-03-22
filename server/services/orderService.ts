@@ -195,13 +195,15 @@ export class OrderService {
     endDate?: Date,
     limit?: number
   ): Promise<Order[]> {
-    // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Build query with proper filters
+    const effectiveDate = sql`COALESCE(${orders.closedAt}, ${orders.createdAt})`;
     const baseQuery = db.select().from(orders)
-      .where(between(orders.createdAt, start, end))
-      .orderBy(desc(orders.createdAt));
+      .where(and(
+        sql`${effectiveDate} BETWEEN ${start} AND ${end}`,
+        eq(orders.status, 'COMPLETED')
+      ))
+      .orderBy(desc(sql`COALESCE(${orders.closedAt}, ${orders.createdAt})`));
     
     return await (limit && limit > 0 ? baseQuery.limit(limit) : baseQuery);
   }
@@ -222,30 +224,33 @@ export class OrderService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Query the database for order summary data
+    const effectiveDate = sql`COALESCE(${orders.closedAt}, ${orders.createdAt})`;
+    const dateAndStatusFilter = and(
+      sql`${effectiveDate} BETWEEN ${start} AND ${end}`,
+      eq(orders.status, 'COMPLETED')
+    );
+
     const summaryResult = await db.select({
       totalOrders: count(orders.id),
       totalRevenue: sql<number>`COALESCE(SUM(${orders.totalMoney}), 0)`,
       taxTotal: sql<number>`COALESCE(SUM(${orders.totalTax}), 0)`,
       discountTotal: sql<number>`COALESCE(SUM(${orders.totalDiscount}), 0)`
     }).from(orders)
-      .where(between(orders.createdAt, start, end));
+      .where(dateAndStatusFilter);
     
-    // Query the database for item data
     const itemsResult = await db.select({
       itemsSold: count(orderLineItems.id),
     }).from(orderLineItems)
       .innerJoin(orders, eq(orderLineItems.orderId, orders.id))
-      .where(between(orders.createdAt, start, end));
+      .where(dateAndStatusFilter);
     
-    // Query the database for top selling items
     const topSellingItemsResult = await db.select({
       name: orderLineItems.name,
       quantity: sql<number>`COALESCE(SUM(${orderLineItems.quantity}), 0)`,
       revenue: sql<number>`COALESCE(SUM(${orderLineItems.totalMoney}), 0)`
     }).from(orderLineItems)
       .innerJoin(orders, eq(orderLineItems.orderId, orders.id))
-      .where(between(orders.createdAt, start, end))
+      .where(dateAndStatusFilter)
       .groupBy(orderLineItems.name)
       .orderBy(desc(sql`revenue`))
       .limit(5);
@@ -284,14 +289,14 @@ export class OrderService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Use a raw SQL query to ensure consistent column naming and ordering
     const result = await db.execute<{ category: string, sum_amount: number }>(sql`
       SELECT 
         ${orderLineItems.category} as category,
         COALESCE(SUM(${orderLineItems.totalMoney}), 0) as sum_amount
       FROM ${orderLineItems}
       INNER JOIN ${orders} ON ${orderLineItems.orderId} = ${orders.id}
-      WHERE ${orders.createdAt} BETWEEN ${start} AND ${end}
+      WHERE COALESCE(${orders.closedAt}, ${orders.createdAt}) BETWEEN ${start} AND ${end}
+        AND ${orders.status} = 'COMPLETED'
       GROUP BY ${orderLineItems.category}
       ORDER BY sum_amount DESC
     `);
@@ -345,10 +350,11 @@ export class OrderService {
     // Using a raw SQL query with proper type handling
     const result = await db.execute<{ hour: number, amount: number }>(sql`
       SELECT 
-        EXTRACT(HOUR FROM ${orders.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') AS hour,
+        EXTRACT(HOUR FROM COALESCE(${orders.closedAt}, ${orders.createdAt}) AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') AS hour,
         COALESCE(SUM(${orders.totalMoney}), 0) AS amount
       FROM ${orders}
-      WHERE ${orders.createdAt} BETWEEN ${start} AND ${end}
+      WHERE COALESCE(${orders.closedAt}, ${orders.createdAt}) BETWEEN ${start} AND ${end}
+        AND ${orders.status} = 'COMPLETED'
       GROUP BY hour
       ORDER BY hour
     `);
@@ -384,11 +390,14 @@ export class OrderService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Query the database for the total orders count
+    const effectiveDate = sql`COALESCE(${orders.closedAt}, ${orders.createdAt})`;
     const result = await db.select({
       totalOrders: count(orders.id),
     }).from(orders)
-      .where(between(orders.createdAt, start, end));
+      .where(and(
+        sql`${effectiveDate} BETWEEN ${start} AND ${end}`,
+        eq(orders.status, 'COMPLETED')
+      ));
     
     return result[0]?.totalOrders || 0;
   }
