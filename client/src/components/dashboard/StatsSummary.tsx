@@ -96,12 +96,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     <div className="mt-4 space-y-6">
       {/* Revenue Highlights - Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Total Revenue Card */}
+        {/* True Revenue Card */}
         <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
               <div className="flex items-center gap-1.5">
-                <h3 className="text-sm font-medium text-muted-foreground">Total Revenue</h3>
+                <h3 className="text-sm font-medium text-muted-foreground">True Revenue</h3>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
