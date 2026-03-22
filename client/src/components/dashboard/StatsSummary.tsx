@@ -51,6 +51,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     retryDelay: 1000,
     refetchInterval: false,
   });
+
+  const [feesExpanded, setFeesExpanded] = useState(false);
   
   if (isLoading || isDetailedLoading) {
     return (
@@ -85,7 +87,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const feeReimbursements = toNum(processingFees?.reimbursements);
   const thirdPartyFees = toNum(processingFees?.thirdPartyFees);
   const netProcessingFees = toNum(processingFees?.netFees);
-  const [feesExpanded, setFeesExpanded] = useState(false);
 
   const refundsAndReturns = refunds + returns;
   const trueRevenue = totalRevenue - depositClearings;
