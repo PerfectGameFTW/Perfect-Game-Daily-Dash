@@ -285,11 +285,10 @@ export async function createBackup(
         console.log(`Backing up table: ${table}`);
         
         // Get table schema and data as SQL
-        const result = await pool.query(`
-          SELECT 
-            pg_dump_table_def('${table}') as schema,
-            pg_dump_table_data('${table}') as data
-        `);
+        const result = await pool.query(
+          `SELECT pg_dump_table_def($1) as schema, pg_dump_table_data($1) as data`,
+          [table]
+        );
         
         const schema = result.rows[0]?.schema;
         const data = result.rows[0]?.data;
