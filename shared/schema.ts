@@ -283,7 +283,8 @@ export interface OrderSummary {
 export interface DailySummary {
   totalRevenue: number;
   grossPayments: number;
-  totalRefunds: number;
+  refunds: number;
+  returns: number;
   giftCardRedemptions: number;
   revenueChange: number;
   totalOrders: number;

@@ -63,10 +63,14 @@ Root cause: Dashboard showed $0.00 refunds because it checked for negative payme
 4. Updated `dashboardService.ts` to query refunds table instead of checking negative payment amounts
 5. Backfilled 843 historical refunds from Jan 1, 2025
 
-**Refunds vs Returns**: Square distinguishes refunds (no reason) from returns (with reason like "Accidental Charge"). The dashboard splits these into two line items matching Square's reporting:
-- **Refunds**: full refund amount (no items returned, no tax breakdown)
-- **Returns**: pre-tax item amount (total refund minus return tax, looked up from order's `returnAmounts.taxMoney`)
-- **Taxes**: reduced by the tax portion of returns (from order-level `returnAmounts.taxMoney`)
+**Refunds vs Returns (CRITICAL — these are two completely separate things in Square)**:
+Square treats refunds and returns as distinct objects. They are queried separately and must always be tracked separately in the database and backend, even when the UI combines them for display purposes.
+- **Refunds**: Refund records with NO reason field. Represents a straight money-back refund. The full refund amount is used.
+- **Returns**: Refund records WITH a reason field (e.g., "Accidental Charge"). Represents returned items. The amount used is pre-tax (total refund minus return tax, looked up from order's `returnAmounts.taxMoney`).
+- **Taxes**: Reduced by the tax portion of returns (from order-level `returnAmounts.taxMoney`).
+- The `getDetailedTransactionBreakdown()` in `dashboardService.ts` queries refunds and returns with separate SQL queries (filtering by `reason IS NULL` vs `reason IS NOT NULL`).
+- The `getRevenueBreakdown()` in `paymentService.ts` queries ALL refunds (both types combined) for the True Revenue calculation.
+- The Summary Stats UI may combine them for display (e.g., "Refunds + Returns" line), but the underlying data must always keep them separate for other views that break them out individually.
 
 ## API Endpoints
 - `GET /api/summary` — daily summary (revenue, gift card sales, order count)

@@ -36,7 +36,8 @@ export const fetchDailySummary = async (
     const parseSummary = (d: Record<string, unknown>): DailySummary => ({
       totalRevenue: toFloat(d.totalRevenue),
       grossPayments: toFloat(d.grossPayments),
-      totalRefunds: toFloat(d.totalRefunds),
+      refunds: toFloat(d.refunds),
+      returns: toFloat(d.returns),
       giftCardRedemptions: toFloat(d.giftCardRedemptions),
       revenueChange: toFloat(d.revenueChange),
       totalOrders: toInt(d.totalOrders),

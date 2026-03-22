@@ -105,7 +105,8 @@ export class DashboardService {
     return {
       totalRevenue,
       grossPayments: revenueBreakdown.grossPayments,
-      totalRefunds: revenueBreakdown.totalRefunds,
+      refunds: revenueBreakdown.refunds,
+      returns: revenueBreakdown.returns,
       giftCardRedemptions: revenueBreakdown.giftCardRedemptions,
       revenueChange,
       totalOrders,

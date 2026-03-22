@@ -236,7 +236,8 @@ export class PaymentService {
     endDate?: Date
   ): Promise<{
     grossPayments: number;
-    totalRefunds: number;
+    refunds: number;
+    returns: number;
     giftCardRedemptions: number;
     trueRevenue: number;
   }> {
@@ -250,13 +251,28 @@ export class PaymentService {
         inArray(transactions.status, ['completed', 'pending'])
       ));
 
-    const refundResult = await db.select({
-      totalRefunds: sql<number>`COALESCE(SUM(${refunds.amount}), 0)`,
-    }).from(refunds)
-      .where(and(
-        between(refunds.createdAt, start, end),
-        inArray(refunds.status, ['COMPLETED', 'PENDING'])
-      ));
+    const refundResult = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM(amount), 0) as total
+      FROM ${refunds}
+      WHERE ${refunds.createdAt} BETWEEN ${start} AND ${end}
+        AND ${refunds.status} IN ('COMPLETED', 'PENDING')
+        AND (${refunds.reason} IS NULL OR ${refunds.reason} = '')
+    `);
+
+    const returnResult = await db.execute<{ total: number; return_tax: number }>(sql`
+      SELECT 
+        COALESCE(SUM(r.amount), 0) as total,
+        COALESCE(SUM(DISTINCT CASE 
+          WHEN o.square_data->'returnAmounts'->'taxMoney'->>'amount' IS NOT NULL
+          THEN (o.square_data->'returnAmounts'->'taxMoney'->>'amount')::numeric / 100
+          ELSE 0 
+        END), 0) as return_tax
+      FROM ${refunds} r
+      LEFT JOIN ${ordersTable} o ON o.square_id = r.square_data->>'orderId'
+      WHERE r.created_at BETWEEN ${start} AND ${end}
+        AND r.status IN ('COMPLETED', 'PENDING')
+        AND r.reason IS NOT NULL AND r.reason != ''
+    `);
 
     const redemptionResult = await db.execute<{ total: number }>(sql`
       SELECT COALESCE(SUM((tender->'amountMoney'->>'amount')::numeric / 100), 0) as total
@@ -268,14 +284,16 @@ export class PaymentService {
     `);
 
     const grossPayments = result[0]?.totalRevenue || 0;
-    const totalRefunds = refundResult[0]?.totalRefunds || 0;
+    const refundsAmount = Number(refundResult.rows[0]?.total || 0);
+    const returnsAmount = Number(returnResult.rows[0]?.total || 0) - Number(returnResult.rows[0]?.return_tax || 0);
     const gcRedemptions = Number(redemptionResult.rows[0]?.total || 0);
     
     return {
       grossPayments,
-      totalRefunds,
+      refunds: refundsAmount,
+      returns: returnsAmount,
       giftCardRedemptions: gcRedemptions,
-      trueRevenue: grossPayments - totalRefunds - gcRedemptions,
+      trueRevenue: grossPayments - refundsAmount - returnsAmount - gcRedemptions,
     };
   }
   
