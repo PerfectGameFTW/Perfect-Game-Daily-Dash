@@ -55,13 +55,18 @@ Repair/backfill: `server/services/enhancedGiftCardFix.ts → backfillGiftCardAct
 3. **Bug 3 (timezone)**: `convertSquareGiftCardToGiftCard()` called `toZonedTime()` which stored Eastern local time with UTC label (off by 4-5 hours). Fixed to store raw UTC directly from Square's `createdAt`. Historical backfill re-writes existing records with correct UTC timestamps.
 4. **Bug 4 (schema drift)**: `activation_payment_id` column existed in DB but not in Drizzle schema. Added `activationPaymentId: integer("activation_payment_id")` to `shared/schema.ts`.
 
-## Refund Tracking (Task #10)
+## Refund & Return Tracking (Task #10)
 Root cause: Dashboard showed $0.00 refunds because it checked for negative payment amounts, but Square stores refunds as separate API objects (not negative payments). Fixed by:
 1. Added `refunds` DB table (`shared/schema.ts`) with fields: squareRefundId, squarePaymentId, amount, status, reason (nullable), createdAt, squareData
 2. Added `fetchRefunds()` in `server/squareClient.ts` using Square's `RefundsApi.listPaymentRefunds()`
 3. Added `syncRefunds()` to `syncService.ts`, wired into both 5-min and nightly sync schedules
 4. Updated `dashboardService.ts` to query refunds table instead of checking negative payment amounts
 5. Backfilled 843 historical refunds from Jan 1, 2025
+
+**Refunds vs Returns**: Square distinguishes refunds (no reason) from returns (with reason like "Accidental Charge"). The dashboard splits these into two line items matching Square's reporting:
+- **Refunds**: full refund amount (no items returned, no tax breakdown)
+- **Returns**: pre-tax item amount (total refund minus return tax, looked up from order's `returnAmounts.taxMoney`)
+- **Taxes**: reduced by the tax portion of returns (from order-level `returnAmounts.taxMoney`)
 
 ## API Endpoints
 - `GET /api/summary` — daily summary (revenue, gift card sales, order count)
