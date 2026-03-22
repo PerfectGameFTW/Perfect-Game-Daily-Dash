@@ -219,7 +219,6 @@ export class DashboardService {
     let taxes = 0;
     let refundsTotal = 0;
     let returnsTotal = 0;
-    let returnTaxTotal = 0;
     let discountsAndComps = 0;
     let depositClearings = 0;
     
@@ -253,34 +252,14 @@ export class DashboardService {
     `);
     refundsTotal = Number(refundRows.rows[0]?.total || 0);
 
-    const returnRefundRows = await db.execute<{ refund_amount: number; order_id: string }>(sql`
-      SELECT r.amount as refund_amount,
-             r.square_data->>'orderId' as order_id
-      FROM ${refunds} r
-      WHERE r.created_at BETWEEN ${start} AND ${end}
-        AND r.status IN ('COMPLETED', 'PENDING')
-        AND r.reason IS NOT NULL AND r.reason != ''
+    const returnRefundRows = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM(amount), 0) as total
+      FROM ${refunds}
+      WHERE ${refunds.createdAt} BETWEEN ${start} AND ${end}
+        AND ${refunds.status} IN ('COMPLETED', 'PENDING')
+        AND ${refunds.reason} IS NOT NULL AND ${refunds.reason} != ''
     `);
-
-    const seenReturnOrderIds = new Set<string>();
-    let returnRefundTotal = 0;
-    for (const row of returnRefundRows.rows) {
-      returnRefundTotal += Number(row.refund_amount || 0);
-      const orderId = row.order_id;
-      if (orderId && !seenReturnOrderIds.has(orderId)) {
-        seenReturnOrderIds.add(orderId);
-        const orderTaxRows = await db.execute<{ return_tax: number }>(sql`
-          SELECT COALESCE(
-            (square_data->'returnAmounts'->'taxMoney'->>'amount')::numeric / 100,
-            0
-          ) as return_tax
-          FROM orders
-          WHERE square_id = ${orderId}
-        `);
-        returnTaxTotal += Number(orderTaxRows.rows[0]?.return_tax || 0);
-      }
-    }
-    returnsTotal = returnRefundTotal - returnTaxTotal;
+    returnsTotal = Number(returnRefundRows.rows[0]?.total || 0);
     
     // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
     const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
@@ -330,7 +309,7 @@ export class DashboardService {
       tips,
       serviceCharges,
       autoGratuity,
-      taxes: Math.max(taxes - returnTaxTotal, 0),
+      taxes,
       refunds: refundsTotal,
       returns: returnsTotal,
       discountsAndComps,
