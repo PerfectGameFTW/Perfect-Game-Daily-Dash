@@ -50,9 +50,12 @@ export default function SimpleBarChart({
   customStartDate, 
   customEndDate 
 }: SimpleBarChartProps) {
+  const isLiveRange = dateRange === 'today' || dateRange === 'yesterday';
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['hourly-revenue-simple', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchHourlyData(dateRange, customStartDate, customEndDate),
+    refetchInterval: isLiveRange ? 60_000 : false,
   });
   
   if (isLoading) {
