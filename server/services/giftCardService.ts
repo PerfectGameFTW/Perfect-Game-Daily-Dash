@@ -470,15 +470,18 @@ export class GiftCardService {
    *   |gc.purchase_date - order.created_at| < 5 minutes AND
    *   order.source IN ('Web Reservation', 'Web Reservation-Attraction')
    *
-   * The 5-minute window is safe: Square creates the order first, then the staff
-   * activates the gift card at the POS within seconds to a few minutes.
-   *
-   * Only updates cards that still have activation_square_order_id IS NULL.
-   * Idempotent: safe to re-run; never overwrites existing links.
-   *
-   * @returns { updated: number } count of rows written
+   * @param orderDateRange  Optional date window to scope the order search. When provided
+   *   (e.g. during per-chunk backfill), only orders whose created_at falls within
+   *   [start, end) are candidates — avoids repeated full-table scans.
+   *   Omit (or pass undefined) for a global scan (e.g. the final post-backfill run).
    */
-  async backfillActivationSquareOrderIds(): Promise<{ updated: number }> {
+  async backfillActivationSquareOrderIds(
+    orderDateRange?: { start: Date; end: Date }
+  ): Promise<{ updated: number }> {
+    const dateFilter = orderDateRange
+      ? sql`AND o.created_at >= ${orderDateRange.start.toISOString()} AND o.created_at < ${orderDateRange.end.toISOString()}`
+      : sql``;
+
     const result = await db.execute(sql`
       UPDATE gift_cards gc
       SET activation_square_order_id = matched.square_id,
@@ -492,6 +495,7 @@ export class GiftCardService {
           ON  o.total_money = gc2.activation_amount
           AND o.source IN ('Web Reservation', 'Web Reservation-Attraction')
           AND ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at))) < 300
+          ${dateFilter}
         WHERE gc2.activation_square_order_id IS NULL
           AND gc2.activation_amount > 0
         ORDER BY gc2.id, ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at)))

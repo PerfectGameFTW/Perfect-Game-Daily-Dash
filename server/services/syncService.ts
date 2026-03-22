@@ -1448,10 +1448,10 @@ export class SyncService {
           errorMessage: null,
         });
 
-        // Per-chunk gift-card linking: run the heuristic phase so gift card–to–order
-        // links are established progressively as each chunk's orders are added to the DB.
+        // Per-chunk gift-card linking: scoped to this chunk's date range so we avoid
+        // repeated full-table heuristic scans on every iteration.
         try {
-          const gcResult = await giftCardService.backfillActivationSquareOrderIds();
+          const gcResult = await giftCardService.backfillActivationSquareOrderIds({ start, end });
           if (gcResult.updated > 0) {
             console.log(`[HistoricalBackfill] Chunk ${i + 1} gift-card linking: ${gcResult.updated} gift cards linked`);
           }
