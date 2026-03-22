@@ -69,13 +69,14 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   // Ensure we're working with numbers even if API returns strings
   const totalRevenue = typeof data?.totalRevenue === 'number' ? data?.totalRevenue : parseFloat(data?.totalRevenue || '0');
   const refunds = typeof detailedTransactions?.refunds === 'number' ? detailedTransactions?.refunds : parseFloat(detailedTransactions?.refunds || '0');
+  const returns = typeof detailedTransactions?.returns === 'number' ? detailedTransactions?.returns : parseFloat(String(detailedTransactions?.returns ?? 0));
   const discounts = typeof detailedTransactions?.discountsAndComps === 'number' ? detailedTransactions?.discountsAndComps : parseFloat(detailedTransactions?.discountsAndComps || '0');
   const depositClearings = typeof detailedTransactions?.depositClearings === 'number' ? detailedTransactions?.depositClearings : parseFloat(String(detailedTransactions?.depositClearings ?? 0));
   const tips = typeof detailedTransactions?.tips === 'number' ? detailedTransactions?.tips : parseFloat(String(detailedTransactions?.tips ?? 0));
   const serviceCharges = typeof detailedTransactions?.serviceCharges === 'number' ? detailedTransactions?.serviceCharges : parseFloat(String(detailedTransactions?.serviceCharges ?? 0));
   const taxes = typeof detailedTransactions?.taxes === 'number' ? detailedTransactions?.taxes : parseFloat(String(detailedTransactions?.taxes ?? 0));
   
-  const calculatedNetRevenue = totalRevenue - refunds - discounts - depositClearings - tips - serviceCharges - taxes;
+  const calculatedNetRevenue = totalRevenue - refunds - returns - discounts - depositClearings - tips - serviceCharges - taxes;
 
   return (
     <div className="mt-4 space-y-6">
@@ -190,14 +191,15 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[260px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Event Deposit Redemptions − Tips − Service Charges − Taxes − Discounts & Comps − Refunds</p>
+                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Event Deposit Redemptions − Tips − Service Charges − Taxes − Discounts & Comps − Refunds − Returns</p>
                       {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
                       {tips > 0 && <p>Tips: −{formatCurrency(tips)}</p>}
                       {serviceCharges > 0 && <p>Service Charges: −{formatCurrency(serviceCharges)}</p>}
                       {taxes > 0 && <p>Taxes: −{formatCurrency(taxes)}</p>}
                       {discounts > 0 && <p>Discounts & Comps: −{formatCurrency(discounts)}</p>}
                       {refunds > 0 && <p>Refunds: −{formatCurrency(refunds)}</p>}
-                      {refunds === 0 && discounts === 0 && depositClearings === 0 && tips === 0 && serviceCharges === 0 && taxes === 0 && <p>No deductions in this period.</p>}
+                      {returns > 0 && <p>Returns: −{formatCurrency(returns)}</p>}
+                      {refunds === 0 && returns === 0 && discounts === 0 && depositClearings === 0 && tips === 0 && serviceCharges === 0 && taxes === 0 && <p>No deductions in this period.</p>}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -286,6 +288,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Refunds</span>
               <span className="text-card-foreground font-medium">({formatCurrency(refunds)})</span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Returns</span>
+              <span className="text-card-foreground font-medium">({formatCurrency(returns)})</span>
             </div>
 
             <div className="flex justify-between items-center pt-3 border-t border-border">

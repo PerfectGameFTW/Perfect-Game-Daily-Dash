@@ -320,6 +320,7 @@ export interface DetailedTransactionBreakdown {
   serviceCharges: number;
   taxes: number;
   refunds: number;
+  returns: number;
   discountsAndComps: number;
   depositClearings: number;
   giftCardSales: number;

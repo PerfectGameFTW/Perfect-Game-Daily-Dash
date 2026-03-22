@@ -101,6 +101,7 @@ export const fetchDetailedTransactions = async (
         serviceCharges: typeof response.serviceCharges === 'number' ? response.serviceCharges : parseFloat(response.serviceCharges || '0'),
         taxes: typeof response.taxes === 'number' ? response.taxes : parseFloat(response.taxes || '0'),
         refunds: typeof response.refunds === 'number' ? response.refunds : parseFloat(response.refunds || '0'),
+        returns: typeof response.returns === 'number' ? response.returns : parseFloat(response.returns || '0'),
         discountsAndComps: typeof response.discountsAndComps === 'number' ? response.discountsAndComps : parseFloat(response.discountsAndComps || '0'),
         depositClearings: typeof response.depositClearings === 'number' ? response.depositClearings : parseFloat(response.depositClearings || '0'),
         giftCardSales: typeof response.giftCardSales === 'number' ? response.giftCardSales : parseFloat(response.giftCardSales || '0'),
@@ -119,6 +120,7 @@ export const fetchDetailedTransactions = async (
         serviceCharges: typeof data.serviceCharges === 'number' ? data.serviceCharges : parseFloat(data.serviceCharges || '0'),
         taxes: typeof data.taxes === 'number' ? data.taxes : parseFloat(data.taxes || '0'),
         refunds: typeof data.refunds === 'number' ? data.refunds : parseFloat(data.refunds || '0'),
+        returns: typeof data.returns === 'number' ? data.returns : parseFloat(data.returns || '0'),
         discountsAndComps: typeof data.discountsAndComps === 'number' ? data.discountsAndComps : parseFloat(data.discountsAndComps || '0'),
         depositClearings: typeof data.depositClearings === 'number' ? data.depositClearings : parseFloat(data.depositClearings || '0'),
         giftCardSales: typeof data.giftCardSales === 'number' ? data.giftCardSales : parseFloat(data.giftCardSales || '0'),
@@ -129,7 +131,7 @@ export const fetchDetailedTransactions = async (
     return {
       partywirks: 0, bowlingWebResDeposits: 0, laserTagWebResDeposits: 0,
       tripleseat: 0, tips: 0, serviceCharges: 0,
-      taxes: 0, refunds: 0, discountsAndComps: 0, depositClearings: 0, giftCardSales: 0, totalTransactions: 0
+      taxes: 0, refunds: 0, returns: 0, discountsAndComps: 0, depositClearings: 0, giftCardSales: 0, totalTransactions: 0
     };
   } catch (error) {
     console.error('Error fetching detailed transactions:', error);
