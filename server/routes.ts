@@ -729,15 +729,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         query: {
           filter: {
             stateFilter: {
-              states: ['COMPLETED']
+              states: ['COMPLETED' as const]
             }
           },
           sort: {
-            sortField: 'CREATED_AT',
-            sortOrder: 'DESC'
+            sortField: 'CREATED_AT' as const,
+            sortOrder: 'DESC' as const
           }
         },
-        limit: 3 // Just get a few to test
+        limit: 3
       };
       
       console.log("Sending Orders search request:", JSON.stringify(searchRequest, null, 2));
