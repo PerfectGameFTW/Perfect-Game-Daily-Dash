@@ -10,6 +10,7 @@ import { eq, and, between, desc, asc, sql, isNull, gt } from 'drizzle-orm';
 import { 
   giftCards,
   orders,
+  syncState,
   giftCardRedemptions,
   transactions,
   type GiftCard, 
@@ -20,7 +21,7 @@ import {
   type GiftCardSummary
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
-import { fetchOrdersByIds } from '../squareClient';
+import { fetchOrdersByIds, fetchGiftCardActivitiesPage } from '../squareClient';
 
 export class GiftCardError extends Error {
   constructor(message: string, public readonly code: string, public readonly details?: any) {
@@ -352,9 +353,118 @@ export class GiftCardService {
   }
 
   /**
-   * One-time backfill: write activation_square_order_id for gift cards that were
-   * created as Web Reservation deposits but whose orderId was not available from
-   * the Square ACTIVATE activity API.
+   * PRIMARY backfill — Phase 0: scans ALL Square ACTIVATE events and writes
+   * activation_square_order_id for any gift card where Square returned an orderId.
+   *
+   * Uses a dedicated sync state key ('gift_card_order_id_history') so it:
+   *   - Runs independently of the historical gift card backfill completion state
+   *   - Is resumable: saves the Square cursor after every page so a restart
+   *     continues where it left off
+   *   - After the first full scan (isComplete=true), subsequent calls only scan
+   *     events newer than lastSyncedAt (incremental)
+   *
+   * ACTIVATE-event-derived orderId is considered authoritative.
+   * Only updates rows where activation_square_order_id IS NULL (never overwrites).
+   *
+   * @returns { scanned, linked } — events inspected and order IDs written
+   */
+  async backfillActivationOrderIdsFromActivateHistory(): Promise<{ scanned: number; linked: number }> {
+    const STATE_KEY = 'gift_card_order_id_history';
+
+    // Load existing sync state for this backfill (separate from historical backfill state)
+    const [existing] = await db.select().from(syncState)
+      .where(eq(syncState.syncType, STATE_KEY))
+      .limit(1);
+
+    let stateRow = existing ?? null;
+    let scanned = 0;
+    let linked = 0;
+
+    // Incremental mode: full scan done previously — only process new events
+    if (stateRow?.isComplete && stateRow.lastSyncedAt) {
+      const since = stateRow.lastSyncedAt;
+      console.log(`[GiftCardOrderIdBackfill] Incremental scan since ${since.toISOString()}`);
+      let cursor: string | undefined;
+      let pageNum = 0;
+      while (true) {
+        const { activities, nextCursor } = await fetchGiftCardActivitiesPage(cursor, 'DESC');
+        pageNum++;
+        let reachedCutoff = false;
+        for (const { giftCardId, squareOrderId, createdAt } of activities) {
+          if (createdAt <= since) { reachedCutoff = true; break; }
+          scanned++;
+          if (!squareOrderId) continue;
+          const rows = await db.update(giftCards)
+            .set({ activationSquareOrderId: squareOrderId, updatedAt: new Date() })
+            .where(and(eq(giftCards.squareId, giftCardId), isNull(giftCards.activationSquareOrderId)))
+            .returning({ id: giftCards.id });
+          if (rows.length > 0) linked++;
+        }
+        if (reachedCutoff || !nextCursor || activities.length === 0) break;
+        cursor = nextCursor;
+      }
+      await db.update(syncState)
+        .set({ lastSyncedAt: new Date(), processedCount: (stateRow.processedCount ?? 0) + scanned })
+        .where(eq(syncState.id, stateRow.id));
+      console.log(`[GiftCardOrderIdBackfill] Incremental done: ${scanned} scanned, ${linked} linked`);
+      return { scanned, linked };
+    }
+
+    // Full scan (first run or resumed after restart)
+    const savedCursor = stateRow?.cursor || undefined;
+    const isResume = !!savedCursor;
+    console.log(`[GiftCardOrderIdBackfill] ${isResume ? 'Resuming' : 'Starting'} full ACTIVATE history scan`);
+
+    if (!stateRow) {
+      const [created] = await db.insert(syncState).values({
+        syncType: STATE_KEY,
+        lastSyncedAt: new Date(),
+        status: 'running',
+        processedCount: 0,
+        cursor: '',
+      }).returning();
+      stateRow = created;
+    } else {
+      await db.update(syncState)
+        .set({ status: 'running' })
+        .where(eq(syncState.id, stateRow.id));
+    }
+
+    let cursor: string | undefined = savedCursor;
+    let pageNum = 0;
+    while (true) {
+      const { activities, nextCursor } = await fetchGiftCardActivitiesPage(cursor, 'DESC');
+      pageNum++;
+      for (const { giftCardId, squareOrderId } of activities) {
+        scanned++;
+        if (!squareOrderId) continue;
+        const rows = await db.update(giftCards)
+          .set({ activationSquareOrderId: squareOrderId, updatedAt: new Date() })
+          .where(and(eq(giftCards.squareId, giftCardId), isNull(giftCards.activationSquareOrderId)))
+          .returning({ id: giftCards.id });
+        if (rows.length > 0) linked++;
+      }
+      cursor = nextCursor;
+      // Persist cursor so a restart can resume
+      await db.update(syncState)
+        .set({ cursor: cursor ?? '', processedCount: scanned, lastSyncedAt: new Date() })
+        .where(eq(syncState.id, stateRow.id));
+      if (pageNum % 20 === 0) {
+        console.log(`[GiftCardOrderIdBackfill] Page ${pageNum}: ${scanned} events scanned, ${linked} linked`);
+      }
+      if (!cursor || activities.length === 0) break;
+    }
+
+    await db.update(syncState)
+      .set({ isComplete: true, status: 'completed', processedCount: scanned, lastSyncedAt: new Date() })
+      .where(eq(syncState.id, stateRow.id));
+    console.log(`[GiftCardOrderIdBackfill] Full scan complete: ${scanned} events, ${linked} order IDs linked`);
+    return { scanned, linked };
+  }
+
+  /**
+   * FALLBACK backfill — Phase 2: write activation_square_order_id for gift cards
+   * where Square's ACTIVATE events did NOT return an orderId.
    *
    * Matching strategy: activation_amount = order.total_money AND
    *   |gc.purchase_date - order.created_at| < 5 minutes AND

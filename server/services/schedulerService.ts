@@ -43,37 +43,48 @@ export function startScheduler(): void {
   console.log('[Scheduler] Frequent sync scheduled every 5 minutes');
   console.log('[Scheduler] Nightly deep sync scheduled at 3:00 AM Eastern Time');
 
-  // On startup: two-phase activation_square_order_id backfill (non-blocking, idempotent).
+  // On startup: three-phase activation_square_order_id backfill (non-blocking, idempotent).
   //
-  // Phase 1: For gift cards where Square's ACTIVATE events DID return an orderId
-  //          (written by the historical backfill), fetch any referenced orders that
-  //          are missing from our local orders table so the LEFT JOIN in
-  //          getGiftCardBreakdown() can resolve them.
+  // Phase 0 (primary): Scan ALL Square ACTIVATE events for orderId. Runs with its own
+  //          sync state key ('gift_card_order_id_history') independent of the historical
+  //          backfill. Resumable across restarts. ACTIVATE-event-derived links are
+  //          authoritative and never overwritten by later phases.
   //
-  // Phase 2: For gift cards where Square's ACTIVATE events did NOT return an orderId,
-  //          use a time+amount proximity heuristic against Web Reservation orders already
-  //          in our DB to establish the link.
+  // Phase 1: For cards that got orderId in Phase 0 (or from previous backfills), fetch
+  //          any referenced orders missing from the local orders table so the LEFT JOIN
+  //          in getGiftCardBreakdown() can resolve them.
+  //
+  // Phase 2 (fallback): For cards where Square's ACTIVATE events did NOT return an orderId
+  //          (NULL after Phase 0), use a time+amount proximity heuristic against Web
+  //          Reservation orders in the DB. Only touches rows still NULL after Phase 0.
   (async () => {
+    try {
+      const { scanned, linked } = await giftCardService.backfillActivationOrderIdsFromActivateHistory();
+      console.log(`[Scheduler] Phase 0 (ACTIVATE history scan): ${scanned} events, ${linked} order IDs linked`);
+    } catch (err) {
+      console.error('[Scheduler] Phase 0 (ACTIVATE history scan) error:', err);
+    }
+
     try {
       const { inserted } = await giftCardService.syncMissingActivationOrders();
       if (inserted > 0) {
-        console.log(`[Scheduler] Synced ${inserted} missing activation order(s) from Square`);
+        console.log(`[Scheduler] Phase 1 (missing-order sync): ${inserted} order(s) fetched from Square`);
       } else {
-        console.log('[Scheduler] Missing-order sync: nothing to fetch');
+        console.log('[Scheduler] Phase 1 (missing-order sync): nothing to fetch');
       }
     } catch (err) {
-      console.error('[Scheduler] Missing-order sync error:', err);
+      console.error('[Scheduler] Phase 1 (missing-order sync) error:', err);
     }
 
     try {
       const { updated } = await giftCardService.backfillActivationSquareOrderIds();
       if (updated > 0) {
-        console.log(`[Scheduler] Order-ID backfill complete: ${updated} gift card(s) linked to Web Reservation orders`);
+        console.log(`[Scheduler] Phase 2 (heuristic backfill): ${updated} gift card(s) linked to Web Reservation orders`);
       } else {
-        console.log('[Scheduler] Order-ID backfill: all gift cards already linked — nothing to do');
+        console.log('[Scheduler] Phase 2 (heuristic backfill): all gift cards already linked — nothing to do');
       }
     } catch (err) {
-      console.error('[Scheduler] Order-ID backfill error:', err);
+      console.error('[Scheduler] Phase 2 (heuristic backfill) error:', err);
     }
   })();
 
@@ -209,19 +220,27 @@ export async function runNightlySync(): Promise<void> {
   }
 
   try {
-    console.log(`${label} Step 5a/6: Sync missing activation orders from Square`);
-    const r = await giftCardService.syncMissingActivationOrders();
-    console.log(`${label} Missing-order sync: ${r.inserted} order(s) inserted`);
+    console.log(`${label} Step 5/6: Phase 0 — ACTIVATE history scan for order IDs`);
+    const r = await giftCardService.backfillActivationOrderIdsFromActivateHistory();
+    console.log(`${label} Phase 0: ${r.scanned} events scanned, ${r.linked} order IDs linked`);
   } catch (err) {
-    console.error(`${label} Missing-order sync failed (non-fatal):`, err);
+    console.error(`${label} Phase 0 (ACTIVATE history scan) failed (non-fatal):`, err);
   }
 
   try {
-    console.log(`${label} Step 5b/6: Order-ID backfill (link gift cards to Web Res orders)`);
-    const r = await giftCardService.backfillActivationSquareOrderIds();
-    console.log(`${label} Order-ID backfill: ${r.updated} gift card(s) linked`);
+    console.log(`${label} Step 5b/6: Phase 1 — Sync missing activation orders from Square`);
+    const r = await giftCardService.syncMissingActivationOrders();
+    console.log(`${label} Phase 1: ${r.inserted} missing order(s) inserted`);
   } catch (err) {
-    console.error(`${label} Order-ID backfill failed (non-fatal):`, err);
+    console.error(`${label} Phase 1 (missing-order sync) failed (non-fatal):`, err);
+  }
+
+  try {
+    console.log(`${label} Step 6/6: Phase 2 — Heuristic backfill (fallback)`);
+    const r = await giftCardService.backfillActivationSquareOrderIds();
+    console.log(`${label} Phase 2: ${r.updated} gift card(s) linked via heuristic`);
+  } catch (err) {
+    console.error(`${label} Phase 2 (heuristic backfill) failed (non-fatal):`, err);
   }
 
   console.log(`${label} Nightly deep sync complete.`);
