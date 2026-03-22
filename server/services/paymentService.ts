@@ -143,7 +143,7 @@ export class PaymentService {
       try {
         await db.execute(sql`
           INSERT INTO sync_state (
-            sync_type, last_synced, record_count, status, error_details
+            sync_type, last_synced_at, processed_count, status, last_checkpoint
           ) VALUES (
             'payment_dual_write', 
             CURRENT_TIMESTAMP, 
@@ -170,7 +170,7 @@ export class PaymentService {
       try {
         await db.execute(sql`
           INSERT INTO sync_state (
-            sync_type, last_synced, record_count, status, error_details
+            sync_type, last_synced_at, processed_count, status, last_checkpoint
           ) VALUES (
             'payment_dual_write_failure', 
             CURRENT_TIMESTAMP, 
@@ -501,7 +501,7 @@ export class PaymentService {
       try {
         await db.execute(sql`
           INSERT INTO sync_state (
-            sync_type, last_synced, record_count, status, error_details
+            sync_type, last_synced_at, processed_count, status, last_checkpoint
           ) VALUES (
             'missing_payments_reconciliation', 
             CURRENT_TIMESTAMP, 
@@ -532,7 +532,7 @@ export class PaymentService {
       try {
         await db.execute(sql`
           INSERT INTO sync_state (
-            sync_type, last_synced, record_count, status, error_details
+            sync_type, last_synced_at, processed_count, status, last_checkpoint
           ) VALUES (
             'missing_payments_reconciliation_error', 
             CURRENT_TIMESTAMP, 

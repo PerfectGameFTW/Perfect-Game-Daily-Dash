@@ -88,7 +88,7 @@ export const orderLineItems = pgTable("order_line_items", {
     onDelete: "cascade"
   }),
   name: text("name").notNull(),
-  quantity: integer("quantity").notNull(),
+  quantity: real("quantity").notNull(),
   basePriceMoney: real("base_price_money").notNull(),
   totalMoney: real("total_money").notNull(),
   category: text("category"),
