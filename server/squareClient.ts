@@ -557,18 +557,20 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
 
 // Update convertSquarePaymentToTransaction function
 export function convertSquarePaymentToTransaction(payment: Record<string, any>): InsertTransaction {
-  // Extract the amount
-  const amountMoney = payment.amountMoney;
+  // Use totalMoney (amountMoney + tipMoney) to match Square's "Total payments collected".
+  // For cash/external/gift-card payments with no tip, totalMoney === amountMoney.
+  // Fall back to amountMoney if totalMoney is absent (e.g. very old API responses).
+  const moneySource = payment.totalMoney ?? payment.amountMoney;
   let amount = 0;
 
   // Handle BigInt conversion safely
-  if (amountMoney && amountMoney.amount !== undefined) {
+  if (moneySource && moneySource.amount !== undefined) {
     // Check if it's a BigInt and convert appropriately
-    if (typeof amountMoney.amount === 'bigint') {
-      amount = Number(amountMoney.amount) / 100;
+    if (typeof moneySource.amount === 'bigint') {
+      amount = Number(moneySource.amount) / 100;
     } else {
       // Regular number conversion
-      amount = (Number(amountMoney.amount) || 0) / 100;
+      amount = (Number(moneySource.amount) || 0) / 100;
     }
   }
 

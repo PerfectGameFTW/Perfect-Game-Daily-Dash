@@ -76,7 +76,10 @@ export const fetchGiftCardSummary = async (
 ): Promise<GiftCardSummary> => {
   const queryString = buildQueryString(dateRange, startDate, endDate);
   const response = await apiRequest('GET', `/api/gift-card-summary?${queryString}`);
-  return await response.json();
+  if (response instanceof Response) {
+    return await response.json();
+  }
+  return response as GiftCardSummary;
 };
 
 export const fetchDetailedTransactions = async (
