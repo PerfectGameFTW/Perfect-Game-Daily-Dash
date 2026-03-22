@@ -116,7 +116,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen w-full bg-background text-foreground pb-16 md:pb-0">
+    <div className="flex flex-col min-h-screen w-full bg-background text-foreground pb-16 md:pb-20">
       <Header 
         dateRange={dateRange}
         customStartDate={customStartDate}
