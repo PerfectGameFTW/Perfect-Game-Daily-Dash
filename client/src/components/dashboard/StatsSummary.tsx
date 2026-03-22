@@ -188,8 +188,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[260px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Deposit Redemptions − Tips − Discounts & Comps − Refunds</p>
-                      {depositClearings > 0 && <p>Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
+                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Event Deposit Redemptions − Tips − Discounts & Comps − Refunds</p>
+                      {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
                       {tips > 0 && <p>Tips: −{formatCurrency(tips)}</p>}
                       {discounts > 0 && <p>Discounts & Comps: −{formatCurrency(discounts)}</p>}
                       {refunds > 0 && <p>Refunds: −{formatCurrency(refunds)}</p>}
@@ -255,7 +255,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Deposit Redemptions</span>
+              <span className="text-muted-foreground">Event Deposit Redemptions</span>
               <span className="text-card-foreground font-medium">({formatCurrency(depositClearings)})</span>
             </div>
 
