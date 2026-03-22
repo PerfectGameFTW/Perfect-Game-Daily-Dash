@@ -13,6 +13,7 @@ import {
   syncState,
   giftCards,
   orders,
+  refunds,
   type SyncState,
   type InsertSyncState
 } from '../../shared/schema';
@@ -658,6 +659,112 @@ export class SyncService {
     }
   }
   
+  async syncRefunds(startDate?: Date, endDate?: Date): Promise<{
+    processed: number;
+    created: number;
+    updated: number;
+    failed: number;
+  }> {
+    let processed = 0;
+    let created = 0;
+    let updated = 0;
+    let failed = 0;
+
+    try {
+      let state = await this.getSyncState('refunds');
+
+      if (!state) {
+        state = await this.createSyncState({
+          syncType: 'refunds',
+          lastSyncedAt: new Date(),
+          isComplete: false,
+          processedCount: 0,
+          totalCount: 0,
+          status: 'idle',
+          errorMessage: null
+        });
+      }
+
+      await this.updateSyncState(state.id, {
+        isComplete: false,
+        status: 'in_progress',
+        lastSyncedAt: new Date(),
+        processedCount: 0,
+        totalCount: 0,
+        errorMessage: null
+      });
+
+      const squareRefunds = await squareClient.fetchRefunds(startDate, endDate);
+
+      await this.updateSyncState(state.id, {
+        totalCount: squareRefunds.length,
+        status: `Found ${squareRefunds.length} refunds to sync`
+      });
+
+      for (const squareRefund of squareRefunds) {
+        try {
+          const refundData = squareClient.convertSquareRefundToInsert(squareRefund);
+
+          const existing = await db.select()
+            .from(refunds)
+            .where(eq(refunds.squareRefundId, refundData.squareRefundId))
+            .limit(1);
+
+          if (existing.length > 0) {
+            await db.update(refunds)
+              .set({
+                amount: refundData.amount,
+                status: refundData.status,
+                reason: refundData.reason,
+                squareData: refundData.squareData,
+              })
+              .where(eq(refunds.squareRefundId, refundData.squareRefundId));
+            updated++;
+          } else {
+            await db.insert(refunds).values(refundData);
+            created++;
+          }
+
+          processed++;
+
+          if (processed % 10 === 0 || processed === squareRefunds.length) {
+            await this.updateSyncState(state.id, {
+              processedCount: processed,
+              status: `Processed ${processed} of ${squareRefunds.length} refunds`
+            });
+          }
+        } catch (error) {
+          failed++;
+          console.error('Failed to process refund:', error);
+        }
+      }
+
+      await this.updateSyncState(state.id, {
+        isComplete: true,
+        status: 'completed',
+        lastSyncedAt: new Date(),
+        processedCount: processed
+      });
+
+      return { processed, created, updated, failed };
+    } catch (error) {
+      const state = await this.getSyncState('refunds');
+      if (state) {
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: 'error',
+          errorMessage: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+
+      throw new SyncError(
+        'Failed to sync refunds',
+        'SYNC_ERROR',
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
   /**
    * Synchronize gift cards from Square API
    * 

@@ -207,6 +207,15 @@ export async function runFrequentSync(): Promise<void> {
   } catch (err) {
     console.error(`${label} Incremental gift card sync failed:`, err);
   }
+
+  try {
+    const result = await syncService.syncRefunds(fifteenMinutesAgo);
+    if (result.created > 0 || result.updated > 0) {
+      console.log(`${label} Refunds: +${result.created} new, ${result.updated} updated`);
+    }
+  } catch (err) {
+    console.error(`${label} Refunds sync failed:`, err);
+  }
 }
 
 /**
@@ -251,7 +260,15 @@ export async function runNightlySync(): Promise<void> {
   }
 
   try {
-    console.log(`${label} Step 4/4: Activation amount backfill`);
+    console.log(`${label} Step 4/8: Refunds sync (last 3 days)`);
+    const rr = await syncService.syncRefunds(threeDaysAgo);
+    console.log(`${label} Refunds: processed=${rr.processed} created=${rr.created} updated=${rr.updated} failed=${rr.failed}`);
+  } catch (err) {
+    console.error(`${label} Refunds sync failed (non-fatal):`, err);
+  }
+
+  try {
+    console.log(`${label} Step 5/8: Activation amount backfill`);
     const r = await backfillGiftCardActivationAmounts();
     console.log(`${label} Backfill: filled=${r.updatedViaActivitiesApi} corrected=${r.correctedViaActivitiesApi} unresolved=${r.stillUnresolved}`);
   } catch (err) {

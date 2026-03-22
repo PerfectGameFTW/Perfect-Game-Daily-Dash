@@ -188,6 +188,25 @@ export const insertGiftCardSchema = createInsertSchema(giftCards).omit({
 export type InsertGiftCard = z.infer<typeof insertGiftCardSchema>;
 export type GiftCard = typeof giftCards.$inferSelect;
 
+// Refunds table — tracks Square PaymentRefund objects
+export const refunds = pgTable("refunds", {
+  id: serial("id").primaryKey(),
+  squareRefundId: text("square_refund_id").notNull().unique(),
+  squarePaymentId: text("square_payment_id").notNull(),
+  amount: real("amount").notNull(),
+  status: text("status").notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  squareData: jsonb("square_data"),
+});
+
+export const insertRefundSchema = createInsertSchema(refunds).omit({
+  id: true,
+});
+
+export type InsertRefund = z.infer<typeof insertRefundSchema>;
+export type Refund = typeof refunds.$inferSelect;
+
 // Gift card redemptions table
 export const giftCardRedemptions = pgTable("gift_card_redemptions", {
   id: serial("id").primaryKey(),

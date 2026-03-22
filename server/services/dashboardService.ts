@@ -13,9 +13,12 @@ import {
   type DailySummary,
   type CategoryRevenue,
   type HourlyRevenue,
-  type GiftCardSummary
+  type GiftCardSummary,
+  refunds
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
+import { db } from '../db';
+import { sql, between } from 'drizzle-orm';
 
 export class DashboardService {
   /**
@@ -211,37 +214,38 @@ export class DashboardService {
     let tips = 0;
     let serviceCharges = 0;
     let taxes = 0;
-    let refunds = 0;
+    let refundsTotal = 0;
     let discountsAndComps = 0;
     let depositClearings = 0;
     
     // Calculate values from payments
     for (const payment of payments) {
-      // Raw SQL returns snake_case column names, Drizzle ORM returns camelCase — handle both
       const rawData = (payment as any).square_data ?? payment.squareData;
       const squareData: Record<string, any> = rawData
         ? (typeof rawData === 'string' ? JSON.parse(rawData) : rawData)
         : {};
       
-      // Tips: Square stores tipMoney as a Money object { amount (cents), currency }
       if (squareData.tipMoney?.amount) {
         tips += Number(squareData.tipMoney.amount) / 100;
       }
       
-      // Deposit clearings: EXTERNAL payments with type OTHER are deposits applied
-      // against a prior Partywirks/third-party deposit and should not count as revenue
       if (
         squareData.sourceType === 'EXTERNAL' &&
         squareData.externalDetails?.type === 'OTHER'
       ) {
         depositClearings += payment.amount;
       }
-      
-      // Process refunds (negative amounts)
-      if (payment.amount < 0) {
-        refunds += Math.abs(payment.amount);
-      }
     }
+
+    // Query refunds from the dedicated refunds table
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const refundRows = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM(amount), 0) as total
+      FROM ${refunds}
+      WHERE ${refunds.createdAt} BETWEEN ${start} AND ${end}
+        AND ${refunds.status} IN ('COMPLETED', 'PENDING')
+    `);
+    refundsTotal = Number(refundRows.rows[0]?.total || 0);
     
     // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
     const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
@@ -286,7 +290,7 @@ export class DashboardService {
       tips,
       serviceCharges,
       taxes,
-      refunds,
+      refunds: refundsTotal,
       discountsAndComps,
       bowlingWebResDeposits: giftCardBreakdown.bowlingWebResDeposits,
       laserTagWebResDeposits: giftCardBreakdown.laserTagWebResDeposits,

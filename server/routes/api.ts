@@ -210,7 +210,7 @@ export function createApiRouter(): Router {
   router.post('/sync', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const syncSchema = z.object({
-        type: z.enum(['orders', 'payments', 'gift_cards', 'gift_card_redemptions', 'all', 'missing_payments']),
+        type: z.enum(['orders', 'payments', 'gift_cards', 'gift_card_redemptions', 'refunds', 'all', 'missing_payments']),
         startDate: z.string().optional()
           .refine(date => !date || !isNaN(new Date(date).getTime()), {
             message: "startDate must be a valid date string"
@@ -253,6 +253,11 @@ export function createApiRouter(): Router {
           result = await syncService.syncGiftCardRedemptions(startDate, endDate);
           console.log(`Gift card redemption sync completed: ${result.processed} processed, ${result.created} created, ${result.errors.length} errors`);
           break;
+        case 'refunds':
+          console.log('Starting refund synchronization');
+          result = await syncService.syncRefunds(startDate, endDate);
+          console.log(`Refund sync completed: ${result.processed} processed, ${result.created} created, ${result.updated} updated, ${result.failed} failed`);
+          break;
         case 'missing_payments':
           // Special reconciliation tool for the March 6, 2025 architectural transition gap
           // This specifically addresses missing payment records since the transition began
@@ -277,20 +282,20 @@ export function createApiRouter(): Router {
           console.log(`Payment reconciliation completed: ${result.succeeded} records synchronized, ${result.failed} failures`);
           break;
         case 'all':
-          // Run all sync operations in parallel
-          // Gift cards use the canonical resumable Activities-API path
-          const [ordersResult, paymentsResult, giftCardsResult, redemptionsResult] = await Promise.all([
+          const [ordersResult, paymentsResult, giftCardsResult, redemptionsResult, refundsResult] = await Promise.all([
             syncService.syncOrders(startDate, endDate),
             syncService.syncPayments(startDate, endDate),
             syncService.syncGiftCardsHistoricalBackfill(),
-            syncService.syncGiftCardRedemptions(startDate, endDate)
+            syncService.syncGiftCardRedemptions(startDate, endDate),
+            syncService.syncRefunds(startDate, endDate)
           ]);
           
           result = {
             orders: ordersResult,
             payments: paymentsResult,
             giftCards: giftCardsResult,
-            giftCardRedemptions: redemptionsResult
+            giftCardRedemptions: redemptionsResult,
+            refunds: refundsResult
           };
           break;
       }
@@ -554,6 +559,13 @@ async function runHistoricalSync(startDate: Date): Promise<void> {
       console.log(`${label2} Payments: processed=${paymentsResult.processed} created=${paymentsResult.created}`);
     } catch (err) {
       console.error(`${label2} Payments sync error (continuing):`, err);
+    }
+
+    try {
+      const refundsResult = await syncService.syncRefunds(chunkStart, chunkEnd);
+      console.log(`${label2} Refunds: processed=${refundsResult.processed} created=${refundsResult.created}`);
+    } catch (err) {
+      console.error(`${label2} Refunds sync error (continuing):`, err);
     }
 
     chunkStart = new Date(chunkEnd);

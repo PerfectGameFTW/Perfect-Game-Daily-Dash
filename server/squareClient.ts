@@ -45,6 +45,7 @@ import {
   OrdersApi,
   LocationsApi,
   PaymentsApi,
+  RefundsApi,
   GiftCardsApi,
   GiftCardActivitiesApi,
   CatalogApi,
@@ -53,6 +54,7 @@ import {
 import {
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
+  InsertRefund,
   Category, TransactionStatus, syncState, InsertOrder, InsertOrderLineItem, InsertOrderModifier, InsertOrderDiscount
 } from '@shared/schema';
 import { formatInTimeZone } from 'date-fns-tz';
@@ -103,6 +105,7 @@ const paymentsApi = new PaymentsApi(squareClient);
 const giftCardsApi = new GiftCardsApi(squareClient);
 const giftCardActivitiesApi = new GiftCardActivitiesApi(squareClient);
 const catalogApi = new CatalogApi(squareClient);
+const refundsApi = new RefundsApi(squareClient);
 
 // Update the fetchOrders method to better handle order data
 export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any[]> {
@@ -1078,6 +1081,87 @@ export async function fetchGiftCards(): Promise<any[]> {
     return allGiftCards;
   } catch (error) {
     console.error('Error fetching gift cards:', error);
+    throw error;
+  }
+}
+
+export function convertSquareRefundToInsert(refund: Record<string, any>): InsertRefund {
+  const amountMoney = refund.amountMoney;
+  let amount = 0;
+  if (amountMoney && amountMoney.amount !== undefined) {
+    amount = (typeof amountMoney.amount === 'bigint'
+      ? Number(amountMoney.amount)
+      : Number(amountMoney.amount) || 0) / 100;
+  }
+
+  return {
+    squareRefundId: refund.id,
+    squarePaymentId: refund.paymentId || '',
+    amount,
+    status: refund.status || 'PENDING',
+    reason: refund.reason || null,
+    createdAt: new Date(refund.createdAt || refund.created_at || new Date()),
+    squareData: processSafeSquareData(refund),
+  };
+}
+
+export async function fetchRefunds(startDate?: Date, endDate?: Date): Promise<any[]> {
+  const startTime = Date.now();
+  try {
+    const now = new Date();
+    const beginTime = (startDate || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)).toISOString();
+    const endTime = (endDate || new Date()).toISOString();
+
+    console.log(`Fetching refunds from ${beginTime} to ${endTime}`);
+
+    if (!process.env.SQUARE_ACCESS_TOKEN) {
+      throw new Error('Square access token is not configured');
+    }
+
+    let allRefunds: any[] = [];
+    let cursor: string | undefined = undefined;
+    let hasMorePages = true;
+    let pageCount = 0;
+    const MAX_PAGES = 50;
+    const TIMEOUT = 5 * 60 * 1000;
+
+    while (hasMorePages && pageCount < MAX_PAGES) {
+      pageCount++;
+      if (Date.now() - startTime > TIMEOUT) {
+        throw new Error('Refund sync timeout reached after 5 minutes');
+      }
+
+      try {
+        const response = await refundsApi.listPaymentRefunds(
+          beginTime,
+          endTime,
+          'DESC',
+          cursor,
+          process.env.SQUARE_LOCATION_ID,
+          undefined,
+          undefined,
+          100
+        );
+
+        const refundsList = response.result.refunds || [];
+        allRefunds.push(...refundsList);
+
+        cursor = response.result.cursor;
+        hasMorePages = !!cursor;
+
+        if (hasMorePages) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      } catch (pageError) {
+        console.error(`Error fetching refunds page ${pageCount}:`, pageError instanceof Error ? pageError.message : pageError);
+        throw pageError;
+      }
+    }
+
+    console.log(`Successfully fetched ${allRefunds.length} refunds from Square API in ${Date.now() - startTime}ms`);
+    return allRefunds;
+  } catch (error) {
+    console.error('Error in fetchRefunds:', error instanceof Error ? error.message : error);
     throw error;
   }
 }
