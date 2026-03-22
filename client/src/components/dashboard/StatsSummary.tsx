@@ -18,8 +18,15 @@ import {
   BadgeDollarSign,
   Percent,
   Award,
-  Wallet
+  Wallet,
+  Info
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface StatsSummaryProps {
   dateRange: DateRange;
@@ -74,7 +81,21 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
-              <h3 className="text-sm font-medium text-muted-foreground">Total Revenue</h3>
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-medium text-muted-foreground">Total Revenue</h3>
+                {dateRange === 'today' && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[240px] text-xs">
+                        Includes all authorized payments + tips captured today. Square's dashboard may show slightly less until tonight's tip settlements clear (~overnight).
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </div>
               <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(data?.totalRevenue || 0)}</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
