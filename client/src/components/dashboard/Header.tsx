@@ -27,7 +27,7 @@ export default function Header({
 }: HeaderProps) {
   const { data: syncStatus } = useQuery<{ overallLastSynced: string | null }>({
     queryKey: ['/api/sync/status'],
-    refetchInterval: 60000,
+    refetchInterval: false,
   });
 
   const lastSyncedLabel = (() => {

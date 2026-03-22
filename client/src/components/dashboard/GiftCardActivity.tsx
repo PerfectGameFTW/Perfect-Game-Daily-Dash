@@ -22,12 +22,10 @@ export default function GiftCardActivity({
   const chartInstance = useRef<Chart | null>(null);
 
   // API data fetching
-  const isLiveRange = dateRange === 'today' || dateRange === 'yesterday';
-
   const { data, isLoading } = useQuery({
     queryKey: ['/api/gift-card-summary', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchGiftCardSummary(dateRange, customStartDate, customEndDate),
-    refetchInterval: isLiveRange ? 60_000 : false,
+    refetchInterval: false,
   });
 
   useEffect(() => {

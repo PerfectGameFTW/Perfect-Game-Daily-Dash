@@ -44,7 +44,7 @@ export default function Admin() {
 
   const { data: syncStatus, isLoading: syncStatusLoading } = useQuery<SyncStatusData>({
     queryKey: ['/api/sync/status'],
-    refetchInterval: 30000,
+    refetchInterval: false,
   });
 
   const historicalSyncMutation = useMutation({

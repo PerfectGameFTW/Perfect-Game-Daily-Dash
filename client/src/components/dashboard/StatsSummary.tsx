@@ -35,14 +35,12 @@ interface StatsSummaryProps {
 }
 
 export default function StatsSummary({ dateRange, customStartDate, customEndDate }: StatsSummaryProps) {
-  const isLiveRange = dateRange === 'today' || dateRange === 'yesterday';
-
   const { data, isLoading } = useQuery({
     queryKey: ['/api/summary', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchDailySummary(dateRange, customStartDate, customEndDate),
     retry: 1,
     retryDelay: 1000,
-    refetchInterval: isLiveRange ? 60_000 : false,
+    refetchInterval: false,
   });
 
   const { data: detailedTransactions, isLoading: isDetailedLoading } = useQuery({
@@ -50,7 +48,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     queryFn: () => fetchDetailedTransactions(dateRange, customStartDate, customEndDate),
     retry: 1,
     retryDelay: 1000,
-    refetchInterval: isLiveRange ? 60_000 : false,
+    refetchInterval: false,
   });
   
   if (isLoading || isDetailedLoading) {
