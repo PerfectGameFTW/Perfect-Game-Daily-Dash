@@ -207,6 +207,7 @@ export class DashboardService {
     
     // Initialize values
     let partywirks = 0;
+    let webReservation = 0;
     let tripleseat = 0;
     let tips = 0;
     let serviceCharges = 0;
@@ -254,6 +255,8 @@ export class DashboardService {
       const src: string = order.source || '';
       if (src === 'Perfect Game Partywirks') {
         partywirks += order.totalMoney || 0;
+      } else if (src === 'Web Reservation') {
+        webReservation += order.totalMoney || 0;
       } else if (src === 'Tripleseat') {
         tripleseat += order.totalMoney || 0;
       }
@@ -274,6 +277,7 @@ export class DashboardService {
     
     return {
       partywirks,
+      webReservation,
       tripleseat,
       tips,
       serviceCharges,

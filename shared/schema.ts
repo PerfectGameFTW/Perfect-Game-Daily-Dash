@@ -294,6 +294,7 @@ export interface GiftCardSummary {
 
 export interface DetailedTransactionBreakdown {
   partywirks: number;
+  webReservation: number;
   tripleseat: number;
   tips: number;
   serviceCharges: number;

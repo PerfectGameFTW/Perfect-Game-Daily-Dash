@@ -235,6 +235,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Web Reservation</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.webReservation || 0)}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Tripleseat</span>
               <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.tripleseat || 0)}</span>
             </div>
