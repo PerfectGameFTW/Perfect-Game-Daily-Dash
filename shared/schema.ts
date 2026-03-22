@@ -318,6 +318,7 @@ export interface DetailedTransactionBreakdown {
   tripleseat: number;
   tips: number;
   serviceCharges: number;
+  autoGratuity: number;
   taxes: number;
   refunds: number;
   returns: number;

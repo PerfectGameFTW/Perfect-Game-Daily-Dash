@@ -99,6 +99,7 @@ export const fetchDetailedTransactions = async (
         tripleseat: typeof response.tripleseat === 'number' ? response.tripleseat : parseFloat(response.tripleseat || '0'),
         tips: typeof response.tips === 'number' ? response.tips : parseFloat(response.tips || '0'),
         serviceCharges: typeof response.serviceCharges === 'number' ? response.serviceCharges : parseFloat(response.serviceCharges || '0'),
+        autoGratuity: typeof response.autoGratuity === 'number' ? response.autoGratuity : parseFloat(response.autoGratuity || '0'),
         taxes: typeof response.taxes === 'number' ? response.taxes : parseFloat(response.taxes || '0'),
         refunds: typeof response.refunds === 'number' ? response.refunds : parseFloat(response.refunds || '0'),
         returns: typeof response.returns === 'number' ? response.returns : parseFloat(response.returns || '0'),
@@ -118,6 +119,7 @@ export const fetchDetailedTransactions = async (
         tripleseat: typeof data.tripleseat === 'number' ? data.tripleseat : parseFloat(data.tripleseat || '0'),
         tips: typeof data.tips === 'number' ? data.tips : parseFloat(data.tips || '0'),
         serviceCharges: typeof data.serviceCharges === 'number' ? data.serviceCharges : parseFloat(data.serviceCharges || '0'),
+        autoGratuity: typeof data.autoGratuity === 'number' ? data.autoGratuity : parseFloat(data.autoGratuity || '0'),
         taxes: typeof data.taxes === 'number' ? data.taxes : parseFloat(data.taxes || '0'),
         refunds: typeof data.refunds === 'number' ? data.refunds : parseFloat(data.refunds || '0'),
         returns: typeof data.returns === 'number' ? data.returns : parseFloat(data.returns || '0'),
@@ -130,7 +132,7 @@ export const fetchDetailedTransactions = async (
     
     return {
       partywirks: 0, bowlingWebResDeposits: 0, laserTagWebResDeposits: 0,
-      tripleseat: 0, tips: 0, serviceCharges: 0,
+      tripleseat: 0, tips: 0, serviceCharges: 0, autoGratuity: 0,
       taxes: 0, refunds: 0, returns: 0, discountsAndComps: 0, depositClearings: 0, giftCardSales: 0, totalTransactions: 0
     };
   } catch (error) {
