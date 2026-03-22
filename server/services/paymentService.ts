@@ -267,6 +267,10 @@ export class PaymentService {
       FROM ${transactions}
       WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
         AND ${transactions.status} IN ('completed', 'pending')
+        AND NOT (
+          square_data->>'sourceType' = 'EXTERNAL'
+          AND square_data->'externalDetails'->>'type' = 'OTHER'
+        )
       GROUP BY hour
       ORDER BY hour
     `);
