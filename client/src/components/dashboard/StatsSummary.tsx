@@ -294,25 +294,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center pt-3 border-t border-border">
-              <span className="text-muted-foreground">Orders</span>
-              <span className="text-card-foreground font-medium">{data?.totalOrders || 0}</span>
-            </div>
-            
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Transactions</span>
-              <span className="text-card-foreground font-medium">{detailedTransactions?.totalTransactions ?? 0}</span>
-            </div>
-            
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Average Order</span>
-              <span className="text-card-foreground font-medium">
-                {data?.totalOrders && data.totalOrders > 0 
-                  ? formatCurrency((data?.totalRevenue || 0) / data.totalOrders) 
-                  : formatCurrency(0)}
-              </span>
-            </div>
-            
-            <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Gift Card Sales</span>
               <span className="text-card-foreground font-medium">{formatCurrency(data?.giftCardSales || 0)}</span>
             </div>
