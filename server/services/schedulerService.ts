@@ -4,8 +4,8 @@
  * Two sync schedules:
  *
  * EVERY 60 SECONDS — keeps the dashboard current throughout the day:
- *   1. Payments  — last 15 minutes (safe overlap window)
- *   2. Orders    — last 15 minutes
+ *   1. Payments  — full current day (Eastern) to catch tip adjustments
+ *   2. Orders    — full current day (Eastern) to catch mid-day edits
  *   3. Gift cards — INCREMENTAL: only fetches ACTIVATE events since last sync
  *      (fast, seconds not minutes; new cards appear within one cycle)
  *
@@ -174,16 +174,21 @@ async function runBackfillUntilComplete(): Promise<void> {
 
 /**
  * Runs every 5 minutes.
- * Syncs payments and orders for the last 15 minutes.
+ * Syncs all of today's payments and orders (Eastern time) so tip adjustments,
+ * voided payments, and other mid-day edits are always current.
  * Gift cards use the fast incremental path: only ACTIVATE events since the
  * last incremental sync are fetched, so new cards appear within one cycle.
  */
 export async function runFrequentSync(): Promise<void> {
   const label = `[Sync ${new Date().toISOString()}]`;
-  const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+
+  // Use start-of-today (Eastern) as the lookback for payments and orders so
+  // tip adjustments, voided payments, and other mid-day edits are picked up
+  // on every cycle — not just within a 15-minute window.
+  const startOfTodayET = getStartOfTodayEastern();
 
   try {
-    const result = await syncService.syncPayments(fifteenMinutesAgo);
+    const result = await syncService.syncPayments(startOfTodayET);
     if (result.created > 0 || result.updated > 0) {
       console.log(`${label} Payments: +${result.created} new, ${result.updated} updated`);
     }
@@ -192,7 +197,7 @@ export async function runFrequentSync(): Promise<void> {
   }
 
   try {
-    const result = await syncService.syncOrders(fifteenMinutesAgo);
+    const result = await syncService.syncOrders(startOfTodayET);
     if (result.created > 0 || result.updated > 0) {
       console.log(`${label} Orders: +${result.created} new, ${result.updated} updated`);
     }
@@ -209,6 +214,7 @@ export async function runFrequentSync(): Promise<void> {
     console.error(`${label} Incremental gift card sync failed:`, err);
   }
 
+  const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
   try {
     const result = await syncService.syncRefunds(fifteenMinutesAgo);
     if (result.created > 0 || result.updated > 0) {
@@ -219,6 +225,15 @@ export async function runFrequentSync(): Promise<void> {
   }
 
   broadcast('data-updated', { syncType: 'frequent' });
+}
+
+function getStartOfTodayEastern(): Date {
+  const now = new Date();
+  const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const startOfDay = new Date(eastern);
+  startOfDay.setHours(0, 0, 0, 0);
+  const diffMs = eastern.getTime() - startOfDay.getTime();
+  return new Date(now.getTime() - diffMs);
 }
 
 /**
