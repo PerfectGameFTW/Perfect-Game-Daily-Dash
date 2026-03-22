@@ -95,7 +95,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   return (
     <div className="mt-4 space-y-6">
       {/* Revenue Highlights - Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* True Revenue Card */}
         <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
@@ -144,71 +144,19 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           </div>
         </div>
 
-        {/* Gift Card Sales */}
-        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
-          <div className="flex justify-between">
-            <div>
-              <h3 className="text-sm font-medium text-muted-foreground">Gift Card Sales</h3>
-              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(data?.giftCardSales || 0)}</p>
-            </div>
-            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Gift className="h-6 w-6 text-primary" />
-            </div>
-          </div>
-          
-          <div className="mt-4 flex items-center">
-            <div
-              className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center ${
-                isPositiveChange(data?.giftCardSalesChange || 0)
-                  ? "bg-green-500/10 text-green-400"
-                  : "bg-red-500/10 text-red-400"
-              }`}
-            >
-              {isPositiveChange(data?.giftCardSalesChange || 0) ? (
-                <ChevronUp className="mr-0.5 h-3 w-3" />
-              ) : (
-                <ChevronDown className="mr-0.5 h-3 w-3" />
-              )}
-              {formatPercentage(Math.abs(data?.giftCardSalesChange || 0))}
-            </div>
-            <span className="ml-2 text-xs text-muted-foreground">vs. previous period</span>
-          </div>
-        </div>
-        
-        {/* Tips */}
-        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
-          <div className="flex justify-between">
-            <div>
-              <h3 className="text-sm font-medium text-muted-foreground">Tips</h3>
-              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(detailedTransactions?.tips || 0)}</p>
-            </div>
-            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
-              <BadgeDollarSign className="h-6 w-6 text-primary" />
-            </div>
-          </div>
-          
-          <div className="mt-4 flex items-center">
-            <span className="text-xs text-muted-foreground">
-              {(detailedTransactions?.tips || 0) > 0 
-                ? `${((detailedTransactions?.tips || 0) / (data?.totalRevenue || 1) * 100).toFixed(1)}% of sales` 
-                : "No tips in this period"}
-            </span>
-          </div>
-        </div>
-        
-        {/* Net Sales */}
+        {/* Net Revenue Card */}
         <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
               <div className="flex items-center gap-1.5">
-                <h3 className="text-sm font-medium text-muted-foreground">Net Sales</h3>
+                <h3 className="text-sm font-medium text-muted-foreground">Net Revenue</h3>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">Net Sales = True Revenue − Tips − Service Charges − Auto Gratuity − Taxes − Discounts & Comps</p>
+                      <p className="font-semibold mb-1">Net Revenue = True Revenue − Tips − Service Charges − Auto Gratuity − Taxes − Discounts & Comps</p>
                       <p className="text-muted-foreground/80 text-[10px]">True Revenue already excludes event deposit redemptions, refunds, returns, and gift card redemptions</p>
                       {tips > 0 && <p>Tips: −{formatCurrency(tips)}</p>}
                       {serviceCharges > 0 && <p>Service Charges: −{formatCurrency(serviceCharges)}</p>}
@@ -245,6 +193,28 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             <span className="ml-2 text-xs text-muted-foreground">vs. gross revenue</span>
           </div>
         </div>
+        
+        {/* Tips */}
+        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
+          <div className="flex justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-muted-foreground">Tips</h3>
+              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(detailedTransactions?.tips || 0)}</p>
+            </div>
+            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
+              <BadgeDollarSign className="h-6 w-6 text-primary" />
+            </div>
+          </div>
+          
+          <div className="mt-4 flex items-center">
+            <span className="text-xs text-muted-foreground">
+              {(detailedTransactions?.tips || 0) > 0 
+                ? `${((detailedTransactions?.tips || 0) / (data?.totalRevenue || 1) * 100).toFixed(1)}% of sales` 
+                : "No tips in this period"}
+            </span>
+          </div>
+        </div>
+        
       </div>
 
       {/* Hourly Revenue Chart */}
