@@ -8,7 +8,8 @@
 import { db } from '../db';
 import { eq, and, between, desc, asc, sql, inArray } from 'drizzle-orm';
 import {
-  transactions, 
+  transactions,
+  refunds,
   type Transaction, 
   type InsertTransaction,
   type DateRange,
@@ -227,8 +228,6 @@ export class PaymentService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Query the database for the total revenue - include both completed and pending (APPROVED)
-    // Square counts APPROVED payments in their "Total payments collected" figure, so we match that.
     const result = await db.select({
       totalRevenue: sql<number>`COALESCE(SUM(${transactions.amount}), 0)`,
     }).from(transactions)
@@ -236,9 +235,18 @@ export class PaymentService {
         between(transactions.timestamp, start, end),
         inArray(transactions.status, ['completed', 'pending'])
       ));
-    
-    const totalRevenue = result[0]?.totalRevenue || 0;
-    return totalRevenue;
+
+    const refundResult = await db.select({
+      totalRefunds: sql<number>`COALESCE(SUM(${refunds.amount}), 0)`,
+    }).from(refunds)
+      .where(and(
+        between(refunds.createdAt, start, end),
+        inArray(refunds.status, ['COMPLETED', 'PENDING'])
+      ));
+
+    const grossPayments = result[0]?.totalRevenue || 0;
+    const totalRefunds = refundResult[0]?.totalRefunds || 0;
+    return grossPayments - totalRefunds;
   }
   
   /**
