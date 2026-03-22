@@ -1248,7 +1248,7 @@ export class SyncService {
     // Determine resume point from stored checkpoint — only if params match exactly
     let resumeFromChunk = 0;
     const savedCheckpoint = existingState?.lastCheckpoint as any;
-    if (savedCheckpoint?.chunksCompleted && typeof savedCheckpoint.chunksCompleted === 'number') {
+    if (savedCheckpoint) {
       const cpStart = savedCheckpoint.startDate ?? '';
       const cpEnd   = savedCheckpoint.endDate   ?? '';
       const cpChunk = savedCheckpoint.chunkDays  ?? chunkDays;
@@ -1258,8 +1258,13 @@ export class SyncService {
         cpChunk === chunkDays;
 
       if (paramsMatch) {
-        resumeFromChunk = Math.min(savedCheckpoint.chunksCompleted, chunks.length);
-        console.log(`[HistoricalBackfill] Resuming from chunk ${resumeFromChunk} of ${chunks.length} (params match)`);
+        // Prefer nextChunkToProcess (new checkpoint field) for accurate resume point;
+        // fall back to legacy chunksCompleted field for backwards compatibility.
+        const resumeIdx = savedCheckpoint.nextChunkToProcess ?? savedCheckpoint.chunksCompleted ?? 0;
+        resumeFromChunk = Math.min(Math.max(0, resumeIdx), chunks.length);
+        if (resumeFromChunk > 0) {
+          console.log(`[HistoricalBackfill] Resuming from chunk ${resumeFromChunk} of ${chunks.length} (params match)`);
+        }
       } else {
         console.log(`[HistoricalBackfill] Checkpoint params differ from request — starting fresh`);
         resumeFromChunk = 0;
@@ -1271,6 +1276,7 @@ export class SyncService {
       endDate: endDate.toISOString(),
       chunkDays,
       totalChunks: chunks.length,
+      nextChunkToProcess: resumeFromChunk,
       chunksCompleted: resumeFromChunk,
       lastCompletedDate: resumeFromChunk > 0 ? chunks[resumeFromChunk - 1].end.toISOString() : null,
     };
@@ -1309,6 +1315,11 @@ export class SyncService {
       let totalOrders = 0;
       let totalPayments = 0;
       let failedChunks = 0;
+      // nextChunkToProcess tracks the LOWEST chunk index that has not been confirmed
+      // complete. It only advances when chunk i succeeds AND i === nextChunkToProcess
+      // (i.e., no gap from a prior failure). This ensures failed chunks are always
+      // retried on the next resume, regardless of later successes.
+      let nextChunkToProcess = resumeFromChunk;
       try {
 
       for (let i = resumeFromChunk; i < chunks.length; i++) {
@@ -1392,6 +1403,8 @@ export class SyncService {
 
         } catch (err) {
           failedChunks++;
+          // Do NOT advance nextChunkToProcess so that this chunk is retried on resume.
+          // All later chunks will also be re-processed (operations are idempotent).
           console.error(`[HistoricalBackfill] Chunk ${i + 1} failed entirely:`, err);
           await this.updateSyncState(state.id, {
             errorMessage: `Chunk ${i + 1} (${start.toISOString().slice(0, 10)}): ${err instanceof Error ? err.message : String(err)}`,
@@ -1400,13 +1413,21 @@ export class SyncService {
               endDate: endDate.toISOString(),
               chunkDays,
               totalChunks: chunks.length,
-              chunksCompleted: i,
-              lastCompletedDate: i > 0 ? chunks[i - 1].end.toISOString() : null,
+              nextChunkToProcess,        // lowest unconfirmed index (unchanged after failure)
+              chunksCompleted: nextChunkToProcess,
+              lastCompletedDate: nextChunkToProcess > 0 ? chunks[nextChunkToProcess - 1].end.toISOString() : null,
               lastError: `Chunk ${i + 1}: ${err instanceof Error ? err.message : String(err)}`,
             },
           });
           await new Promise(r => setTimeout(r, 5000));
           continue;
+        }
+
+        // Advance nextChunkToProcess only when this chunk is the expected next one.
+        // If an earlier chunk failed (leaving a gap), we do NOT advance past it, so
+        // the resume always starts from the lowest unprocessed chunk.
+        if (i === nextChunkToProcess) {
+          nextChunkToProcess = i + 1;
         }
 
         // Checkpoint saved after each successful chunk
@@ -1415,12 +1436,13 @@ export class SyncService {
           endDate: endDate.toISOString(),
           chunkDays,
           totalChunks: chunks.length,
-          chunksCompleted: i + 1,
-          lastCompletedDate: end.toISOString(),
+          nextChunkToProcess,          // authoritative resume index
+          chunksCompleted: nextChunkToProcess,
+          lastCompletedDate: chunks[nextChunkToProcess - 1]?.end.toISOString() ?? end.toISOString(),
         };
         await this.updateSyncState(state.id, {
           processedCount: totalOrders + totalPayments,
-          status: `in_progress — chunk ${i + 1} of ${chunks.length} complete`,
+          status: `in_progress`,
           lastSyncedAt: new Date(),
           lastCheckpoint: checkpoint,
           errorMessage: null,
@@ -1462,8 +1484,11 @@ export class SyncService {
         console.error('[HistoricalBackfill] Phase 2 failed:', err);
       }
 
-      const allSucceeded = failedChunks === 0;
-      const finalStatus = allSucceeded ? 'completed' : `partial_complete — ${failedChunks} chunk(s) failed`;
+      // isComplete only when every chunk was processed without failure
+      const allSucceeded = failedChunks === 0 && nextChunkToProcess >= chunks.length;
+      const finalStatus = allSucceeded
+        ? 'completed'
+        : `partial_complete — ${failedChunks} chunk(s) failed; resume to retry from chunk ${nextChunkToProcess + 1}`;
       await this.updateSyncState(state.id, {
         isComplete: allSucceeded,
         status: finalStatus,
@@ -1474,8 +1499,11 @@ export class SyncService {
           endDate: endDate.toISOString(),
           chunkDays,
           totalChunks: chunks.length,
-          chunksCompleted: chunks.length - failedChunks,
-          lastCompletedDate: endDate.toISOString(),
+          nextChunkToProcess: allSucceeded ? chunks.length : nextChunkToProcess,
+          chunksCompleted: nextChunkToProcess,
+          lastCompletedDate: nextChunkToProcess > 0
+            ? (chunks[nextChunkToProcess - 1]?.end.toISOString() ?? endDate.toISOString())
+            : null,
           failedChunks,
         },
       });
