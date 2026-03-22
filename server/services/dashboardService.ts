@@ -216,10 +216,11 @@ export class DashboardService {
     
     // Calculate values from payments
     for (const payment of payments) {
-      // Extract category and other details from squareData
-      const squareData = payment.squareData ? (typeof payment.squareData === 'string' 
-        ? JSON.parse(payment.squareData) 
-        : payment.squareData as Record<string, any>) : {};
+      // Raw SQL returns snake_case column names, Drizzle ORM returns camelCase — handle both
+      const rawData = (payment as any).square_data ?? payment.squareData;
+      const squareData: Record<string, any> = rawData
+        ? (typeof rawData === 'string' ? JSON.parse(rawData) : rawData)
+        : {};
       
       // Process based on type
       if (squareData.category === 'partywirks') {
