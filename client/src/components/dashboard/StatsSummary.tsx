@@ -240,6 +240,48 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         
       </div>
 
+      {/* Web Res Redemptions Card */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
+          <div className="flex justify-between">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-medium text-muted-foreground">Web Res Redemptions</h3>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
+                      <p className="font-semibold mb-1">Web Res Redemptions = Bowling Deposit Redemptions + Laser Tag Deposit Redemptions</p>
+                      <p>When a customer checks in, their web reservation deposit (gift card) is redeemed against the final bill. This tracks those redemptions.</p>
+                      {bowlingDepositRedemptions > 0 && <p>Bowling: {formatCurrency(bowlingDepositRedemptions)}</p>}
+                      {laserTagDepositRedemptions > 0 && <p>Laser Tag: {formatCurrency(laserTagDepositRedemptions)}</p>}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(bowlingDepositRedemptions + laserTagDepositRedemptions)}</p>
+            </div>
+            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
+              <CreditCard className="h-6 w-6 text-primary" />
+            </div>
+          </div>
+          
+          <div className="mt-4 flex items-center">
+            <span className="text-xs text-muted-foreground">
+              {bowlingDepositRedemptions > 0 && laserTagDepositRedemptions > 0
+                ? `Bowling: ${formatCurrency(bowlingDepositRedemptions)} · Laser Tag: ${formatCurrency(laserTagDepositRedemptions)}`
+                : bowlingDepositRedemptions > 0
+                  ? "All from bowling reservations"
+                  : laserTagDepositRedemptions > 0
+                    ? "All from laser tag reservations"
+                    : "No web res redemptions in this period"}
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Hourly Revenue Chart */}
       <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl">
         <div className="flex justify-between items-center mb-4">
