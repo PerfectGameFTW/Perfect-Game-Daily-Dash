@@ -1,6 +1,10 @@
 import { apiRequest } from "./queryClient";
 import { DateRange, DailySummary, GiftCardSummary, DetailedTransactionBreakdown } from "@shared/schema";
 
+const toFloat = (v: unknown): number => typeof v === 'number' ? v : parseFloat(String(v ?? 0)) || 0;
+const toInt = (v: unknown): number => typeof v === 'number' ? v : parseInt(String(v ?? 0), 10) || 0;
+const toStr = (v: unknown, fallback: string): string => typeof v === 'string' ? v : fallback;
+
 // Helper to build query string
 const buildQueryString = (
   dateRange: DateRange, 
@@ -29,19 +33,19 @@ export const fetchDailySummary = async (
     const queryString = buildQueryString(dateRange, startDate, endDate);
     const response = await apiRequest('GET', `/api/summary?${queryString}`);
     
-    const parseSummary = (d: any): DailySummary => ({
-      totalRevenue: typeof d.totalRevenue === 'number' ? d.totalRevenue : parseFloat(d.totalRevenue || '0'),
-      grossPayments: typeof d.grossPayments === 'number' ? d.grossPayments : parseFloat(d.grossPayments || '0'),
-      totalRefunds: typeof d.totalRefunds === 'number' ? d.totalRefunds : parseFloat(d.totalRefunds || '0'),
-      giftCardRedemptions: typeof d.giftCardRedemptions === 'number' ? d.giftCardRedemptions : parseFloat(d.giftCardRedemptions || '0'),
-      revenueChange: typeof d.revenueChange === 'number' ? d.revenueChange : parseFloat(d.revenueChange || '0'),
-      totalOrders: typeof d.totalOrders === 'number' ? d.totalOrders : parseInt(d.totalOrders || '0', 10),
-      ordersChange: typeof d.ordersChange === 'number' ? d.ordersChange : parseFloat(d.ordersChange || '0'),
-      averageOrder: typeof d.averageOrder === 'number' ? d.averageOrder : parseFloat(d.averageOrder || '0'),
-      averageOrderChange: typeof d.averageOrderChange === 'number' ? d.averageOrderChange : parseFloat(d.averageOrderChange || '0'),
-      giftCardSales: typeof d.giftCardSales === 'number' ? d.giftCardSales : parseFloat(d.giftCardSales || '0'),
-      giftCardSalesChange: typeof d.giftCardSalesChange === 'number' ? d.giftCardSalesChange : parseFloat(d.giftCardSalesChange || '0'),
-      date: d.date || new Date().toISOString().split('T')[0]
+    const parseSummary = (d: Record<string, unknown>): DailySummary => ({
+      totalRevenue: toFloat(d.totalRevenue),
+      grossPayments: toFloat(d.grossPayments),
+      totalRefunds: toFloat(d.totalRefunds),
+      giftCardRedemptions: toFloat(d.giftCardRedemptions),
+      revenueChange: toFloat(d.revenueChange),
+      totalOrders: toInt(d.totalOrders),
+      ordersChange: toFloat(d.ordersChange),
+      averageOrder: toFloat(d.averageOrder),
+      averageOrderChange: toFloat(d.averageOrderChange),
+      giftCardSales: toFloat(d.giftCardSales),
+      giftCardSalesChange: toFloat(d.giftCardSalesChange),
+      date: toStr(d.date, new Date().toISOString().split('T')[0])
     });
 
     if (typeof response === 'object' && response !== null) {
@@ -82,22 +86,22 @@ export const fetchDetailedTransactions = async (
     const queryString = buildQueryString(dateRange, startDate, endDate);
     const response = await apiRequest('GET', `/api/detailed-transactions?${queryString}`);
     
-    const parseBreakdown = (d: any): DetailedTransactionBreakdown => ({
-      partywirks: typeof d.partywirks === 'number' ? d.partywirks : parseFloat(d.partywirks || '0'),
-      bowlingWebResDeposits: typeof d.bowlingWebResDeposits === 'number' ? d.bowlingWebResDeposits : parseFloat(d.bowlingWebResDeposits || '0'),
-      laserTagWebResDeposits: typeof d.laserTagWebResDeposits === 'number' ? d.laserTagWebResDeposits : parseFloat(d.laserTagWebResDeposits || '0'),
-      tripleseat: typeof d.tripleseat === 'number' ? d.tripleseat : parseFloat(d.tripleseat || '0'),
-      tips: typeof d.tips === 'number' ? d.tips : parseFloat(d.tips || '0'),
-      serviceCharges: typeof d.serviceCharges === 'number' ? d.serviceCharges : parseFloat(d.serviceCharges || '0'),
-      autoGratuity: typeof d.autoGratuity === 'number' ? d.autoGratuity : parseFloat(d.autoGratuity || '0'),
-      taxes: typeof d.taxes === 'number' ? d.taxes : parseFloat(d.taxes || '0'),
-      refunds: typeof d.refunds === 'number' ? d.refunds : parseFloat(d.refunds || '0'),
-      returns: typeof d.returns === 'number' ? d.returns : parseFloat(d.returns || '0'),
-      discountsAndComps: typeof d.discountsAndComps === 'number' ? d.discountsAndComps : parseFloat(d.discountsAndComps || '0'),
-      depositClearings: typeof d.depositClearings === 'number' ? d.depositClearings : parseFloat(d.depositClearings || '0'),
-      giftCardSales: typeof d.giftCardSales === 'number' ? d.giftCardSales : parseFloat(d.giftCardSales || '0'),
-      giftCardRedemptions: typeof d.giftCardRedemptions === 'number' ? d.giftCardRedemptions : parseFloat(d.giftCardRedemptions || '0'),
-      totalTransactions: typeof d.totalTransactions === 'number' ? d.totalTransactions : parseInt(d.totalTransactions || '0', 10)
+    const parseBreakdown = (d: Record<string, unknown>): DetailedTransactionBreakdown => ({
+      partywirks: toFloat(d.partywirks),
+      bowlingWebResDeposits: toFloat(d.bowlingWebResDeposits),
+      laserTagWebResDeposits: toFloat(d.laserTagWebResDeposits),
+      tripleseat: toFloat(d.tripleseat),
+      tips: toFloat(d.tips),
+      serviceCharges: toFloat(d.serviceCharges),
+      autoGratuity: toFloat(d.autoGratuity),
+      taxes: toFloat(d.taxes),
+      refunds: toFloat(d.refunds),
+      returns: toFloat(d.returns),
+      discountsAndComps: toFloat(d.discountsAndComps),
+      depositClearings: toFloat(d.depositClearings),
+      giftCardSales: toFloat(d.giftCardSales),
+      giftCardRedemptions: toFloat(d.giftCardRedemptions),
+      totalTransactions: toInt(d.totalTransactions)
     });
 
     if (typeof response === 'object' && response !== null) {

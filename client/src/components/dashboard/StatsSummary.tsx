@@ -64,11 +64,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
     );
   }
 
-  const toNum = (val: any) => typeof val === 'number' ? val : parseFloat(String(val ?? 0));
+  const toNum = (val: string | number | undefined | null): number =>
+    typeof val === 'number' ? val : parseFloat(String(val ?? 0));
 
   const totalRevenue = toNum(data?.totalRevenue);
   const grossPayments = toNum(data?.grossPayments);
-  const totalRefundsFromSummary = toNum(data?.totalRefunds);
+  const totalRefunds = toNum(data?.totalRefunds);
   const giftCardRedemptionsAmount = toNum(data?.giftCardRedemptions);
   const refunds = toNum(detailedTransactions?.refunds);
   const returns = toNum(detailedTransactions?.returns);
@@ -100,7 +101,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
                       <p className="font-semibold mb-1">True Revenue = Gross Payments − Refunds − Gift Card Redemptions</p>
                       {grossPayments > 0 && <p>Gross Payments: {formatCurrency(grossPayments)}</p>}
-                      {totalRefundsFromSummary > 0 && <p>Refunds: −{formatCurrency(totalRefundsFromSummary)}</p>}
+                      {totalRefunds > 0 && <p>Refunds: −{formatCurrency(totalRefunds)}</p>}
                       {giftCardRedemptionsAmount > 0 && <p>GC Redemptions: −{formatCurrency(giftCardRedemptionsAmount)}</p>}
                       <p className="text-muted-foreground/80 text-[10px] pt-1">Gift card redemptions are subtracted to avoid double-counting deposits and gift card sales.</p>
                     </TooltipContent>
@@ -269,12 +270,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Refunds</span>
-              <span className="text-card-foreground font-medium">({formatCurrency(refunds)})</span>
+              <span className="text-card-foreground font-medium">({formatCurrency(totalRefunds)})</span>
             </div>
 
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Gift Card Redemptions</span>
-              <span className="text-card-foreground font-medium">({formatCurrency(gcRedemptions)})</span>
+              <span className="text-card-foreground font-medium">({formatCurrency(giftCardRedemptionsAmount)})</span>
             </div>
 
             <div className="flex justify-between items-center pt-3 border-t border-border">
