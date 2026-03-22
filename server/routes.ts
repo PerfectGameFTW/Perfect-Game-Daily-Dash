@@ -29,7 +29,7 @@ import {
 } from "@shared/schema";
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
-import { squareClient as squareSDK } from "./squareClient";
+const squareSDK = squareClient.squareClient;
 import { and, gte, lte, sql, eq, gt, or, desc, count } from "drizzle-orm";
 import { syncService } from "./services/syncService";
 import { dashboardService } from "./services/dashboardService";
