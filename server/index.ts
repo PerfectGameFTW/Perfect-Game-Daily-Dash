@@ -18,6 +18,7 @@ process.on('uncaughtException', (err) => {
 });
 
 const app = express();
+app.disable('etag');
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
