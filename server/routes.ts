@@ -30,6 +30,8 @@ import {
 import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
 import { and, gte, lte, sql, eq, gt, or, desc, count } from "drizzle-orm";
+import { syncService } from "./services/syncService";
+import { getEasternDateRange } from "./dateUtils";
 // Helper function to safely process Square API response data
 function processSafeSquareData(data: any): any {
   try {
@@ -1141,6 +1143,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Failed to process test redemption",
         message: error instanceof Error ? error.message : "Unknown error"
       });
+    }
+  });
+
+  // On-demand backfill: re-syncs payments + orders for a given date range
+  apiRouter.post("/sync/backfill", async (req, res) => {
+    try {
+      const { start, end } = getEasternDateRange('today');
+      console.log(`[Backfill] Syncing payments and orders from ${start.toISOString()} to ${end.toISOString()}`);
+      const paymentResult = await syncService.syncPayments(start, end);
+      const orderResult = await syncService.syncOrders(start, end);
+      console.log('[Backfill] Complete:', { paymentResult, orderResult });
+      res.json({ success: true, payments: paymentResult, orders: orderResult });
+    } catch (err) {
+      console.error('[Backfill] Error:', err);
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
