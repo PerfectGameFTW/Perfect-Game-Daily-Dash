@@ -284,6 +284,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Refunds</span>
+              <span className="text-card-foreground font-medium">({formatCurrency(refunds)})</span>
+            </div>
+
+            <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Orders</span>
               <span className="text-card-foreground font-medium">{data?.totalOrders || 0}</span>
             </div>
