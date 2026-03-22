@@ -72,8 +72,9 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const discounts = typeof detailedTransactions?.discountsAndComps === 'number' ? detailedTransactions?.discountsAndComps : parseFloat(detailedTransactions?.discountsAndComps || '0');
   const depositClearings = typeof detailedTransactions?.depositClearings === 'number' ? detailedTransactions?.depositClearings : parseFloat(String(detailedTransactions?.depositClearings ?? 0));
   const tips = typeof detailedTransactions?.tips === 'number' ? detailedTransactions?.tips : parseFloat(String(detailedTransactions?.tips ?? 0));
+  const serviceCharges = typeof detailedTransactions?.serviceCharges === 'number' ? detailedTransactions?.serviceCharges : parseFloat(String(detailedTransactions?.serviceCharges ?? 0));
   
-  const calculatedNetRevenue = totalRevenue - refunds - discounts - depositClearings - tips;
+  const calculatedNetRevenue = totalRevenue - refunds - discounts - depositClearings - tips - serviceCharges;
 
   return (
     <div className="mt-4 space-y-6">
@@ -188,12 +189,13 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[260px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Event Deposit Redemptions − Tips − Discounts & Comps − Refunds</p>
+                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Event Deposit Redemptions − Tips − Service Charges − Discounts & Comps − Refunds</p>
                       {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
                       {tips > 0 && <p>Tips: −{formatCurrency(tips)}</p>}
+                      {serviceCharges > 0 && <p>Service Charges: −{formatCurrency(serviceCharges)}</p>}
                       {discounts > 0 && <p>Discounts & Comps: −{formatCurrency(discounts)}</p>}
                       {refunds > 0 && <p>Refunds: −{formatCurrency(refunds)}</p>}
-                      {refunds === 0 && discounts === 0 && depositClearings === 0 && tips === 0 && <p>No deductions in this period.</p>}
+                      {refunds === 0 && discounts === 0 && depositClearings === 0 && tips === 0 && serviceCharges === 0 && <p>No deductions in this period.</p>}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -265,6 +267,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Service Charges</span>
+              <span className="text-card-foreground font-medium">({formatCurrency(serviceCharges)})</span>
+            </div>
+
+            <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Orders</span>
               <span className="text-card-foreground font-medium">{data?.totalOrders || 0}</span>
             </div>
@@ -307,13 +314,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <span className="text-muted-foreground">Taxes</span>
               <span className="text-card-foreground font-medium">
                 {formatCurrency(detailedTransactions?.taxes || 0)}
-              </span>
-            </div>
-            
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Service Charges</span>
-              <span className="text-card-foreground font-medium">
-                {formatCurrency(detailedTransactions?.serviceCharges || 0)}
               </span>
             </div>
             
