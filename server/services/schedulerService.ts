@@ -93,6 +93,45 @@ export function startScheduler(): void {
   runBackfillUntilComplete().catch(err => {
     console.error('[Scheduler] Startup backfill error:', err);
   });
+
+  // On startup: auto-resume the historical orders/payments backfill if it was
+  // in progress when the server last stopped (e.g. restart mid-chunk).
+  resumeHistoricalOrdersPaymentsBackfillIfNeeded().catch(err => {
+    console.error('[Scheduler] Orders/payments backfill resume error:', err);
+  });
+}
+
+/**
+ * If a historical orders/payments backfill was started but not yet completed,
+ * automatically resume it so server restarts don't stall the backfill.
+ */
+async function resumeHistoricalOrdersPaymentsBackfillIfNeeded(): Promise<void> {
+  const state = await syncService.getSyncState('orders_payments_backfill');
+  if (!state) return;
+  if (state.isComplete && state.status === 'completed') {
+    console.log('[Scheduler] Historical orders/payments backfill already complete — skipping resume');
+    return;
+  }
+  if (state.isComplete) return;
+
+  const cp = state.lastCheckpoint as any ?? {};
+  const startDate = cp.startDate ? new Date(cp.startDate) : new Date('2025-01-01T00:00:00Z');
+  const endDate   = cp.endDate   ? new Date(cp.endDate)   : new Date();
+  const chunkDays = cp.chunkDays ?? 7;
+
+  console.log(`[Scheduler] Resuming historical orders/payments backfill from chunk ${cp.chunksCompleted ?? 0} of ${cp.totalChunks ?? '?'}`);
+
+  // Reset the stuck-detection timestamp so the guard lets us restart immediately
+  await syncService.updateSyncState(state.id, {
+    lastSyncedAt: new Date(0),
+  });
+
+  try {
+    const result = await syncService.startHistoricalOrdersPaymentsBackfill(startDate, endDate, chunkDays);
+    console.log(`[Scheduler] Backfill resumed: ${result.message}`);
+  } catch (err) {
+    console.error('[Scheduler] Failed to resume backfill:', err);
+  }
 }
 
 /**

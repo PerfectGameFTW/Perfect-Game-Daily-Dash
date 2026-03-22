@@ -12,6 +12,7 @@ import { eq, and, between, desc, asc, sql, isNull, gt } from 'drizzle-orm';
 import { 
   syncState,
   giftCards,
+  orders,
   type SyncState,
   type InsertSyncState
 } from '../../shared/schema';
@@ -1189,6 +1190,312 @@ export class SyncService {
       console.error('[HistoricalGiftCardBackfill] Error:', error);
       throw error;
     }
+  }
+
+  /**
+   * Starts a full historical backfill for orders and payments in the background.
+   *
+   * - Processes data in weekly chunks (configurable) to avoid Square API timeouts.
+   * - Persists progress in the 'orders_payments_backfill' sync state (lastCheckpoint JSONB)
+   *   so it can resume from the last completed chunk if the server restarts.
+   * - Updates existing orders' squareData so service charges / taxes stay accurate.
+   * - After all chunks complete, runs the three gift-card linking phases so gift-card
+   *   buckets (Bowling, Laser Tag, Gift Card) are accurate for historical dates.
+   * - Returns immediately; progress can be polled via getHistoricalBackfillStatus().
+   */
+  async startHistoricalOrdersPaymentsBackfill(
+    startDate: Date,
+    endDate: Date,
+    chunkDays: number = 7
+  ): Promise<{ alreadyRunning: boolean; message: string }> {
+    const SYNC_TYPE = 'orders_payments_backfill';
+
+    const existingState = await this.getSyncState(SYNC_TYPE);
+    if (existingState?.status === 'in_progress') {
+      const elapsed = existingState.lastSyncedAt
+        ? Date.now() - new Date(existingState.lastSyncedAt).getTime()
+        : Infinity;
+      if (elapsed < 10 * 60 * 1000) {
+        console.log('[HistoricalBackfill] Already in progress — skipping duplicate start');
+        return { alreadyRunning: true, message: 'Backfill is already running' };
+      }
+      console.log('[HistoricalBackfill] Previous run appears stuck — restarting');
+    }
+
+    // Build ordered list of chunk intervals
+    const chunks: Array<{ start: Date; end: Date }> = [];
+    let cursor = new Date(startDate);
+    while (cursor < endDate) {
+      const chunkEnd = new Date(Math.min(
+        cursor.getTime() + chunkDays * 24 * 60 * 60 * 1000,
+        endDate.getTime()
+      ));
+      chunks.push({ start: new Date(cursor), end: chunkEnd });
+      cursor = chunkEnd;
+    }
+
+    // Determine resume point from stored checkpoint
+    let resumeFromChunk = 0;
+    const savedCheckpoint = existingState?.lastCheckpoint as any;
+    if (savedCheckpoint?.chunksCompleted && typeof savedCheckpoint.chunksCompleted === 'number') {
+      resumeFromChunk = savedCheckpoint.chunksCompleted;
+      console.log(`[HistoricalBackfill] Resuming from chunk ${resumeFromChunk} of ${chunks.length}`);
+    }
+
+    const initialCheckpoint = {
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      chunkDays,
+      totalChunks: chunks.length,
+      chunksCompleted: resumeFromChunk,
+      lastCompletedDate: resumeFromChunk > 0 ? chunks[resumeFromChunk - 1].end.toISOString() : null,
+    };
+
+    let state: SyncState;
+    if (existingState) {
+      await this.updateSyncState(existingState.id, {
+        isComplete: false,
+        status: 'in_progress',
+        lastSyncedAt: new Date(),
+        processedCount: 0,
+        totalCount: chunks.length,
+        errorMessage: null,
+        lastCheckpoint: initialCheckpoint,
+      });
+      state = existingState;
+    } else {
+      state = await this.createSyncState({
+        syncType: SYNC_TYPE,
+        lastSyncedAt: new Date(),
+        isComplete: false,
+        processedCount: 0,
+        totalCount: chunks.length,
+        status: 'in_progress',
+        errorMessage: null,
+        lastCheckpoint: initialCheckpoint,
+      });
+    }
+
+    // Fire background loop — non-blocking
+    setImmediate(async () => {
+      console.log(`[HistoricalBackfill] Starting: ${chunks.length} chunks of ${chunkDays} days each, resuming from chunk ${resumeFromChunk}`);
+      let totalOrders = 0;
+      let totalPayments = 0;
+
+      for (let i = resumeFromChunk; i < chunks.length; i++) {
+        const { start, end } = chunks[i];
+        console.log(`[HistoricalBackfill] Chunk ${i + 1}/${chunks.length}: ${start.toISOString().slice(0, 10)} → ${end.toISOString().slice(0, 10)}`);
+
+        try {
+          // --- Orders ---
+          const squareOrders = await squareClient.fetchOrders(start, end);
+          let chunkOrdersCreated = 0;
+          let chunkOrdersSkipped = 0;
+          let chunkOrdersUpdated = 0;
+
+          for (const squareOrder of squareOrders) {
+            try {
+              const orderData = squareClient.convertSquareOrderToOrder(squareOrder);
+              let existing: any = null;
+              try { existing = await orderService.getOrderBySquareId(orderData.squareId); } catch { }
+
+              if (existing) {
+                // Refresh squareData so service charges and taxes stay current
+                await db.update(orders)
+                  .set({ squareData: orderData.squareData, totalTax: orderData.totalTax, totalDiscount: orderData.totalDiscount })
+                  .where(eq(orders.squareId, orderData.squareId));
+                chunkOrdersUpdated++;
+              } else {
+                const created = await orderService.createOrder(orderData);
+                if (squareOrder.lineItems && created?.id) {
+                  for (const li of squareOrder.lineItems) {
+                    try {
+                      await orderService.createOrderItem(
+                        squareClient.convertSquareLineItemToOrderLineItem(li, created.id)
+                      );
+                    } catch { }
+                  }
+                }
+                chunkOrdersCreated++;
+              }
+            } catch (err) {
+              chunkOrdersSkipped++;
+              console.error(`[HistoricalBackfill] Order error:`, err);
+            }
+          }
+
+          totalOrders += squareOrders.length;
+          console.log(`[HistoricalBackfill] Chunk ${i + 1} orders: ${chunkOrdersCreated} created, ${chunkOrdersUpdated} updated, ${chunkOrdersSkipped} skipped`);
+
+          // --- Payments ---
+          const squarePayments = await squareClient.fetchPayments(start, end);
+          let chunkPaymentsCreated = 0;
+          let chunkPaymentsUpdated = 0;
+          let chunkPaymentsSkipped = 0;
+
+          for (const squarePayment of squarePayments) {
+            try {
+              const paymentData = squareClient.convertSquarePaymentToTransaction(squarePayment);
+              if (!paymentData.amount || paymentData.amount === 0) continue;
+
+              let existing: any = null;
+              try { existing = await paymentService.getPaymentBySquareId(paymentData.squareId); } catch { }
+
+              if (existing) {
+                await paymentService.updatePayment(paymentData.squareId, {
+                  status: paymentData.status,
+                  amount: paymentData.amount,
+                  squareData: paymentData.squareData,
+                });
+                chunkPaymentsUpdated++;
+              } else {
+                await paymentService.createPayment(paymentData);
+                chunkPaymentsCreated++;
+              }
+            } catch (err) {
+              chunkPaymentsSkipped++;
+              console.error(`[HistoricalBackfill] Payment error:`, err);
+            }
+          }
+
+          totalPayments += squarePayments.length;
+          console.log(`[HistoricalBackfill] Chunk ${i + 1} payments: ${chunkPaymentsCreated} created, ${chunkPaymentsUpdated} updated, ${chunkPaymentsSkipped} skipped`);
+
+        } catch (err) {
+          console.error(`[HistoricalBackfill] Chunk ${i + 1} failed entirely:`, err);
+          await this.updateSyncState(state.id, {
+            errorMessage: `Chunk ${i + 1} (${start.toISOString().slice(0, 10)}): ${err instanceof Error ? err.message : String(err)}`,
+            lastCheckpoint: {
+              startDate: startDate.toISOString(),
+              endDate: endDate.toISOString(),
+              chunkDays,
+              totalChunks: chunks.length,
+              chunksCompleted: i,
+              lastCompletedDate: i > 0 ? chunks[i - 1].end.toISOString() : null,
+              lastError: `Chunk ${i + 1}: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          });
+          await new Promise(r => setTimeout(r, 5000));
+          continue;
+        }
+
+        // Checkpoint saved after each successful chunk
+        const checkpoint = {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          chunkDays,
+          totalChunks: chunks.length,
+          chunksCompleted: i + 1,
+          lastCompletedDate: end.toISOString(),
+        };
+        await this.updateSyncState(state.id, {
+          processedCount: totalOrders + totalPayments,
+          status: `in_progress — chunk ${i + 1} of ${chunks.length} complete`,
+          lastSyncedAt: new Date(),
+          lastCheckpoint: checkpoint,
+          errorMessage: null,
+        });
+
+        // Brief pause between chunks to stay well inside Square API rate limits
+        await new Promise(r => setTimeout(r, 1500));
+      }
+
+      // All chunks complete — run gift-card linking phases
+      console.log('[HistoricalBackfill] All chunks done. Running gift-card linking phases...');
+      try {
+        const r0 = await giftCardService.backfillActivationOrderIdsFromActivateHistory();
+        console.log(`[HistoricalBackfill] Phase 0: ${r0.scanned} events scanned, ${r0.linked} order IDs linked`);
+      } catch (err) {
+        console.error('[HistoricalBackfill] Phase 0 failed:', err);
+      }
+      try {
+        const r1 = await giftCardService.syncMissingActivationOrders();
+        console.log(`[HistoricalBackfill] Phase 1: ${r1.inserted} missing orders inserted`);
+      } catch (err) {
+        console.error('[HistoricalBackfill] Phase 1 failed:', err);
+      }
+      try {
+        const r2 = await giftCardService.backfillActivationSquareOrderIds();
+        console.log(`[HistoricalBackfill] Phase 2: ${r2.updated} gift cards linked via heuristic`);
+      } catch (err) {
+        console.error('[HistoricalBackfill] Phase 2 failed:', err);
+      }
+
+      await this.updateSyncState(state.id, {
+        isComplete: true,
+        status: 'completed',
+        lastSyncedAt: new Date(),
+        processedCount: totalOrders + totalPayments,
+        lastCheckpoint: {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          chunkDays,
+          totalChunks: chunks.length,
+          chunksCompleted: chunks.length,
+          lastCompletedDate: endDate.toISOString(),
+        },
+      });
+      console.log(`[HistoricalBackfill] COMPLETE — ${totalOrders} orders + ${totalPayments} payments across ${chunks.length} chunks`);
+    });
+
+    return { alreadyRunning: false, message: `Backfill started: ${chunks.length} chunks of ${chunkDays} days each, resuming from chunk ${resumeFromChunk + 1}` };
+  }
+
+  /**
+   * Returns the current status of the historical orders/payments backfill.
+   */
+  async getHistoricalBackfillStatus(): Promise<{
+    found: boolean;
+    status: string;
+    isRunning: boolean;
+    isComplete: boolean;
+    chunksCompleted: number;
+    totalChunks: number;
+    percentComplete: number;
+    lastCompletedDate: string | null;
+    processedCount: number;
+    errorMessage: string | null;
+    startDate: string | null;
+    endDate: string | null;
+    lastUpdated: string | null;
+  }> {
+    const state = await this.getSyncState('orders_payments_backfill');
+    if (!state) {
+      return {
+        found: false,
+        status: 'not_started',
+        isRunning: false,
+        isComplete: false,
+        chunksCompleted: 0,
+        totalChunks: 0,
+        percentComplete: 0,
+        lastCompletedDate: null,
+        processedCount: 0,
+        errorMessage: null,
+        startDate: null,
+        endDate: null,
+        lastUpdated: null,
+      };
+    }
+
+    const cp = state.lastCheckpoint as any ?? {};
+    const total = cp.totalChunks ?? state.totalCount ?? 0;
+    const done = cp.chunksCompleted ?? 0;
+    return {
+      found: true,
+      status: state.status ?? 'unknown',
+      isRunning: !state.isComplete && (state.status ?? '').startsWith('in_progress'),
+      isComplete: state.isComplete ?? false,
+      chunksCompleted: done,
+      totalChunks: total,
+      percentComplete: total > 0 ? Math.round((done / total) * 100) : 0,
+      lastCompletedDate: cp.lastCompletedDate ?? null,
+      processedCount: state.processedCount ?? 0,
+      errorMessage: state.errorMessage ?? null,
+      startDate: cp.startDate ?? null,
+      endDate: cp.endDate ?? null,
+      lastUpdated: state.lastSyncedAt ? new Date(state.lastSyncedAt).toISOString() : null,
+    };
   }
 }
 

@@ -155,42 +155,44 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     
     console.log('Orders search request:', JSON.stringify(searchRequest, null, 2));
 
-    // Make API request to Square Orders API
+    // Make API request to Square Orders API with cursor-based pagination
     try {
-      const response = await ordersApi.searchOrders(searchRequest);
-      console.log('Square Orders API response status:', response.statusCode);
-      
-      if (response.result && response.result.orders && Array.isArray(response.result.orders)) {
-        console.log(`Found ${response.result.orders.length} orders from Square API`);
-        
-        // Additional logging of first order for debugging
-        if (response.result.orders.length > 0) {
-          const firstOrder = response.result.orders[0];
-          console.log('Sample order data structure:', JSON.stringify({
-            id: firstOrder.id || 'missing',
-            state: firstOrder.state || 'missing',
-            createdAt: firstOrder.createdAt || 'missing',
-            lineItemCount: firstOrder.lineItems?.length || 0
-          }, null, 2));
+      const allOrders: any[] = [];
+      let cursor: string | undefined = undefined;
+      let page = 0;
+
+      do {
+        page++;
+        const request: any = { ...searchRequest };
+        if (cursor) request.cursor = cursor;
+
+        const response = await ordersApi.searchOrders(request);
+
+        if (!response.result || !Array.isArray(response.result.orders)) {
+          if (page === 1) console.warn('No orders found in Square API response');
+          break;
         }
-        
-        // Filter out any potentially invalid orders and convert to our schema format
-        const validOrders = response.result.orders.filter(order => {
-          if (!order || !order.id) {
-            console.warn('Skipping order with missing ID');
-            return false;
-          }
-          return true;
-        });
-        
-        console.log(`Found ${validOrders.length} valid orders out of ${response.result.orders.length} total`);
-        
-        // Return the raw valid orders for processing
-        return validOrders;
-      } else {
-        console.warn('No orders found in Square API response:', JSON.stringify(response.result, null, 2));
-        return [];
+
+        const pageOrders = response.result.orders.filter((o: any) => o && o.id);
+        allOrders.push(...pageOrders);
+        cursor = (response.result as any).cursor ?? undefined;
+
+        console.log(`Orders page ${page}: ${pageOrders.length} orders (cursor: ${cursor ? 'yes' : 'none'})`);
+      } while (cursor);
+
+      console.log(`Found ${allOrders.length} total orders from Square API (${page} page${page !== 1 ? 's' : ''})`);
+
+      if (allOrders.length > 0) {
+        const firstOrder = allOrders[0];
+        console.log('Sample order data structure:', JSON.stringify({
+          id: firstOrder.id || 'missing',
+          state: firstOrder.state || 'missing',
+          createdAt: firstOrder.createdAt || 'missing',
+          lineItemCount: firstOrder.lineItems?.length || 0
+        }, null, 2));
       }
+
+      return allOrders;
     } catch (apiError) {
       console.error('Square Orders API error:', {
         error: apiError,

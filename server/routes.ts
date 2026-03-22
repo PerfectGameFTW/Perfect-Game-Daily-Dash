@@ -1109,15 +1109,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // On-demand backfill: re-syncs payments + orders for a given date range
+  // Historical backfill status — must be registered BEFORE the POST route
+  apiRouter.get("/sync/backfill/status", async (_req, res) => {
+    try {
+      const status = await syncService.getHistoricalBackfillStatus();
+      res.json(status);
+    } catch (err) {
+      console.error('[BackfillStatus] Error:', err);
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Historical backfill: syncs all orders + payments for a given date range in weekly chunks.
+  // Body params:
+  //   startDate  — ISO date string, e.g. "2025-01-01"  (defaults to Jan 1 2025)
+  //   endDate    — ISO date string, e.g. "2026-03-22"  (defaults to now)
+  //   chunkDays  — number of days per chunk            (defaults to 7)
+  // Returns immediately with 202 Accepted; poll GET /api/sync/backfill/status for progress.
   apiRouter.post("/sync/backfill", async (req, res) => {
     try {
-      const { start, end } = getEasternDateRange('today');
-      console.log(`[Backfill] Syncing payments and orders from ${start.toISOString()} to ${end.toISOString()}`);
-      const paymentResult = await syncService.syncPayments(start, end);
-      const orderResult = await syncService.syncOrders(start, end);
-      console.log('[Backfill] Complete:', { paymentResult, orderResult });
-      res.json({ success: true, payments: paymentResult, orders: orderResult });
+      const { startDate, endDate, chunkDays } = req.body ?? {};
+
+      const start = startDate ? new Date(startDate) : new Date('2025-01-01T00:00:00Z');
+      const end   = endDate   ? new Date(endDate)   : new Date();
+      const chunk = typeof chunkDays === 'number' && chunkDays > 0 ? chunkDays : 7;
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({ error: 'Invalid startDate or endDate' });
+      }
+      if (start >= end) {
+        return res.status(400).json({ error: 'startDate must be before endDate' });
+      }
+
+      console.log(`[Backfill] Received request: ${start.toISOString()} → ${end.toISOString()}, chunkDays=${chunk}`);
+      const result = await syncService.startHistoricalOrdersPaymentsBackfill(start, end, chunk);
+
+      if (result.alreadyRunning) {
+        return res.status(409).json({ success: false, message: result.message });
+      }
+
+      res.status(202).json({ success: true, message: result.message });
     } catch (err) {
       console.error('[Backfill] Error:', err);
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
