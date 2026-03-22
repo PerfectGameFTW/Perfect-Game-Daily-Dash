@@ -178,7 +178,22 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
         <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
-              <h3 className="text-sm font-medium text-muted-foreground">Net Sales</h3>
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-medium text-muted-foreground">Net Sales</h3>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[260px] text-xs space-y-1">
+                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Refunds − Discounts & Comps</p>
+                      {refunds > 0 && <p>Refunds: −{formatCurrency(refunds)}</p>}
+                      {discounts > 0 && <p>Discounts & Comps: −{formatCurrency(discounts)}</p>}
+                      {refunds === 0 && discounts === 0 && <p>No deductions in this period.</p>}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(calculatedNetRevenue)}</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
