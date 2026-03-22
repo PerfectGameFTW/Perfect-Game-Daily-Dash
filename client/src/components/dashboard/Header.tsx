@@ -80,68 +80,68 @@ export default function Header({
             <Activity className="h-8 w-8 text-primary mr-2" />
             <h1 className="text-2xl font-bold text-card-foreground">Perfect Game Analytics</h1>
           </div>
-          <div className="flex items-center">
-            <div className="flex items-center bg-background/90 p-1 rounded-lg shadow-lg border border-border mr-4">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      className="p-2 cursor-pointer hover:bg-accent/50 rounded-full transition-colors"
-                      onClick={handlePrevDate}
-                      aria-label="Previous date"
-                    >
-                      <ChevronLeft className="h-5 w-5 text-primary" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <p>Previous {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : 'period'}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              
-              <button 
-                className="flex items-center gap-2 text-center font-medium text-foreground mx-2 cursor-pointer px-4 py-1.5 hover:bg-accent/50 rounded-md transition-colors"
-                onClick={onOpenTimeframeModal}
-              >
-                <Calendar className="h-4 w-4 text-primary" />
-                <span>{displayDate}</span>
-              </button>
-              
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      className="p-2 cursor-pointer hover:bg-accent/50 rounded-full transition-colors"
-                      onClick={handleNextDate}
-                      aria-label="Next date"
-                    >
-                      <ChevronRight className="h-5 w-5 text-primary" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <p>Next {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : 'period'}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-            
-            <div className="flex items-center gap-3">
-              {lastSyncedLabel && (
+          <div className="flex flex-col items-center gap-1.5">
+            <div className="flex items-center">
+              <div className="flex items-center bg-background/90 p-1 rounded-lg shadow-lg border border-border md:mr-4">
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-default">
-                        <Clock className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Synced {lastSyncedLabel}</span>
-                      </div>
+                      <button
+                        className="p-2 cursor-pointer hover:bg-accent/50 rounded-full transition-colors"
+                        onClick={handlePrevDate}
+                        aria-label="Previous date"
+                      >
+                        <ChevronLeft className="h-5 w-5 text-primary" />
+                      </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
-                      <p>Last data sync from Square</p>
+                      <p>Previous {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : 'period'}</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              )}
+                
+                <button 
+                  className="flex items-center gap-2 text-center font-medium text-foreground mx-2 cursor-pointer px-4 py-1.5 hover:bg-accent/50 rounded-md transition-colors"
+                  onClick={onOpenTimeframeModal}
+                >
+                  <Calendar className="h-4 w-4 text-primary" />
+                  <span>{displayDate}</span>
+                </button>
+                
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="p-2 cursor-pointer hover:bg-accent/50 rounded-full transition-colors"
+                        onClick={handleNextDate}
+                        aria-label="Next date"
+                      >
+                        <ChevronRight className="h-5 w-5 text-primary" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>Next {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : 'period'}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              
+              <div className="hidden md:flex items-center gap-3">
+                {lastSyncedLabel && (
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Clock className="h-3.5 w-3.5" />
+                    <span>Synced {lastSyncedLabel}</span>
+                  </div>
+                )}
+              </div>
             </div>
+            
+            {lastSyncedLabel && (
+              <div className="flex md:hidden items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="h-3 w-3" />
+                <span>Synced {lastSyncedLabel}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
