@@ -1,9 +1,8 @@
-import { ChevronLeft, ChevronRight, Calendar, RotateCw, Activity, Clock } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, Activity, Clock } from "lucide-react";
 import { DateRange } from "@shared/schema";
 import { format, isSameDay, subDays, formatDistanceToNow } from "date-fns";
 import { navigateDate } from "@/lib/dateUtils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 
 interface HeaderProps {
@@ -12,8 +11,6 @@ interface HeaderProps {
   customEndDate?: Date;
   onDateRangeChange: (range: DateRange, start?: Date, end?: Date) => void;
   onOpenTimeframeModal: () => void;
-  onSync?: () => void;
-  isSyncing?: boolean;
 }
 
 export default function Header({ 
@@ -22,8 +19,6 @@ export default function Header({
   customEndDate, 
   onDateRangeChange,
   onOpenTimeframeModal,
-  onSync,
-  isSyncing = false
 }: HeaderProps) {
   const { data: syncStatus } = useQuery<{ overallLastSynced: string | null }>({
     queryKey: ['/api/sync/status'],
@@ -142,27 +137,6 @@ export default function Header({
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
                       <p>Last data sync from Square</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
-              {onSync && (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button 
-                        variant="default" 
-                        size="sm"
-                        onClick={onSync}
-                        disabled={isSyncing}
-                        className="gap-2 shadow-lg shadow-primary/20"
-                      >
-                        <RotateCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                        <span>{isSyncing ? 'Syncing...' : 'Sync Data'}</span>
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>Manually sync data from Square API</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

@@ -3,11 +3,11 @@
  *
  * Two sync schedules:
  *
- * EVERY 5 MINUTES — keeps the dashboard current throughout the day:
- *   1. Payments  — last 15 minutes (3x the interval for safe overlap)
+ * EVERY 60 SECONDS — keeps the dashboard current throughout the day:
+ *   1. Payments  — last 15 minutes (safe overlap window)
  *   2. Orders    — last 15 minutes
  *   3. Gift cards — INCREMENTAL: only fetches ACTIVATE events since last sync
- *      (fast, seconds not minutes; new cards appear within one 5-min cycle)
+ *      (fast, seconds not minutes; new cards appear within one cycle)
  *
  * NIGHTLY 3 AM ET — slower housekeeping:
  *   1. Gift cards — full Square list scan for reconciliation
@@ -31,8 +31,8 @@ export function startScheduler(): void {
   }
   schedulerStarted = true;
 
-  // Every 5 minutes — real-time dashboard freshness
-  cron.schedule('*/5 * * * *', runFrequentSync, {
+  // Every 60 seconds — real-time dashboard freshness
+  cron.schedule('* * * * *', runFrequentSync, {
     timezone: 'America/New_York',
   });
 
@@ -41,7 +41,7 @@ export function startScheduler(): void {
     timezone: 'America/New_York',
   });
 
-  console.log('[Scheduler] Frequent sync scheduled every 5 minutes');
+  console.log('[Scheduler] Frequent sync scheduled every 60 seconds');
   console.log('[Scheduler] Nightly deep sync scheduled at 3:00 AM Eastern Time');
 
   // On startup: three-phase activation_square_order_id backfill (non-blocking, idempotent).

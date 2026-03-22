@@ -17,7 +17,6 @@ export default function Dashboard() {
   const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined);
   const [timeframeModalOpen, setTimeframeModalOpen] = useState(false);
   const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const isMobile = useMobile();
   const { toast } = useToast();
@@ -41,37 +40,6 @@ export default function Dashboard() {
       });
 
     }, 10);
-  };
-
-  const handleSync = async () => {
-    if (isSyncing) return;
-
-    setIsSyncing(true);
-    try {
-      const response = await fetch('/api/sync/quick', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      if (!response.ok) {
-        throw new Error('Sync failed');
-      }
-
-      toast({
-        title: "Sync Complete",
-        description: "Square data has been synced successfully.",
-        variant: "default",
-      });
-    } catch (error) {
-      console.error('Sync error:', error);
-      toast({
-        title: "Sync Failed",
-        description: "There was an error syncing with Square. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSyncing(false);
-    }
   };
 
   const renderTabContent = () => {
@@ -113,8 +81,6 @@ export default function Dashboard() {
         customEndDate={customEndDate}
         onDateRangeChange={handleDateRangeChange}
         onOpenTimeframeModal={() => setTimeframeModalOpen(true)}
-        onSync={handleSync}
-        isSyncing={isSyncing}
       />
 
       {/* No top navigation - using only bottom navigation */}
