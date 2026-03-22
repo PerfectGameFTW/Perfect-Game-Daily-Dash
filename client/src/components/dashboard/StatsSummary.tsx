@@ -75,7 +75,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const autoGratuity = typeof detailedTransactions?.autoGratuity === 'number' ? detailedTransactions?.autoGratuity : parseFloat(String(detailedTransactions?.autoGratuity ?? 0));
   const taxes = typeof detailedTransactions?.taxes === 'number' ? detailedTransactions?.taxes : parseFloat(String(detailedTransactions?.taxes ?? 0));
   
-  const calculatedNetRevenue = totalRevenue - refunds - returns - discounts - depositClearings - tips - serviceCharges - autoGratuity - taxes;
+  const calculatedNetRevenue = totalRevenue - returns - discounts - depositClearings - tips - serviceCharges - autoGratuity - taxes;
 
   return (
     <div className="mt-4 space-y-6">
@@ -190,16 +190,16 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[260px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Event Deposit Redemptions − Tips − Service Charges − Auto Gratuity − Taxes − Discounts & Comps − Refunds − Returns</p>
+                      <p className="font-semibold mb-1">Net Sales = Total Revenue − Event Deposit Redemptions − Tips − Service Charges − Auto Gratuity − Taxes − Discounts & Comps − Returns</p>
+                      <p className="text-muted-foreground/80 text-[10px]">Total Revenue already excludes refunds</p>
                       {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
                       {tips > 0 && <p>Tips: −{formatCurrency(tips)}</p>}
                       {serviceCharges > 0 && <p>Service Charges: −{formatCurrency(serviceCharges)}</p>}
                       {autoGratuity > 0 && <p>Auto Gratuity: −{formatCurrency(autoGratuity)}</p>}
                       {taxes > 0 && <p>Taxes: −{formatCurrency(taxes)}</p>}
                       {discounts > 0 && <p>Discounts & Comps: −{formatCurrency(discounts)}</p>}
-                      {refunds > 0 && <p>Refunds: −{formatCurrency(refunds)}</p>}
                       {returns > 0 && <p>Returns: −{formatCurrency(returns)}</p>}
-                      {refunds === 0 && returns === 0 && discounts === 0 && depositClearings === 0 && tips === 0 && serviceCharges === 0 && autoGratuity === 0 && taxes === 0 && <p>No deductions in this period.</p>}
+                      {returns === 0 && discounts === 0 && depositClearings === 0 && tips === 0 && serviceCharges === 0 && autoGratuity === 0 && taxes === 0 && <p>No deductions in this period.</p>}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
