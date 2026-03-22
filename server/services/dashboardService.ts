@@ -191,6 +191,7 @@ export class DashboardService {
     tripleseat: number;
     tips: number;
     serviceCharges: number;
+    autoGratuity: number;
     taxes: number;
     refunds: number;
     returns: number;
@@ -214,6 +215,7 @@ export class DashboardService {
     let tripleseat = 0;
     let tips = 0;
     let serviceCharges = 0;
+    let autoGratuity = 0;
     let taxes = 0;
     let refundsTotal = 0;
     let returnsTotal = 0;
@@ -311,7 +313,12 @@ export class DashboardService {
       if (orderData?.serviceCharges && Array.isArray(orderData.serviceCharges)) {
         for (const charge of orderData.serviceCharges) {
           if (charge.appliedMoney?.amount) {
-            serviceCharges += Number(charge.appliedMoney.amount) / 100;
+            const amount = Number(charge.appliedMoney.amount) / 100;
+            if (charge.type === 'AUTO_GRATUITY') {
+              autoGratuity += amount;
+            } else {
+              serviceCharges += amount;
+            }
           }
         }
       }
@@ -322,6 +329,7 @@ export class DashboardService {
       tripleseat,
       tips,
       serviceCharges,
+      autoGratuity,
       taxes: Math.max(taxes - returnTaxTotal, 0),
       refunds: refundsTotal,
       returns: returnsTotal,
