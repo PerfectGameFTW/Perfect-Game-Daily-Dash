@@ -376,7 +376,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
                     <div className="flex justify-between items-center pl-6">
                       <span className="text-muted-foreground text-sm">Cost Plus Reimbursements</span>
-                      <span className="text-green-400 font-medium">+{formatCurrency(feeReimbursements)}</span>
+                      <span className="text-card-foreground font-medium">+{formatCurrency(feeReimbursements)}</span>
                     </div>
 
                     {thirdPartyFees > 0 && (
