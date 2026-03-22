@@ -214,6 +214,7 @@ export class DashboardService {
     let taxes = 0;
     let refunds = 0;
     let discountsAndComps = 0;
+    let depositClearings = 0;
     
     // Calculate values from payments
     for (const payment of payments) {
@@ -228,6 +229,15 @@ export class DashboardService {
       // Tips: Square stores tipMoney as a Money object { amount (cents), currency }
       if (squareData.tipMoney?.amount) {
         tips += Number(squareData.tipMoney.amount) / 100;
+      }
+      
+      // Deposit clearings: EXTERNAL payments with type OTHER are deposits applied
+      // against a prior Partywirks/third-party deposit and should not count as revenue
+      if (
+        squareData.sourceType === 'EXTERNAL' &&
+        squareData.externalDetails?.type === 'OTHER'
+      ) {
+        depositClearings += payment.amount;
       }
       
       // Process refunds (negative amounts)
@@ -284,6 +294,7 @@ export class DashboardService {
       taxes,
       refunds,
       discountsAndComps,
+      depositClearings,
       giftCardSales,
       totalTransactions: payments.length
     };
