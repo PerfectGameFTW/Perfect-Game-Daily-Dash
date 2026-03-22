@@ -185,7 +185,7 @@ export async function runFrequentSync(): Promise<void> {
   // Use start-of-today (Eastern) as the lookback for payments and orders so
   // tip adjustments, voided payments, and other mid-day edits are picked up
   // on every cycle — not just within a 15-minute window.
-  const startOfTodayET = getStartOfTodayEastern();
+  const startOfTodayET = getStartOfBusinessDayEastern();
 
   try {
     const result = await syncService.syncPayments(startOfTodayET);
@@ -227,12 +227,15 @@ export async function runFrequentSync(): Promise<void> {
   broadcast('data-updated', { syncType: 'frequent' });
 }
 
-function getStartOfTodayEastern(): Date {
+function getStartOfBusinessDayEastern(): Date {
   const now = new Date();
   const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const startOfDay = new Date(eastern);
-  startOfDay.setHours(0, 0, 0, 0);
-  const diffMs = eastern.getTime() - startOfDay.getTime();
+  const businessDayStart = new Date(eastern);
+  businessDayStart.setHours(6, 0, 0, 0);
+  if (eastern < businessDayStart) {
+    businessDayStart.setDate(businessDayStart.getDate() - 1);
+  }
+  const diffMs = eastern.getTime() - businessDayStart.getTime();
   return new Date(now.getTime() - diffMs);
 }
 
