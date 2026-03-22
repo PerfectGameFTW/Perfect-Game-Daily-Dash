@@ -247,8 +247,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           
           <div className="space-y-5">
             <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Gross Payments</span>
-              <span className="text-card-foreground font-medium">{formatCurrency(grossPayments)}</span>
+              <span className="text-card-foreground font-semibold">Gross Payments</span>
+              <span className="text-card-foreground font-semibold">{formatCurrency(grossPayments)}</span>
             </div>
 
             <div className="flex justify-between items-center">
