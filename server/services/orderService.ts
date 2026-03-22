@@ -6,7 +6,7 @@
  */
 
 import { db } from '../db';
-import { eq, and, between, desc, asc, sql, isNull, gt, count, sum } from 'drizzle-orm';
+import { eq, and, between, desc, asc, sql, isNull, gt, count, sum, inArray } from 'drizzle-orm';
 import { 
   orders,
   orderLineItems,
@@ -201,7 +201,7 @@ export class OrderService {
     const baseQuery = db.select().from(orders)
       .where(and(
         sql`${effectiveDate} BETWEEN ${start} AND ${end}`,
-        eq(orders.status, 'COMPLETED')
+        inArray(orders.status, ['COMPLETED', 'OPEN'])
       ))
       .orderBy(desc(sql`COALESCE(${orders.closedAt}, ${orders.createdAt})`));
     
@@ -227,7 +227,7 @@ export class OrderService {
     const effectiveDate = sql`COALESCE(${orders.closedAt}, ${orders.createdAt})`;
     const dateAndStatusFilter = and(
       sql`${effectiveDate} BETWEEN ${start} AND ${end}`,
-      eq(orders.status, 'COMPLETED')
+      inArray(orders.status, ['COMPLETED', 'OPEN'])
     );
 
     const summaryResult = await db.select({
@@ -296,7 +296,7 @@ export class OrderService {
       FROM ${orderLineItems}
       INNER JOIN ${orders} ON ${orderLineItems.orderId} = ${orders.id}
       WHERE COALESCE(${orders.closedAt}, ${orders.createdAt}) BETWEEN ${start} AND ${end}
-        AND ${orders.status} = 'COMPLETED'
+        AND ${orders.status} IN ('COMPLETED', 'OPEN')
       GROUP BY ${orderLineItems.category}
       ORDER BY sum_amount DESC
     `);
@@ -354,7 +354,7 @@ export class OrderService {
         COALESCE(SUM(${orders.totalMoney}), 0) AS amount
       FROM ${orders}
       WHERE COALESCE(${orders.closedAt}, ${orders.createdAt}) BETWEEN ${start} AND ${end}
-        AND ${orders.status} = 'COMPLETED'
+        AND ${orders.status} IN ('COMPLETED', 'OPEN')
       GROUP BY hour
       ORDER BY hour
     `);
@@ -396,7 +396,7 @@ export class OrderService {
     }).from(orders)
       .where(and(
         sql`${effectiveDate} BETWEEN ${start} AND ${end}`,
-        eq(orders.status, 'COMPLETED')
+        inArray(orders.status, ['COMPLETED', 'OPEN'])
       ));
     
     return result[0]?.totalOrders || 0;
