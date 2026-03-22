@@ -7,6 +7,16 @@ import { db, sql, pool } from "./db"; // Import db, sql and pool
 import { authService } from "./services/authService";
 import { startScheduler } from "./services/schedulerService";
 
+// Prevent unhandled async errors from crashing the process.
+// Node.js 15+ exits by default on unhandledRejection — this keeps the server alive.
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled promise rejection (caught by global handler):', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (caught by global handler):', err);
+});
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -115,8 +125,9 @@ async function exitWithError(error: unknown) {
       const status = err.status || err.statusCode || 500;
       const message = err.message || "Internal Server Error";
       log(`Error handler caught: ${err.message}`, 'error');
-      res.status(status).json({ message });
-      throw err;
+      if (!res.headersSent) {
+        res.status(status).json({ message });
+      }
     });
 
     // Vite setup with enhanced logging
