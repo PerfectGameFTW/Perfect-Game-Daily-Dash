@@ -1,5 +1,5 @@
 import { apiRequest } from "./queryClient";
-import { DateRange, DailySummary, GiftCardSummary, DetailedTransactionBreakdown } from "@shared/schema";
+import { DateRange, DailySummary, GiftCardSummary, DetailedTransactionBreakdown, ProcessingFeeBreakdown } from "@shared/schema";
 
 const toFloat = (v: unknown): number => typeof v === 'number' ? v : parseFloat(String(v ?? 0)) || 0;
 const toInt = (v: unknown): number => typeof v === 'number' ? v : parseInt(String(v ?? 0), 10) || 0;
@@ -87,6 +87,16 @@ export const fetchDetailedTransactions = async (
     const queryString = buildQueryString(dateRange, startDate, endDate);
     const response = await apiRequest('GET', `/api/detailed-transactions?${queryString}`);
     
+    const parseFees = (f: unknown): ProcessingFeeBreakdown => {
+      const obj = (f && typeof f === 'object' ? f : {}) as Record<string, unknown>;
+      return {
+        initialFees: toFloat(obj.initialFees),
+        reimbursements: toFloat(obj.reimbursements),
+        thirdPartyFees: toFloat(obj.thirdPartyFees),
+        netFees: toFloat(obj.netFees),
+      };
+    };
+
     const parseBreakdown = (d: Record<string, unknown>): DetailedTransactionBreakdown => ({
       partywirks: toFloat(d.partywirks),
       bowlingWebResDeposits: toFloat(d.bowlingWebResDeposits),
@@ -102,6 +112,7 @@ export const fetchDetailedTransactions = async (
       depositClearings: toFloat(d.depositClearings),
       giftCardSales: toFloat(d.giftCardSales),
       giftCardRedemptions: toFloat(d.giftCardRedemptions),
+      processingFees: parseFees(d.processingFees),
       totalTransactions: toInt(d.totalTransactions)
     });
 

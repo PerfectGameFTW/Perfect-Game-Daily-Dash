@@ -20,6 +20,7 @@ import cron from 'node-cron';
 import { syncService } from './syncService';
 import { backfillGiftCardActivationAmounts } from './enhancedGiftCardFix';
 import { giftCardService } from './giftCardService';
+import { payoutService } from './payoutService';
 import { broadcast } from '../ws';
 
 let schedulerStarted = false;
@@ -100,6 +101,17 @@ export function startScheduler(): void {
   resumeHistoricalOrdersPaymentsBackfillIfNeeded().catch(err => {
     console.error('[Scheduler] Orders/payments backfill resume error:', err);
   });
+
+  // On startup: sync payout fee data (non-blocking)
+  (async () => {
+    try {
+      console.log('[Scheduler] Starting payout fee sync in background...');
+      const result = await payoutService.syncPayoutFeesIncremental();
+      console.log(`[Scheduler] Payout fees synced: ${result.payoutsProcessed} payouts, ${result.entriesCreated} entries`);
+    } catch (err) {
+      console.error('[Scheduler] Payout fee sync error:', err);
+    }
+  })();
 }
 
 /**
@@ -318,6 +330,14 @@ export async function runNightlySync(): Promise<void> {
     console.log(`${label} Phase 2: ${r.updated} gift card(s) linked via heuristic`);
   } catch (err) {
     console.error(`${label} Phase 2 (heuristic backfill) failed (non-fatal):`, err);
+  }
+
+  try {
+    console.log(`${label} Payout fee sync`);
+    const r = await payoutService.syncPayoutFeesIncremental();
+    console.log(`${label} Payout fees: ${r.payoutsProcessed} payouts, ${r.entriesCreated} entries`);
+  } catch (err) {
+    console.error(`${label} Payout fee sync failed (non-fatal):`, err);
   }
 
   console.log(`${label} Nightly deep sync complete.`);

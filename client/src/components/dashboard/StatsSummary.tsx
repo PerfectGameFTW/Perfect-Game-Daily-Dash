@@ -79,6 +79,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const autoGratuity = toNum(detailedTransactions?.autoGratuity);
   const taxes = toNum(detailedTransactions?.taxes);
   
+  const processingFees = detailedTransactions?.processingFees;
+  const initialFees = toNum(processingFees?.initialFees);
+  const feeReimbursements = toNum(processingFees?.reimbursements);
+  const thirdPartyFees = toNum(processingFees?.thirdPartyFees);
+  const netProcessingFees = toNum(processingFees?.netFees);
+
   const refundsAndReturns = refunds + returns;
   const trueRevenue = totalRevenue - depositClearings;
   const calculatedNetRevenue = trueRevenue - discounts - tips - serviceCharges - autoGratuity - taxes;
@@ -328,6 +334,54 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <span className="text-card-foreground font-medium">Net Revenue</span>
               <span className="text-card-foreground font-medium">{formatCurrency(calculatedNetRevenue)}</span>
             </div>
+
+            {(initialFees > 0 || netProcessingFees !== 0) && (
+              <>
+                <div className="flex justify-between items-center pt-3 border-t border-border">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-card-foreground font-semibold">CC Processing Fees</span>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-[300px] text-xs space-y-1">
+                          <p className="font-semibold mb-1">Cost Plus Processing</p>
+                          <p>Square charges a standard fee on each transaction, then reimburses the overcharge based on your cost-plus plan.</p>
+                          {initialFees > 0 && <p>Initial Fees Charged: −{formatCurrency(initialFees)}</p>}
+                          {feeReimbursements > 0 && <p>Cost Plus Reimbursements: +{formatCurrency(feeReimbursements)}</p>}
+                          {thirdPartyFees > 0 && <p>Third Party Fees: −{formatCurrency(thirdPartyFees)}</p>}
+                          <p className="text-muted-foreground/80 text-[10px] pt-1">Reimbursements may lag 1-2 business days behind initial charges. Monthly totals will be more accurate than daily.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <span className="text-red-400 font-semibold">({formatCurrency(netProcessingFees)})</span>
+                </div>
+
+                <div className="flex justify-between items-center pl-4">
+                  <span className="text-muted-foreground text-sm">Initial Fees</span>
+                  <span className="text-card-foreground font-medium">({formatCurrency(initialFees)})</span>
+                </div>
+
+                <div className="flex justify-between items-center pl-4">
+                  <span className="text-muted-foreground text-sm">Cost Plus Reimbursements</span>
+                  <span className="text-green-400 font-medium">+{formatCurrency(feeReimbursements)}</span>
+                </div>
+
+                {thirdPartyFees > 0 && (
+                  <div className="flex justify-between items-center pl-4">
+                    <span className="text-muted-foreground text-sm">Third Party Fees</span>
+                    <span className="text-card-foreground font-medium">({formatCurrency(thirdPartyFees)})</span>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center pt-3 border-t border-border">
+                  <span className="text-card-foreground font-semibold">Net Revenue After Fees</span>
+                  <span className="text-card-foreground font-semibold">{formatCurrency(calculatedNetRevenue - netProcessingFees)}</span>
+                </div>
+              </>
+            )}
 
             <div className="flex justify-between items-center pt-3 border-t border-border">
               <span className="text-muted-foreground">Bowling Web Res Deposits</span>

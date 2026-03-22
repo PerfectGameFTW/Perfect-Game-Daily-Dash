@@ -795,29 +795,23 @@ function extractGiftCardAmountFromOrder(order: any, gan?: string): number {
     );
     
     if (exactMatch) {
-      // Prefer basePriceMoney for accurate price even if discounted
       if (exactMatch.basePriceMoney?.amount) {
-        return exactMatch.basePriceMoney.amount / 100; // Convert cents to dollars
+        return Number(exactMatch.basePriceMoney.amount) / 100;
       }
-      
-      // Fall back to totalMoney if basePriceMoney not available
       if (exactMatch.totalMoney?.amount) {
-        return exactMatch.totalMoney.amount / 100; // Convert cents to dollars
+        return Number(exactMatch.totalMoney.amount) / 100;
       }
     }
   }
   
-  // If no exact match found, use the first gift card item's amount
   const firstGiftCardItem = giftCardItems[0];
   
-  // Prefer basePriceMoney for accurate price even if discounted
   if (firstGiftCardItem.basePriceMoney?.amount) {
-    return firstGiftCardItem.basePriceMoney.amount / 100; // Convert cents to dollars
+    return Number(firstGiftCardItem.basePriceMoney.amount) / 100;
   }
   
-  // Fall back to totalMoney if basePriceMoney not available
   if (firstGiftCardItem.totalMoney?.amount) {
-    return firstGiftCardItem.totalMoney.amount / 100; // Convert cents to dollars
+    return Number(firstGiftCardItem.totalMoney.amount) / 100;
   }
   
   return 0;

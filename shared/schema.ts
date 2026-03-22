@@ -225,6 +225,26 @@ export const insertGiftCardRedemptionSchema = createInsertSchema(
 export type InsertGiftCardRedemption = z.infer<typeof insertGiftCardRedemptionSchema>;
 export type GiftCardRedemption = typeof giftCardRedemptions.$inferSelect;
 
+// Payout fee entries — tracks per-transaction fee data from Square Payouts API
+export const payoutFeeEntries = pgTable("payout_fee_entries", {
+  id: serial("id").primaryKey(),
+  payoutId: text("payout_id").notNull(),
+  entryId: text("entry_id").notNull().unique(),
+  type: text("type").notNull(),
+  effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(),
+  grossAmount: real("gross_amount").notNull(),
+  feeAmount: real("fee_amount").notNull(),
+  netAmount: real("net_amount").notNull(),
+  paymentId: text("payment_id"),
+});
+
+export const insertPayoutFeeEntrySchema = createInsertSchema(payoutFeeEntries).omit({
+  id: true,
+});
+
+export type InsertPayoutFeeEntry = z.infer<typeof insertPayoutFeeEntrySchema>;
+export type PayoutFeeEntry = typeof payoutFeeEntries.$inferSelect;
+
 // Keep the users table for authentication
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -315,6 +335,13 @@ export interface GiftCardSummary {
   averageValue: number;
 }
 
+export interface ProcessingFeeBreakdown {
+  initialFees: number;
+  reimbursements: number;
+  thirdPartyFees: number;
+  netFees: number;
+}
+
 export interface DetailedTransactionBreakdown {
   partywirks: number;
   bowlingWebResDeposits: number;
@@ -330,5 +357,6 @@ export interface DetailedTransactionBreakdown {
   depositClearings: number;
   giftCardSales: number;
   giftCardRedemptions: number;
+  processingFees: ProcessingFeeBreakdown;
   totalTransactions: number;
 }

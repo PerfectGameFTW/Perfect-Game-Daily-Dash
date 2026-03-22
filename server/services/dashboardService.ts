@@ -8,12 +8,14 @@
 import { orderService } from './orderService';
 import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
+import { payoutService } from './payoutService';
 import { 
   type DateRange,
   type DailySummary,
   type CategoryRevenue,
   type HourlyRevenue,
   type GiftCardSummary,
+  type ProcessingFeeBreakdown,
   refunds,
   transactions,
   orders as ordersTable
@@ -208,6 +210,7 @@ export class DashboardService {
     giftCardSales: number;
     giftCardRedemptions: number;
     depositClearings: number;
+    processingFees: ProcessingFeeBreakdown;
     totalTransactions: number;
   }> {
     // Get payments for the specified date range
@@ -333,6 +336,13 @@ export class DashboardService {
       }
     }
     
+    let processingFees: ProcessingFeeBreakdown = { initialFees: 0, reimbursements: 0, thirdPartyFees: 0, netFees: 0 };
+    try {
+      processingFees = await payoutService.getProcessingFees(dateRange, startDate, endDate);
+    } catch (err) {
+      console.error('Error fetching processing fees:', err);
+    }
+
     return {
       partywirks,
       tripleseat,
@@ -348,6 +358,7 @@ export class DashboardService {
       giftCardSales: giftCardBreakdown.giftCardSales,
       giftCardRedemptions: giftCardRedemptionsTotal,
       depositClearings,
+      processingFees,
       totalTransactions: payments.length
     };
   }

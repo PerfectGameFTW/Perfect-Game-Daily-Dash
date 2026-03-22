@@ -72,6 +72,14 @@ Square treats refunds and returns as distinct objects. They are queried separate
 - The `getRevenueBreakdown()` in `paymentService.ts` queries ALL refunds (both types combined) for the True Revenue calculation.
 - The Summary Stats UI may combine them for display (e.g., "Refunds + Returns" line), but the underlying data must always keep them separate for other views that break them out individually.
 
+## CC Processing Fee Tracking (Payout Fees)
+Square's cost-plus pricing model charges the full processing fee per transaction, then reimburses the overcharge via payout entries. The dashboard tracks this via:
+- **payout_fee_entries table**: Stores CHARGE (initial fees deducted), FEE (cost-plus reimbursements), and THIRD_PARTY_FEE entries from Square's Payouts API
+- **PayoutService** (`server/services/payoutService.ts`): Syncs payout entries from Square. Initial sync fetches from Jan 2025; incremental syncs cover last 7 days. Runs nightly + on startup.
+- **Dashboard integration**: `getProcessingFees()` in dashboardService queries by date range; returns initialFees, reimbursements, thirdPartyFees, netFees
+- **UI**: StatsSummary shows CC Processing Fees section with breakdown and "Net Revenue After Fees"
+- **Timing caveat**: Cost-plus reimbursements may lag 1-2 business days; monthly totals more accurate than daily
+
 ## API Endpoints
 - `GET /api/summary` — daily summary (revenue, gift card sales, order count)
 - `GET /api/gift-card-summary` — gift card sold/redeemed totals for a date range
@@ -87,6 +95,7 @@ Square treats refunds and returns as distinct objects. They are queried separate
 - `server/services/schedulerService.ts` — nightly cron scheduler
 - `server/services/giftCardService.ts` — gift card DB queries, summary logic
 - `server/services/enhancedGiftCardFix.ts` — activation amount backfill
+- `server/services/payoutService.ts` — CC processing fee sync from Square Payouts API
 - `server/dateUtils.ts` — Eastern Time boundary calculations
 - `shared/schema.ts` — Drizzle ORM schema (single source of truth for types)
 - `client/src/pages/Admin.tsx` — admin panel with user management and sync controls
