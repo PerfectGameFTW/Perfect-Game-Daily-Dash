@@ -254,14 +254,21 @@ export class DashboardService {
     `);
     refundsTotal = Number(refundRows.rows[0]?.total || 0);
 
-    const returnRefundRows = await db.execute<{ total: number }>(sql`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM ${refunds}
-      WHERE ${refunds.createdAt} BETWEEN ${start} AND ${end}
-        AND ${refunds.status} IN ('COMPLETED', 'PENDING')
-        AND ${refunds.reason} IS NOT NULL AND ${refunds.reason} != ''
+    const returnRefundRows = await db.execute<{ total: number; return_tax: number }>(sql`
+      SELECT 
+        COALESCE(SUM(r.amount), 0) as total,
+        COALESCE(SUM(DISTINCT CASE 
+          WHEN o.square_data->'returnAmounts'->'taxMoney'->>'amount' IS NOT NULL
+          THEN (o.square_data->'returnAmounts'->'taxMoney'->>'amount')::numeric / 100
+          ELSE 0 
+        END), 0) as return_tax
+      FROM ${refunds} r
+      LEFT JOIN ${ordersTable} o ON o.square_id = r.square_data->>'orderId'
+      WHERE r.created_at BETWEEN ${start} AND ${end}
+        AND r.status IN ('COMPLETED', 'PENDING')
+        AND r.reason IS NOT NULL AND r.reason != ''
     `);
-    returnsTotal = Number(returnRefundRows.rows[0]?.total || 0);
+    returnsTotal = Number(returnRefundRows.rows[0]?.total || 0) - Number(returnRefundRows.rows[0]?.return_tax || 0);
     
     // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
     const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
