@@ -18,7 +18,7 @@ export function initWebSocket(server: Server): void {
 export function broadcast(event: string, data?: Record<string, unknown>): void {
   if (!wss) return;
   const message = JSON.stringify({ type: event, ...data });
-  for (const client of wss.clients) {
+  for (const client of Array.from(wss.clients)) {
     if (client.readyState === WebSocket.OPEN) {
       client.send(message);
     }

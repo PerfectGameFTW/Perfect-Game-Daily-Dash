@@ -260,27 +260,11 @@ export function createApiRouter(): Router {
           console.log(`Refund sync completed: ${result.processed} processed, ${result.created} created, ${result.updated} updated, ${result.failed} failed`);
           break;
         case 'missing_payments':
-          // Special reconciliation tool for the March 6, 2025 architectural transition gap
-          // This specifically addresses missing payment records since the transition began
-          console.log('Starting special payment reconciliation tool for architectural transition gap');
-          
-          // Use the specific known timestamp when the transition occurred
-          const transitionTimestamp = new Date('2025-03-06T04:13:41.000Z');
-          
-          // Allow overriding the start date but default to the transition time
-          const reconciliationStart = startDate || transitionTimestamp;
+          console.log('Starting payment reconciliation sync');
+          const reconciliationStart = startDate || new Date('2025-03-06T04:13:41.000Z');
           const reconciliationEnd = endDate || new Date();
-          
-          console.log(`Reconciliation period: ${reconciliationStart.toISOString()} to ${reconciliationEnd.toISOString()}`);
-          
-          // Execute the reconciliation
-          result = await paymentService.syncMissingPayments(
-            reconciliationStart,
-            reconciliationEnd
-          );
-          
-          // Log the results for monitoring
-          console.log(`Payment reconciliation completed: ${result.succeeded} records synchronized, ${result.failed} failures`);
+          result = await syncService.syncPayments(reconciliationStart, reconciliationEnd);
+          console.log(`Payment reconciliation completed: ${result.processed} processed, ${result.created} created`);
           break;
         case 'all':
           const [ordersResult, paymentsResult, giftCardsResult, redemptionsResult, refundsResult] = await Promise.all([
@@ -306,8 +290,8 @@ export function createApiRouter(): Router {
       
       // Handle different result formats based on sync type
       if (result) {
-        if (validatedBody.type === 'missing_payments' && 'succeeded' in result) {
-          message = `Payment reconciliation completed successfully: ${result.succeeded} records synchronized, ${result.failed} failures`;
+        if (validatedBody.type === 'missing_payments' && 'processed' in result && 'created' in result) {
+          message = `Payment reconciliation completed: ${result.processed} processed, ${result.created} created`;
         } else if (validatedBody.type === 'gift_card_redemptions' && 'matched' in result) {
           message = `Gift card redemption sync completed successfully: ${result.processed} processed, ${result.matched} matched, ${result.created} created, ${result.errors.length} errors`;
         } else if ('processed' in result) {
