@@ -246,6 +246,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
           
           <div className="space-y-5">
             <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Gross Revenue</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(data?.totalRevenue || 0)}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Orders</span>
               <span className="text-card-foreground font-medium">{data?.totalOrders || 0}</span>
             </div>
@@ -282,11 +287,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Tripleseat</span>
               <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.tripleseat || 0)}</span>
-            </div>
-            
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Gross Revenue</span>
-              <span className="text-card-foreground font-medium">{formatCurrency(data?.totalRevenue || 0)}</span>
             </div>
             
             <div className="flex justify-between items-center">
