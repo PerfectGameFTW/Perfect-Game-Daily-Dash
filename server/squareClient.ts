@@ -312,6 +312,42 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
   }
 }
 
+/**
+ * Fetch specific orders from Square by their IDs using the batch retrieve API.
+ * Used to sync orders that are referenced by gift cards but not yet in our DB.
+ *
+ * @param orderIds  Square order IDs to retrieve (max 100 per call)
+ * @returns         Array of InsertOrder ready for DB insertion
+ */
+export async function fetchOrdersByIds(orderIds: string[]): Promise<InsertOrder[]> {
+  if (orderIds.length === 0) return [];
+
+  const results: InsertOrder[] = [];
+  const BATCH_SIZE = 100;
+
+  for (let i = 0; i < orderIds.length; i += BATCH_SIZE) {
+    const batch = orderIds.slice(i, i + BATCH_SIZE);
+    try {
+      const response = await ordersApi.batchRetrieveOrders({
+        locationId: process.env.SQUARE_LOCATION_ID!,
+        orderIds: batch,
+      });
+      const squareOrders = (response.result as { orders?: unknown[] }).orders ?? [];
+      for (const squareOrder of squareOrders) {
+        try {
+          results.push(convertSquareOrderToOrder(squareOrder));
+        } catch {
+          // skip malformed orders
+        }
+      }
+    } catch (error) {
+      console.error(`[fetchOrdersByIds] Error fetching batch starting at ${i}:`, error);
+    }
+  }
+
+  return results;
+}
+
 // Add a function to process line items
 export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: number): InsertOrderLineItem {
   const safeLineItem = processSafeSquareData(lineItem);

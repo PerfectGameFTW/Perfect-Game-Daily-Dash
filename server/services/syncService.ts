@@ -911,7 +911,11 @@ export class SyncService {
         try {
           if (existingSquareIds.has(giftCardId)) {
             // Card already exists — fill in activation amount if still null, always update squareOrderId if we have one
-            const updateFields: Record<string, any> = { updatedAt: new Date() };
+            const updateFields: {
+              updatedAt: Date;
+              activationAmount?: number;
+              activationSquareOrderId?: string;
+            } = { updatedAt: new Date() };
             if (activationAmountDollars) updateFields.activationAmount = activationAmountDollars;
             if (squareOrderId) updateFields.activationSquareOrderId = squareOrderId;
             await db.update(giftCards)

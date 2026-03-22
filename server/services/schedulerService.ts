@@ -43,18 +43,39 @@ export function startScheduler(): void {
   console.log('[Scheduler] Frequent sync scheduled every 5 minutes');
   console.log('[Scheduler] Nightly deep sync scheduled at 3:00 AM Eastern Time');
 
-  // On startup: write activation_square_order_id for all gift cards that were
-  // created as Web Reservation deposits but have no link yet.
-  // This runs in the background (non-blocking) and is idempotent.
-  giftCardService.backfillActivationSquareOrderIds().then(({ updated }) => {
-    if (updated > 0) {
-      console.log(`[Scheduler] Order-ID backfill complete: ${updated} gift card(s) linked to their Web Reservation orders`);
-    } else {
-      console.log('[Scheduler] Order-ID backfill: all gift cards already linked — nothing to do');
+  // On startup: two-phase activation_square_order_id backfill (non-blocking, idempotent).
+  //
+  // Phase 1: For gift cards where Square's ACTIVATE events DID return an orderId
+  //          (written by the historical backfill), fetch any referenced orders that
+  //          are missing from our local orders table so the LEFT JOIN in
+  //          getGiftCardBreakdown() can resolve them.
+  //
+  // Phase 2: For gift cards where Square's ACTIVATE events did NOT return an orderId,
+  //          use a time+amount proximity heuristic against Web Reservation orders already
+  //          in our DB to establish the link.
+  (async () => {
+    try {
+      const { inserted } = await giftCardService.syncMissingActivationOrders();
+      if (inserted > 0) {
+        console.log(`[Scheduler] Synced ${inserted} missing activation order(s) from Square`);
+      } else {
+        console.log('[Scheduler] Missing-order sync: nothing to fetch');
+      }
+    } catch (err) {
+      console.error('[Scheduler] Missing-order sync error:', err);
     }
-  }).catch(err => {
-    console.error('[Scheduler] Order-ID backfill error:', err);
-  });
+
+    try {
+      const { updated } = await giftCardService.backfillActivationSquareOrderIds();
+      if (updated > 0) {
+        console.log(`[Scheduler] Order-ID backfill complete: ${updated} gift card(s) linked to Web Reservation orders`);
+      } else {
+        console.log('[Scheduler] Order-ID backfill: all gift cards already linked — nothing to do');
+      }
+    } catch (err) {
+      console.error('[Scheduler] Order-ID backfill error:', err);
+    }
+  })();
 
   // On startup: if the historical gift card backfill has never completed,
   // run it in the background until finished so the dashboard has complete data.
@@ -188,7 +209,15 @@ export async function runNightlySync(): Promise<void> {
   }
 
   try {
-    console.log(`${label} Step 5/5: Order-ID backfill (link gift cards to Web Res orders)`);
+    console.log(`${label} Step 5a/6: Sync missing activation orders from Square`);
+    const r = await giftCardService.syncMissingActivationOrders();
+    console.log(`${label} Missing-order sync: ${r.inserted} order(s) inserted`);
+  } catch (err) {
+    console.error(`${label} Missing-order sync failed (non-fatal):`, err);
+  }
+
+  try {
+    console.log(`${label} Step 5b/6: Order-ID backfill (link gift cards to Web Res orders)`);
     const r = await giftCardService.backfillActivationSquareOrderIds();
     console.log(`${label} Order-ID backfill: ${r.updated} gift card(s) linked`);
   } catch (err) {

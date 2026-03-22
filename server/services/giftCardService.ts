@@ -8,7 +8,8 @@
 import { db } from '../db';
 import { eq, and, between, desc, asc, sql, isNull, gt } from 'drizzle-orm';
 import { 
-  giftCards, 
+  giftCards,
+  orders,
   giftCardRedemptions,
   transactions,
   type GiftCard, 
@@ -19,6 +20,7 @@ import {
   type GiftCardSummary
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
+import { fetchOrdersByIds } from '../squareClient';
 
 export class GiftCardError extends Error {
   constructor(message: string, public readonly code: string, public readonly details?: any) {
@@ -385,11 +387,63 @@ export class GiftCardService {
         ORDER BY gc2.id, ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at)))
       ) matched
       WHERE gc.id = matched.gc_id
+      RETURNING gc.id
     `);
 
-    const updated = (result as any).rowCount ?? 0;
+    const updated = result.rows.length;
     console.log(`[GiftCardBackfill] activation_square_order_id backfill: ${updated} rows updated`);
     return { updated };
+  }
+
+  /**
+   * Sync orders from Square that are referenced by gift cards (via activation_square_order_id)
+   * but are not yet present in the local orders table.
+   *
+   * This happens when the historical gift card backfill discovers orderId values from Square's
+   * ACTIVATE activity events, but those orders were created outside the normal order sync window.
+   *
+   * After this runs, getGiftCardBreakdown()'s LEFT JOIN resolves those order IDs and correctly
+   * classifies each card into the Bowling/Laser Tag/Gift Card Sales bucket.
+   *
+   * @returns count of orders inserted
+   */
+  async syncMissingActivationOrders(): Promise<{ inserted: number }> {
+    // Find activation_square_order_ids that have no matching row in the orders table
+    const missing = await db.execute(sql`
+      SELECT DISTINCT gc.activation_square_order_id AS order_square_id
+      FROM gift_cards gc
+      WHERE gc.activation_square_order_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM orders o WHERE o.square_id = gc.activation_square_order_id
+        )
+    `);
+
+    const missingIds = missing.rows.map(r => String(r.order_square_id));
+    if (missingIds.length === 0) {
+      console.log('[GiftCardBackfill] No missing activation orders to sync');
+      return { inserted: 0 };
+    }
+
+    console.log(`[GiftCardBackfill] Fetching ${missingIds.length} missing activation order(s) from Square`);
+
+    const fetched = await fetchOrdersByIds(missingIds);
+    if (fetched.length === 0) {
+      console.log('[GiftCardBackfill] Square returned 0 orders for missing IDs');
+      return { inserted: 0 };
+    }
+
+    let inserted = 0;
+    for (const order of fetched) {
+      try {
+        await db.insert(orders).values(order).onConflictDoNothing();
+        inserted++;
+      } catch (err) {
+        console.error(`[GiftCardBackfill] Failed to insert order ${order.squareId}:`, err);
+      }
+    }
+
+    console.log(`[GiftCardBackfill] Inserted ${inserted} of ${fetched.length} missing activation orders`);
+    return { inserted };
   }
   
   /**
