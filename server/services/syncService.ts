@@ -910,17 +910,27 @@ export class SyncService {
       for (const [giftCardId, { amount: activationAmountDollars, squareOrderId }] of Array.from(uniqueActivations)) {
         try {
           if (existingSquareIds.has(giftCardId)) {
-            // Card already exists — fill in activation amount if still null, always update squareOrderId if we have one
-            const updateFields: {
-              updatedAt: Date;
-              activationAmount?: number;
-              activationSquareOrderId?: string;
-            } = { updatedAt: new Date() };
-            if (activationAmountDollars) updateFields.activationAmount = activationAmountDollars;
-            if (squareOrderId) updateFields.activationSquareOrderId = squareOrderId;
+            // Card already exists — fill in activation amount if still null
+            const baseFields: { updatedAt: Date; activationAmount?: number } = {
+              updatedAt: new Date(),
+            };
+            if (activationAmountDollars) baseFields.activationAmount = activationAmountDollars;
             await db.update(giftCards)
-              .set(updateFields)
+              .set(baseFields)
               .where(eq(giftCards.squareId, giftCardId));
+
+            // Only write activationSquareOrderId when the column is currently NULL.
+            // ACTIVATE-event-derived links are authoritative; never overwrite them.
+            if (squareOrderId) {
+              await db.update(giftCards)
+                .set({ activationSquareOrderId: squareOrderId })
+                .where(
+                  and(
+                    eq(giftCards.squareId, giftCardId),
+                    isNull(giftCards.activationSquareOrderId),
+                  ),
+                );
+            }
             updated++;
           } else {
             // Brand-new card — fetch from Square and insert
