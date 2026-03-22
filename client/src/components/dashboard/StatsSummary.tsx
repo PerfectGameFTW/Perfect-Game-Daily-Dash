@@ -350,7 +350,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                     ) : (
                       <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0 rotate-90" />
                     )}
-                    <span className="text-card-foreground font-medium">CC Processing Fees</span>
+                    <span className="text-muted-foreground">CC Processing Fees</span>
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
