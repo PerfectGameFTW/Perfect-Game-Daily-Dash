@@ -117,7 +117,7 @@ async function resumeHistoricalOrdersPaymentsBackfillIfNeeded(): Promise<void> {
   const cp = state.lastCheckpoint as any ?? {};
   const startDate = cp.startDate ? new Date(cp.startDate) : new Date('2025-01-01T00:00:00Z');
   const endDate   = cp.endDate   ? new Date(cp.endDate)   : new Date();
-  const chunkDays = cp.chunkDays ?? 7;
+  const chunkDays = 30;
 
   console.log(`[Scheduler] Resuming historical orders/payments backfill from chunk ${cp.chunksCompleted ?? 0} of ${cp.totalChunks ?? '?'}`);
 

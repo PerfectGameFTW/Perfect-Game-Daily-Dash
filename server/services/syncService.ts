@@ -8,11 +8,13 @@
  */
 
 import { db } from '../db';
-import { eq, and, between, desc, asc, sql, isNull, gt } from 'drizzle-orm';
+import { eq, and, between, desc, asc, sql, isNull, gt, inArray } from 'drizzle-orm';
 import { 
   syncState,
   giftCards,
   orders,
+  orderLineItems,
+  transactions,
   refunds,
   type SyncState,
   type InsertSyncState
@@ -1316,7 +1318,7 @@ export class SyncService {
   async startHistoricalOrdersPaymentsBackfill(
     startDate: Date,
     endDate: Date,
-    chunkDays: number = 7
+    chunkDays: number = 30
   ): Promise<{ alreadyRunning: boolean; message: string }> {
     const SYNC_TYPE = 'orders_payments_backfill';
 
@@ -1422,6 +1424,8 @@ export class SyncService {
       let totalOrders = 0;
       let totalPayments = 0;
       let failedChunks = 0;
+      const cappedPaymentChunks: Array<{ start: Date; end: Date; chunkIndex: number }> = [];
+
       // nextChunkToProcess tracks the LOWEST chunk index that has not been confirmed
       // complete. It only advances when chunk i succeeds AND i === nextChunkToProcess
       // (i.e., no gap from a prior failure). This ensures failed chunks are always
@@ -1434,79 +1438,114 @@ export class SyncService {
         console.log(`[HistoricalBackfill] Chunk ${i + 1}/${chunks.length}: ${start.toISOString().slice(0, 10)} → ${end.toISOString().slice(0, 10)}`);
 
         try {
-          // --- Orders ---
+          // --- Orders (batch upsert) ---
           const squareOrders = await squareClient.fetchOrders(start, end);
-          let chunkOrdersCreated = 0;
-          let chunkOrdersSkipped = 0;
-          let chunkOrdersUpdated = 0;
+          const orderRows: any[] = [];
+          const squareOrderMap = new Map<string, any>();
 
           for (const squareOrder of squareOrders) {
             try {
               const orderData = squareClient.convertSquareOrderToOrder(squareOrder);
-              let existing: any = null;
-              try { existing = await orderService.getOrderBySquareId(orderData.squareId); } catch { }
+              orderRows.push(orderData);
+              squareOrderMap.set(orderData.squareId, squareOrder);
+            } catch (err) {
+              console.error(`[HistoricalBackfill] Order convert error:`, err);
+            }
+          }
 
-              if (existing) {
-                // Refresh squareData so service charges and taxes stay current
-                await db.update(orders)
-                  .set({ squareData: orderData.squareData, totalTax: orderData.totalTax, totalDiscount: orderData.totalDiscount })
-                  .where(eq(orders.squareId, orderData.squareId));
-                chunkOrdersUpdated++;
-              } else {
-                const created = await orderService.createOrder(orderData);
-                if (squareOrder.lineItems && created?.id) {
-                  for (const li of squareOrder.lineItems) {
+          let chunkOrdersUpserted = 0;
+          if (orderRows.length > 0) {
+            const BATCH = 200;
+            for (let b = 0; b < orderRows.length; b += BATCH) {
+              const batch = orderRows.slice(b, b + BATCH);
+              const upserted = await db.insert(orders).values(batch)
+                .onConflictDoUpdate({
+                  target: orders.squareId,
+                  set: {
+                    status: sql`excluded.status`,
+                    totalMoney: sql`excluded.total_money`,
+                    totalTax: sql`excluded.total_tax`,
+                    totalDiscount: sql`excluded.total_discount`,
+                    squareData: sql`excluded.square_data`,
+                    closedAt: sql`excluded.closed_at`,
+                  },
+                })
+                .returning({ id: orders.id, squareId: orders.squareId });
+              chunkOrdersUpserted += upserted.length;
+
+              const lineItemRows: any[] = [];
+              const upsertedIds = upserted.map(r => r.id);
+              if (upsertedIds.length > 0) {
+                await db.delete(orderLineItems).where(
+                  inArray(orderLineItems.orderId, upsertedIds)
+                );
+              }
+              for (const row of upserted) {
+                const sqOrder = squareOrderMap.get(row.squareId);
+                if (sqOrder?.lineItems) {
+                  for (const li of sqOrder.lineItems) {
                     try {
-                      await orderService.createOrderItem(
-                        squareClient.convertSquareLineItemToOrderLineItem(li, created.id)
+                      lineItemRows.push(
+                        squareClient.convertSquareLineItemToOrderLineItem(li, row.id)
                       );
                     } catch { }
                   }
                 }
-                chunkOrdersCreated++;
               }
-            } catch (err) {
-              chunkOrdersSkipped++;
-              console.error(`[HistoricalBackfill] Order error:`, err);
+              if (lineItemRows.length > 0) {
+                const LI_BATCH = 500;
+                for (let lb = 0; lb < lineItemRows.length; lb += LI_BATCH) {
+                  await db.insert(orderLineItems).values(lineItemRows.slice(lb, lb + LI_BATCH))
+                    .onConflictDoNothing();
+                }
+              }
             }
           }
 
           totalOrders += squareOrders.length;
-          console.log(`[HistoricalBackfill] Chunk ${i + 1} orders: ${chunkOrdersCreated} created, ${chunkOrdersUpdated} updated, ${chunkOrdersSkipped} skipped`);
+          console.log(`[HistoricalBackfill] Chunk ${i + 1} orders: ${chunkOrdersUpserted} upserted from ${squareOrders.length} fetched`);
 
-          // --- Payments ---
-          const squarePayments = await squareClient.fetchPayments(start, end);
-          let chunkPaymentsCreated = 0;
-          let chunkPaymentsUpdated = 0;
-          let chunkPaymentsSkipped = 0;
+          // --- Payments (batch upsert) ---
+          const paymentResult = await squareClient.fetchPayments(start, end, { returnMeta: true });
+          const squarePayments = paymentResult.payments;
+          if (paymentResult.hitPageCap) {
+            cappedPaymentChunks.push({ start, end, chunkIndex: i });
+            console.warn(`[HistoricalBackfill] Chunk ${i + 1} HIT 50-PAGE PAYMENT CAP — will re-sweep with smaller windows after main backfill`);
+          }
+          const paymentRows: any[] = [];
 
           for (const squarePayment of squarePayments) {
             try {
               const paymentData = squareClient.convertSquarePaymentToTransaction(squarePayment);
               if (!paymentData.amount || paymentData.amount === 0) continue;
-
-              let existing: any = null;
-              try { existing = await paymentService.getPaymentBySquareId(paymentData.squareId); } catch { }
-
-              if (existing) {
-                await paymentService.updatePayment(paymentData.squareId, {
-                  status: paymentData.status,
-                  amount: paymentData.amount,
-                  squareData: paymentData.squareData,
-                });
-                chunkPaymentsUpdated++;
-              } else {
-                await paymentService.createPayment(paymentData);
-                chunkPaymentsCreated++;
-              }
+              paymentRows.push(paymentData);
             } catch (err) {
-              chunkPaymentsSkipped++;
-              console.error(`[HistoricalBackfill] Payment error:`, err);
+              console.error(`[HistoricalBackfill] Payment convert error:`, err);
+            }
+          }
+
+          let chunkPaymentsUpserted = 0;
+          if (paymentRows.length > 0) {
+            const BATCH = 200;
+            for (let b = 0; b < paymentRows.length; b += BATCH) {
+              const batch = paymentRows.slice(b, b + BATCH);
+              const upserted = await db.insert(transactions).values(batch)
+                .onConflictDoUpdate({
+                  target: transactions.squareId,
+                  set: {
+                    amount: sql`excluded.amount`,
+                    status: sql`excluded.status`,
+                    squareData: sql`excluded.square_data`,
+                    categoryId: sql`excluded.category_id`,
+                  },
+                })
+                .returning({ id: transactions.id });
+              chunkPaymentsUpserted += upserted.length;
             }
           }
 
           totalPayments += squarePayments.length;
-          console.log(`[HistoricalBackfill] Chunk ${i + 1} payments: ${chunkPaymentsCreated} created, ${chunkPaymentsUpdated} updated, ${chunkPaymentsSkipped} skipped`);
+          console.log(`[HistoricalBackfill] Chunk ${i + 1} payments: ${chunkPaymentsUpserted} upserted from ${squarePayments.length} fetched`);
 
         } catch (err) {
           failedChunks++;
@@ -1566,8 +1605,7 @@ export class SyncService {
           console.error(`[HistoricalBackfill] Chunk ${i + 1} gift-card linking failed (non-fatal):`, gcErr);
         }
 
-        // Brief pause between chunks to stay well inside Square API rate limits
-        await new Promise(r => setTimeout(r, 1500));
+        // No inter-chunk delay needed — Square API rate limits are handled within fetch pagination
       }
 
       // All chunks complete — run full gift-card linking phases (including history scan)
@@ -1589,6 +1627,71 @@ export class SyncService {
         console.log(`[HistoricalBackfill] Phase 2: ${r2.updated} gift cards linked via heuristic`);
       } catch (err) {
         console.error('[HistoricalBackfill] Phase 2 failed:', err);
+      }
+
+      // --- Re-sweep capped payment chunks with smaller windows ---
+      if (cappedPaymentChunks.length > 0) {
+        console.log(`[HistoricalBackfill] Re-sweeping ${cappedPaymentChunks.length} chunk(s) that hit the 50-page payment cap...`);
+        const SUB_CHUNK_DAYS = 5;
+        let resweepTotal = 0;
+
+        for (const capped of cappedPaymentChunks) {
+          const subChunks: Array<{ start: Date; end: Date }> = [];
+          let subStart = new Date(capped.start);
+          while (subStart < capped.end) {
+            const subEnd = new Date(Math.min(subStart.getTime() + SUB_CHUNK_DAYS * 24 * 60 * 60 * 1000, capped.end.getTime()));
+            subChunks.push({ start: new Date(subStart), end: subEnd });
+            subStart = subEnd;
+          }
+
+          console.log(`[PaymentResweep] Chunk ${capped.chunkIndex + 1} (${capped.start.toISOString().slice(0, 10)} → ${capped.end.toISOString().slice(0, 10)}): splitting into ${subChunks.length} sub-chunks of ${SUB_CHUNK_DAYS} days`);
+
+          for (let s = 0; s < subChunks.length; s++) {
+            const sub = subChunks[s];
+            try {
+              const subResult = await squareClient.fetchPayments(sub.start, sub.end, { returnMeta: true });
+              if (subResult.hitPageCap) {
+                console.warn(`[PaymentResweep] Sub-chunk ${s + 1}/${subChunks.length} (${sub.start.toISOString().slice(0, 10)} → ${sub.end.toISOString().slice(0, 10)}) STILL hit page cap — ${subResult.payments.length} payments fetched`);
+              }
+
+              const paymentRows: any[] = [];
+              for (const sp of subResult.payments) {
+                try {
+                  const pd = squareClient.convertSquarePaymentToTransaction(sp);
+                  if (!pd.amount || pd.amount === 0) continue;
+                  paymentRows.push(pd);
+                } catch (err) {
+                  console.error(`[PaymentResweep] Payment convert error:`, err);
+                }
+              }
+
+              if (paymentRows.length > 0) {
+                const BATCH = 200;
+                for (let b = 0; b < paymentRows.length; b += BATCH) {
+                  const batch = paymentRows.slice(b, b + BATCH);
+                  await db.insert(transactions).values(batch)
+                    .onConflictDoUpdate({
+                      target: transactions.squareId,
+                      set: {
+                        amount: sql`excluded.amount`,
+                        status: sql`excluded.status`,
+                        squareData: sql`excluded.square_data`,
+                        categoryId: sql`excluded.category_id`,
+                      },
+                    });
+                }
+                resweepTotal += paymentRows.length;
+              }
+
+              console.log(`[PaymentResweep] Sub-chunk ${s + 1}/${subChunks.length}: ${paymentRows.length} payments upserted from ${subResult.payments.length} fetched`);
+            } catch (err) {
+              console.error(`[PaymentResweep] Sub-chunk ${s + 1}/${subChunks.length} failed:`, err);
+            }
+          }
+        }
+
+        totalPayments += resweepTotal;
+        console.log(`[PaymentResweep] COMPLETE — ${resweepTotal} additional payments upserted across ${cappedPaymentChunks.length} re-swept chunk(s)`);
       }
 
       // isComplete only when every chunk was processed without failure

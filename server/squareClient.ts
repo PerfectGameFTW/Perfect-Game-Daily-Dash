@@ -477,8 +477,14 @@ export function isGiftCardRedemption(payment: any): boolean {
   }
 }
 
-// Update the fetchPayments method with better pagination control and timing logs
-export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]> {
+export interface FetchPaymentsResult {
+  payments: any[];
+  hitPageCap: boolean;
+}
+
+export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<any[]>;
+export async function fetchPayments(startDate: Date, endDate: Date, opts: { returnMeta: true }): Promise<FetchPaymentsResult>;
+export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { returnMeta: true }): Promise<any[] | FetchPaymentsResult> {
   const startTime = Date.now(); // Initialize this at the very top to avoid reference errors
   try {
     const now = new Date();
@@ -579,11 +585,15 @@ export async function fetchPayments(startDate?: Date, endDate?: Date): Promise<a
     }
 
     const totalTime = Date.now() - startTime;
-    if (pageCount >= MAX_PAGES) {
+    const hitPageCap = pageCount >= MAX_PAGES;
+    if (hitPageCap) {
       console.warn(`Reached maximum page limit (${MAX_PAGES}). Some payments may be missing. Total time: ${totalTime}ms`);
     }
 
     console.log(`Successfully fetched ${allPayments.length} payments from Square API in ${totalTime}ms`);
+    if (opts?.returnMeta) {
+      return { payments: allPayments, hitPageCap };
+    }
     return allPayments;
   } catch (error) {
     console.error('Error in fetchPayments:', {
