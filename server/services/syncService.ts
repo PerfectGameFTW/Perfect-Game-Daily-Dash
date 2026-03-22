@@ -589,7 +589,13 @@ export class SyncService {
           }
           
           if (existingPayment) {
-            // Payment exists, skip for now (could implement update logic here)
+            // Refresh key fields from Square so tip adjustments, status changes,
+            // and tax updates are always current.
+            await paymentService.updatePayment(paymentData.squareId, {
+              status: paymentData.status,
+              amount: paymentData.amount,
+              squareData: paymentData.squareData,
+            });
             updated++;
           } else {
             // Payment doesn't exist, create it

@@ -70,9 +70,28 @@ export class PaymentService {
     
     return result[0];
   }
-  
+
   /**
-   * Create a new payment with dual-table write functionality
+   * Update an existing payment with fresh data from Square.
+   * Refreshes status, amount, and squareData (which carries tipMoney, taxes, etc.)
+   * so that after-the-fact tip adjustments are reflected correctly.
+   */
+  async updatePayment(squareId: string, paymentData: Partial<InsertTransaction>): Promise<Transaction> {
+    const result = await db
+      .update(transactions)
+      .set(paymentData)
+      .where(eq(transactions.squareId, squareId))
+      .returning();
+
+    if (!result.length) {
+      throw new PaymentNotFoundError(squareId);
+    }
+
+    return result[0];
+  }
+
+  /**
+   * Create a new payment
    * 
    * This method implements the forward-looking solution for the architecture transition:
    * 1. Writes to the original 'transactions' table for backward compatibility
