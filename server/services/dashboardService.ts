@@ -228,16 +228,9 @@ export class DashboardService {
         tripleseat += payment.amount;
       }
       
-      // Add tips - extract from squareData if available
-      const tipAmount = squareData.tipAmount || 0;
-      if (tipAmount) {
-        tips += tipAmount;
-      }
-      
-      // Add taxes - extract from squareData if available
-      const taxAmount = squareData.taxAmount || 0;
-      if (taxAmount) {
-        taxes += taxAmount;
+      // Tips: Square stores tipMoney as a Money object { amount (cents), currency }
+      if (squareData.tipMoney?.amount) {
+        tips += Number(squareData.tipMoney.amount) / 100;
       }
       
       // Process refunds (negative amounts)
@@ -252,8 +245,11 @@ export class DashboardService {
     // Get order data to calculate discounts
     const orders = await orderService.getOrdersByDateRange(dateRange, startDate, endDate);
     
-    // Calculate discounts from orders
+    // Taxes and discounts both come from orders (Square puts totalTaxMoney on the order, not the payment)
     for (const order of orders) {
+      if (order.totalTax) {
+        taxes += order.totalTax;
+      }
       if (order.totalDiscount) {
         discountsAndComps += order.totalDiscount;
       }
