@@ -14,11 +14,13 @@ import {
   type CategoryRevenue,
   type HourlyRevenue,
   type GiftCardSummary,
-  refunds
+  refunds,
+  transactions,
+  orders as ordersTable
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
 import { db } from '../db';
-import { sql, between } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 
 export class DashboardService {
   /**
@@ -264,19 +266,46 @@ export class DashboardService {
     // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
     const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
     
-    // Get order data to calculate discounts, taxes, service charges, and 3rd-party deposit sources
+    // Calculate taxes using payment dates (matches Square's dashboard approach).
+    // Square groups tax by payment date, not order date. We find distinct orders
+    // that had completed payments in the date range, then subtract tax only from
+    // orders where ALL their payments in the range were fully refunded.
+    const taxRows = await db.execute<{ tax_total: number; refunded_tax: number }>(sql`
+      WITH payments_in_range AS (
+        SELECT
+          ${transactions.squareData}->>'orderId' as order_id,
+          COALESCE(NULLIF(${transactions.squareData}->'totalMoney'->>'amount', '')::numeric, 0) as total_amt,
+          COALESCE(NULLIF(${transactions.squareData}->'refundedMoney'->>'amount', '')::numeric, 0) as refunded_amt
+        FROM ${transactions}
+        WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
+          AND ${transactions.status} = 'completed'
+          AND ${transactions.squareData}->>'orderId' IS NOT NULL
+      ),
+      order_payment_summary AS (
+        SELECT
+          order_id,
+          SUM(total_amt) as total_paid,
+          SUM(refunded_amt) as total_refunded
+        FROM payments_in_range
+        GROUP BY order_id
+      )
+      SELECT
+        COALESCE(SUM(o.total_tax), 0) as tax_total,
+        COALESCE(SUM(CASE WHEN ops.total_paid > 0 AND ops.total_refunded >= ops.total_paid
+          THEN o.total_tax ELSE 0 END), 0) as refunded_tax
+      FROM order_payment_summary ops
+      JOIN ${ordersTable} o ON o.square_id = ops.order_id
+    `);
+    taxes = Math.max(Number(taxRows.rows[0]?.tax_total || 0) - Number(taxRows.rows[0]?.refunded_tax || 0), 0);
+
+    // Get order data to calculate discounts, service charges, and 3rd-party deposit sources
     const orders = await orderService.getOrdersByDateRange(dateRange, startDate, endDate);
     
     for (const order of orders) {
-      if (order.totalTax) {
-        taxes += order.totalTax;
-      }
       if (order.totalDiscount) {
         discountsAndComps += order.totalDiscount;
       }
 
-      // Partywirks and Tripleseat identified by order source name
-      // (Web Reservation deposits are now tracked via gift card breakdown, not orders)
       const src: string = order.source || '';
       if (src === 'Perfect Game Partywirks') {
         partywirks += order.totalMoney || 0;
@@ -284,7 +313,6 @@ export class DashboardService {
         tripleseat += order.totalMoney || 0;
       }
 
-      // Service charges are stored in the order's raw Square JSON
       const rawOrderData = (order as any).square_data ?? order.squareData;
       const orderData: any = rawOrderData
         ? (typeof rawOrderData === 'string' ? JSON.parse(rawOrderData) : rawOrderData)
