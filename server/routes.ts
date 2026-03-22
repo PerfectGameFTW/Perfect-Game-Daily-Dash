@@ -28,7 +28,7 @@ import {
   type InsertSyncState
 } from "@shared/schema";
 import { parse } from "date-fns";
-import * as squareClientModule from "./squareClient";
+import * as squareClient from "./squareClient";
 import { squareClient as squareSDK } from "./squareClient";
 import { and, gte, lte, sql, eq, gt, or, desc, count } from "drizzle-orm";
 import { syncService } from "./services/syncService";

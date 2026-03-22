@@ -19,7 +19,7 @@ export async function testConnection(): Promise<{ success: boolean, message: str
 
    console.log('Square API test connection successful:', {
      locationCount: response.locations.length,
-     locationIds: response.locations.map((l: any) => l.id)
+     locationIds: response.locations.map(l => l.id)
    });
 
    return {
@@ -154,9 +154,9 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
           break;
         }
 
-        const pageOrders = response.orders.filter((o: any) => o && o.id);
+        const pageOrders = response.orders.filter(o => o && o.id);
         allOrders.push(...pageOrders);
-        cursor = (response as any).cursor ?? undefined;
+        cursor = response.cursor ?? undefined;
 
         console.log(`Orders page ${page}: ${pageOrders.length} orders (cursor: ${cursor ? 'yes' : 'none'})`);
       } while (cursor);
@@ -315,7 +315,7 @@ export async function fetchOrdersByIds(orderIds: string[]): Promise<InsertOrder[
         locationId: process.env.SQUARE_LOCATION_ID!,
         orderIds: batch,
       });
-      const squareOrders = (response as any).orders ?? [];
+      const squareOrders = response.orders ?? [];
       for (const squareOrder of squareOrders) {
         try {
           results.push(convertSquareOrderToOrder(squareOrder));
@@ -488,33 +488,27 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
     }
 
     let allPayments: any[] = [];
-    let hasMorePages = true;
     let pageCount = 0;
-    let paymentsPage: any = null;
-    const MAX_PAGES = 50; // Allow up to 50 pages (5,000 payments) per sync
-    const TIMEOUT = 5 * 60 * 1000; // 5 minute timeout
+    const MAX_PAGES = 50;
+    const TIMEOUT = 5 * 60 * 1000;
 
-    while (hasMorePages && pageCount < MAX_PAGES) {
+    let paymentsPage = await squareClient.payments.list({
+      beginTime,
+      endTime,
+      sortOrder: 'DESC',
+      locationId: process.env.SQUARE_LOCATION_ID
+    });
+
+    while (pageCount < MAX_PAGES) {
       pageCount++;
       const pageStartTime = Date.now();
       console.log(`Starting to fetch payments page ${pageCount}${pageCount > 1 ? ' (next page)' : ''} at ${new Date(pageStartTime).toISOString()}`);
 
-      // Check for timeout
       if (Date.now() - startTime > TIMEOUT) {
         throw new Error('Sync timeout reached after 5 minutes');
       }
 
       try {
-        if (pageCount === 1) {
-          paymentsPage = await squareClient.payments.list({
-            beginTime,
-            endTime,
-            sortOrder: 'DESC',
-            locationId: process.env.SQUARE_LOCATION_ID
-          });
-        } else {
-          paymentsPage = await paymentsPage!.getNextPage();
-        }
 
         const pageEndTime = Date.now();
         const pageProcessingTime = pageEndTime - pageStartTime;
@@ -544,11 +538,10 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
           }
         }
 
-        hasMorePages = paymentsPage.hasNextPage();
+        if (!paymentsPage.hasNextPage()) break;
 
-        if (hasMorePages) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        paymentsPage = await paymentsPage.getNextPage();
       } catch (pageError) {
         const errorDetail = {
           error: pageError,
