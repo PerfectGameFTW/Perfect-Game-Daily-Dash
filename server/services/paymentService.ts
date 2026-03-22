@@ -10,7 +10,7 @@ import { eq, and, between, desc, asc, sql, inArray } from 'drizzle-orm';
 import {
   transactions,
   refunds,
-  giftCardRedemptions,
+  orders as ordersTable,
   type Transaction, 
   type InsertTransaction,
   type DateRange,
@@ -258,16 +258,18 @@ export class PaymentService {
         inArray(refunds.status, ['COMPLETED', 'PENDING'])
       ));
 
-    const redemptionResult = await db.select({
-      totalRedemptions: sql<number>`COALESCE(SUM(${giftCardRedemptions.amount}), 0)`,
-    }).from(giftCardRedemptions)
-      .where(
-        between(giftCardRedemptions.timestamp, start, end)
-      );
+    const redemptionResult = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM((tender->'amountMoney'->>'amount')::numeric / 100), 0) as total
+      FROM ${ordersTable}
+      CROSS JOIN LATERAL jsonb_array_elements(${ordersTable.squareData}->'tenders') as tender
+      WHERE tender->>'type' = 'SQUARE_GIFT_CARD'
+        AND ${ordersTable.status} = 'COMPLETED'
+        AND COALESCE(${ordersTable.closedAt}, ${ordersTable.createdAt}) BETWEEN ${start} AND ${end}
+    `);
 
     const grossPayments = result[0]?.totalRevenue || 0;
     const totalRefunds = refundResult[0]?.totalRefunds || 0;
-    const gcRedemptions = redemptionResult[0]?.totalRedemptions || 0;
+    const gcRedemptions = Number(redemptionResult.rows[0]?.total || 0);
     
     return {
       grossPayments,

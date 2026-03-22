@@ -16,7 +16,6 @@ import {
   type GiftCardSummary,
   refunds,
   transactions,
-  giftCardRedemptions as giftCardRedemptionsTable,
   orders as ordersTable
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
@@ -279,11 +278,13 @@ export class DashboardService {
     // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
     const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
 
-    // Get gift card redemptions total for the period
     const gcRedemptionRows = await db.execute<{ total: number }>(sql`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM ${giftCardRedemptionsTable}
-      WHERE timestamp BETWEEN ${start} AND ${end}
+      SELECT COALESCE(SUM((tender->'amountMoney'->>'amount')::numeric / 100), 0) as total
+      FROM ${ordersTable}
+      CROSS JOIN LATERAL jsonb_array_elements(${ordersTable.squareData}->'tenders') as tender
+      WHERE tender->>'type' = 'SQUARE_GIFT_CARD'
+        AND ${ordersTable.status} = 'COMPLETED'
+        AND COALESCE(${ordersTable.closedAt}, ${ordersTable.createdAt}) BETWEEN ${start} AND ${end}
     `);
     const giftCardRedemptionsTotal = Number(gcRedemptionRows.rows[0]?.total || 0);
     
