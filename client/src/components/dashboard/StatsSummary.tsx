@@ -80,7 +80,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const autoGratuity = toNum(detailedTransactions?.autoGratuity);
   const taxes = toNum(detailedTransactions?.taxes);
   
-  const calculatedNetRevenue = totalRevenue - returns - discounts - depositClearings - tips - serviceCharges - autoGratuity - taxes;
+  const calculatedNetRevenue = totalRevenue - discounts - depositClearings - tips - serviceCharges - autoGratuity - taxes;
 
   return (
     <div className="mt-4 space-y-6">
@@ -268,7 +268,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Refunds</span>
+              <span className="text-muted-foreground">Refunds + Returns</span>
               <span className="text-card-foreground font-medium">({formatCurrency(totalRefunds)})</span>
             </div>
 
@@ -322,11 +322,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Discounts & Comps</span>
               <span className="text-card-foreground font-medium">({formatCurrency(discounts)})</span>
-            </div>
-
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Returns</span>
-              <span className="text-card-foreground font-medium">({formatCurrency(returns)})</span>
             </div>
 
             <div className="flex justify-between items-center pt-3 border-t border-border">
