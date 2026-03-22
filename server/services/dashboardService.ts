@@ -245,13 +245,22 @@ export class DashboardService {
     // Get order data to calculate discounts
     const orders = await orderService.getOrdersByDateRange(dateRange, startDate, endDate);
     
-    // Taxes and discounts both come from orders (Square puts totalTaxMoney on the order, not the payment)
+    // Taxes, service charges, and discounts all come from orders
     for (const order of orders) {
       if (order.totalTax) {
         taxes += order.totalTax;
       }
       if (order.totalDiscount) {
         discountsAndComps += order.totalDiscount;
+      }
+      // Service charges are stored in the order's raw Square JSON
+      const orderData = order.squareData as any;
+      if (orderData?.serviceCharges && Array.isArray(orderData.serviceCharges)) {
+        for (const charge of orderData.serviceCharges) {
+          if (charge.appliedMoney?.amount) {
+            serviceCharges += Number(charge.appliedMoney.amount) / 100;
+          }
+        }
       }
     }
     

@@ -235,9 +235,16 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
             
             <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Taxes & Fees</span>
+              <span className="text-muted-foreground">Taxes</span>
               <span className="text-card-foreground font-medium">
-                {formatCurrency((detailedTransactions?.taxes || 0) + (detailedTransactions?.serviceCharges || 0))}
+                {formatCurrency(detailedTransactions?.taxes || 0)}
+              </span>
+            </div>
+            
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Service Charges</span>
+              <span className="text-card-foreground font-medium">
+                {formatCurrency(detailedTransactions?.serviceCharges || 0)}
               </span>
             </div>
             
