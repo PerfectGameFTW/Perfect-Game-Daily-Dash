@@ -79,7 +79,6 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const serviceCharges = toNum(detailedTransactions?.serviceCharges);
   const autoGratuity = toNum(detailedTransactions?.autoGratuity);
   const taxes = toNum(detailedTransactions?.taxes);
-  const gcRedemptions = toNum(detailedTransactions?.giftCardRedemptions);
   
   const calculatedNetRevenue = totalRevenue - returns - discounts - depositClearings - tips - serviceCharges - autoGratuity - taxes;
 
