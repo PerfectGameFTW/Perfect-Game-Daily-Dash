@@ -80,7 +80,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const taxes = toNum(detailedTransactions?.taxes);
   
   const refundsAndReturns = refunds + returns;
-  const calculatedNetRevenue = totalRevenue - discounts - depositClearings - tips - serviceCharges - autoGratuity - taxes;
+  const trueRevenue = totalRevenue - depositClearings;
+  const calculatedNetRevenue = trueRevenue - discounts - tips - serviceCharges - autoGratuity - taxes;
 
   return (
     <div className="mt-4 space-y-6">
@@ -98,8 +99,9 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">True Revenue = Gross Payments − Refunds + Returns − GC Redemptions</p>
+                      <p className="font-semibold mb-1">True Revenue = Gross Payments − Event Deposit Redemptions − Refunds + Returns − GC Redemptions</p>
                       {grossPayments > 0 && <p>Gross Payments: {formatCurrency(grossPayments)}</p>}
+                      {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
                       {refundsAndReturns > 0 && <p>Refunds + Returns: −{formatCurrency(refundsAndReturns)}</p>}
                       {giftCardRedemptionsAmount > 0 && <p>GC Redemptions: −{formatCurrency(giftCardRedemptionsAmount)}</p>}
                       <p className="text-muted-foreground/80 text-[10px] pt-1">Gift card redemptions are subtracted to avoid double-counting deposits and gift card sales.</p>
@@ -107,7 +109,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(data?.totalRevenue || 0)}</p>
+              <p className="text-3xl font-bold mt-2 text-card-foreground">{formatCurrency(trueRevenue)}</p>
             </div>
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
               <DollarSign className="h-6 w-6 text-primary" />
@@ -197,9 +199,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">Net Sales = True Revenue − Event Deposit Redemptions − Tips − Service Charges − Auto Gratuity − Taxes − Discounts & Comps</p>
-                      <p className="text-muted-foreground/80 text-[10px]">True Revenue already excludes refunds, returns, and gift card redemptions</p>
-                      {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
+                      <p className="font-semibold mb-1">Net Sales = True Revenue − Tips − Service Charges − Auto Gratuity − Taxes − Discounts & Comps</p>
+                      <p className="text-muted-foreground/80 text-[10px]">True Revenue already excludes event deposit redemptions, refunds, returns, and gift card redemptions</p>
                       {tips > 0 && <p>Tips: −{formatCurrency(tips)}</p>}
                       {serviceCharges > 0 && <p>Service Charges: −{formatCurrency(serviceCharges)}</p>}
                       {autoGratuity > 0 && <p>Auto Gratuity: −{formatCurrency(autoGratuity)}</p>}
@@ -267,6 +268,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Event Deposit Redemptions</span>
+              <span className="text-card-foreground font-medium">({formatCurrency(depositClearings)})</span>
+            </div>
+
+            <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Refunds + Returns</span>
               <span className="text-card-foreground font-medium">({formatCurrency(refundsAndReturns)})</span>
             </div>
@@ -285,17 +291,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs">
-                      Gross Payments minus Refunds + Returns minus Gift Card Redemptions. Redemptions are subtracted because the revenue was already counted when the gift card or deposit was originally sold.
+                      Gross Payments minus Event Deposit Redemptions minus Refunds + Returns minus Gift Card Redemptions.
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              <span className="text-card-foreground font-semibold">{formatCurrency(totalRevenue)}</span>
-            </div>
-
-            <div className="flex justify-between items-center pt-3 border-t border-border">
-              <span className="text-muted-foreground">Event Deposit Redemptions</span>
-              <span className="text-card-foreground font-medium">({formatCurrency(depositClearings)})</span>
+              <span className="text-card-foreground font-semibold">{formatCurrency(trueRevenue)}</span>
             </div>
 
             <div className="flex justify-between items-center">
