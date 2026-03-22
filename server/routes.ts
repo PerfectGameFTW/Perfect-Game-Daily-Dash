@@ -33,6 +33,7 @@ import { and, gte, lte, sql, eq, gt, or, desc, count } from "drizzle-orm";
 import { syncService } from "./services/syncService";
 import { dashboardService } from "./services/dashboardService";
 import { getEasternDateRange } from "./dateUtils";
+import { requireAuth, requireAdmin } from "./middleware/auth";
 // Helper function to safely process Square API response data
 function processSafeSquareData(data: any): any {
   try {
@@ -1109,8 +1110,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Historical backfill status — must be registered BEFORE the POST route
-  apiRouter.get("/sync/backfill/status", async (_req, res) => {
+  // Historical backfill status — admin only, must be registered BEFORE the POST route
+  apiRouter.get("/sync/backfill/status", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const status = await syncService.getHistoricalBackfillStatus();
       res.json(status);
@@ -1121,18 +1122,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Historical backfill: syncs all orders + payments for a given date range in weekly chunks.
-  // Body params:
+  // Params (body OR query string):
   //   startDate  — ISO date string, e.g. "2025-01-01"  (defaults to Jan 1 2025)
   //   endDate    — ISO date string, e.g. "2026-03-22"  (defaults to now)
   //   chunkDays  — number of days per chunk            (defaults to 7)
   // Returns immediately with 202 Accepted; poll GET /api/sync/backfill/status for progress.
-  apiRouter.post("/sync/backfill", async (req, res) => {
+  apiRouter.post("/sync/backfill", requireAuth, requireAdmin, async (req, res) => {
     try {
-      const { startDate, endDate, chunkDays } = req.body ?? {};
+      // Accept params from both body and query string (body takes precedence)
+      const body = req.body ?? {};
+      const query = req.query ?? {};
+      const rawStartDate = body.startDate ?? query.startDate;
+      const rawEndDate   = body.endDate   ?? query.endDate;
+      const rawChunkDays = body.chunkDays ?? query.chunkDays;
 
-      const start = startDate ? new Date(startDate) : new Date('2025-01-01T00:00:00Z');
-      const end   = endDate   ? new Date(endDate)   : new Date();
-      const chunk = typeof chunkDays === 'number' && chunkDays > 0 ? chunkDays : 7;
+      const start = rawStartDate ? new Date(rawStartDate as string) : new Date('2025-01-01T00:00:00Z');
+      const end   = rawEndDate   ? new Date(rawEndDate   as string) : new Date();
+      const chunk = Number(rawChunkDays) > 0 ? Number(rawChunkDays) : 7;
 
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
         return res.status(400).json({ error: 'Invalid startDate or endDate' });

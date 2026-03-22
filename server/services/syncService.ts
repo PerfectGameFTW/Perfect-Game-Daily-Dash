@@ -1396,11 +1396,22 @@ export class SyncService {
           errorMessage: null,
         });
 
+        // Per-chunk gift-card linking: run the heuristic phase so gift card–to–order
+        // links are established progressively as each chunk's orders are added to the DB.
+        try {
+          const gcResult = await giftCardService.backfillActivationSquareOrderIds();
+          if (gcResult.updated > 0) {
+            console.log(`[HistoricalBackfill] Chunk ${i + 1} gift-card linking: ${gcResult.updated} gift cards linked`);
+          }
+        } catch (gcErr) {
+          console.error(`[HistoricalBackfill] Chunk ${i + 1} gift-card linking failed (non-fatal):`, gcErr);
+        }
+
         // Brief pause between chunks to stay well inside Square API rate limits
         await new Promise(r => setTimeout(r, 1500));
       }
 
-      // All chunks complete — run gift-card linking phases
+      // All chunks complete — run full gift-card linking phases (including history scan)
       console.log('[HistoricalBackfill] All chunks done. Running gift-card linking phases...');
       try {
         const r0 = await giftCardService.backfillActivationOrderIdsFromActivateHistory();
