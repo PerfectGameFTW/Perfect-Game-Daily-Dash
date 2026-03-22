@@ -28,7 +28,8 @@ import {
   type InsertSyncState
 } from "@shared/schema";
 import { parse } from "date-fns";
-import * as squareClient from "./squareClient";
+import * as squareClientModule from "./squareClient";
+import { squareClient as squareSDK } from "./squareClient";
 import { and, gte, lte, sql, eq, gt, or, desc, count } from "drizzle-orm";
 import { syncService } from "./services/syncService";
 import { dashboardService } from "./services/dashboardService";
@@ -742,7 +743,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Sending Orders search request:", JSON.stringify(searchRequest, null, 2));
       
       // Make the API call directly
-      const response = await squareClient.orders.search(searchRequest);
+      const response = await squareSDK.orders.search(searchRequest);
       
       const orderCount = response.orders?.length || 0;
       console.log(`Found ${orderCount} orders in test call`);

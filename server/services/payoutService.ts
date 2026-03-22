@@ -67,13 +67,10 @@ export class PayoutService {
               : 0;
 
             let paymentId: string | null = null;
-            const details = entry as Record<string, unknown>;
             if (entry.type === 'CHARGE') {
-              const chargeDetails = details.typeChargeDetails as Record<string, string> | undefined;
-              paymentId = chargeDetails?.paymentId ?? null;
+              paymentId = entry.typeChargeDetails?.paymentId ?? null;
             } else if (entry.type === 'FEE') {
-              const feeDetails = details.typeFeeDetails as Record<string, string> | undefined;
-              paymentId = feeDetails?.paymentId ?? null;
+              paymentId = entry.typeFeeDetails?.paymentId ?? null;
             }
 
             batch.push({

@@ -497,7 +497,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
     while (hasMorePages && pageCount < MAX_PAGES) {
       pageCount++;
       const pageStartTime = Date.now();
-      console.log(`Starting to fetch payments page ${pageCount}${cursor ? ' with cursor' : ''} at ${new Date(pageStartTime).toISOString()}`);
+      console.log(`Starting to fetch payments page ${pageCount}${pageCount > 1 ? ' (next page)' : ''} at ${new Date(pageStartTime).toISOString()}`);
 
       // Check for timeout
       if (Date.now() - startTime > TIMEOUT) {
@@ -897,7 +897,7 @@ export async function fetchGiftCardActivitiesPage(
       if (amountCents == null) continue;
       const createdAt = activity.createdAt ? new Date(activity.createdAt) : new Date(0);
       const squareOrderId: string | undefined =
-        activity.orderId ?? activity.activateActivityDetails?.orderId ?? undefined;
+        activity.activateActivityDetails?.orderId ?? undefined;
       activities.push({
         giftCardId,
         activationAmountDollars: Number(amountCents) / 100,
@@ -961,7 +961,7 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
       if (amountCents == null) continue;
 
       const squareOrderId: string | undefined =
-        activity.orderId ?? activity.activateActivityDetails?.orderId ?? undefined;
+        activity.activateActivityDetails?.orderId ?? undefined;
 
       results.push({
         giftCardId,
