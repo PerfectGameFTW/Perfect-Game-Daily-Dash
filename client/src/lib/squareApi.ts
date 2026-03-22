@@ -29,40 +29,31 @@ export const fetchDailySummary = async (
     const queryString = buildQueryString(dateRange, startDate, endDate);
     const response = await apiRequest('GET', `/api/summary?${queryString}`);
     
+    const parseSummary = (d: any): DailySummary => ({
+      totalRevenue: typeof d.totalRevenue === 'number' ? d.totalRevenue : parseFloat(d.totalRevenue || '0'),
+      grossPayments: typeof d.grossPayments === 'number' ? d.grossPayments : parseFloat(d.grossPayments || '0'),
+      totalRefunds: typeof d.totalRefunds === 'number' ? d.totalRefunds : parseFloat(d.totalRefunds || '0'),
+      giftCardRedemptions: typeof d.giftCardRedemptions === 'number' ? d.giftCardRedemptions : parseFloat(d.giftCardRedemptions || '0'),
+      revenueChange: typeof d.revenueChange === 'number' ? d.revenueChange : parseFloat(d.revenueChange || '0'),
+      totalOrders: typeof d.totalOrders === 'number' ? d.totalOrders : parseInt(d.totalOrders || '0', 10),
+      ordersChange: typeof d.ordersChange === 'number' ? d.ordersChange : parseFloat(d.ordersChange || '0'),
+      averageOrder: typeof d.averageOrder === 'number' ? d.averageOrder : parseFloat(d.averageOrder || '0'),
+      averageOrderChange: typeof d.averageOrderChange === 'number' ? d.averageOrderChange : parseFloat(d.averageOrderChange || '0'),
+      giftCardSales: typeof d.giftCardSales === 'number' ? d.giftCardSales : parseFloat(d.giftCardSales || '0'),
+      giftCardSalesChange: typeof d.giftCardSalesChange === 'number' ? d.giftCardSalesChange : parseFloat(d.giftCardSalesChange || '0'),
+      date: d.date || new Date().toISOString().split('T')[0]
+    });
+
     if (typeof response === 'object' && response !== null) {
-      return {
-        totalRevenue: typeof response.totalRevenue === 'number' ? response.totalRevenue : parseFloat(response.totalRevenue || '0'),
-        revenueChange: typeof response.revenueChange === 'number' ? response.revenueChange : parseFloat(response.revenueChange || '0'),
-        totalOrders: typeof response.totalOrders === 'number' ? response.totalOrders : parseInt(response.totalOrders || '0', 10),
-        ordersChange: typeof response.ordersChange === 'number' ? response.ordersChange : parseFloat(response.ordersChange || '0'),
-        averageOrder: typeof response.averageOrder === 'number' ? response.averageOrder : parseFloat(response.averageOrder || '0'),
-        averageOrderChange: typeof response.averageOrderChange === 'number' ? response.averageOrderChange : parseFloat(response.averageOrderChange || '0'),
-        giftCardSales: typeof response.giftCardSales === 'number' ? response.giftCardSales : parseFloat(response.giftCardSales || '0'),
-        giftCardSalesChange: typeof response.giftCardSalesChange === 'number' ? response.giftCardSalesChange : parseFloat(response.giftCardSalesChange || '0'),
-        date: response.date || new Date().toISOString().split('T')[0]
-      };
+      return parseSummary(response);
     }
     
     if (response instanceof Response) {
       const data = await response.json();
-      return {
-        totalRevenue: typeof data.totalRevenue === 'number' ? data.totalRevenue : parseFloat(data.totalRevenue || '0'),
-        revenueChange: typeof data.revenueChange === 'number' ? data.revenueChange : parseFloat(data.revenueChange || '0'),
-        totalOrders: typeof data.totalOrders === 'number' ? data.totalOrders : parseInt(data.totalOrders || '0', 10),
-        ordersChange: typeof data.ordersChange === 'number' ? data.ordersChange : parseFloat(data.ordersChange || '0'),
-        averageOrder: typeof data.averageOrder === 'number' ? data.averageOrder : parseFloat(data.averageOrder || '0'),
-        averageOrderChange: typeof data.averageOrderChange === 'number' ? data.averageOrderChange : parseFloat(data.averageOrderChange || '0'),
-        giftCardSales: typeof data.giftCardSales === 'number' ? data.giftCardSales : parseFloat(data.giftCardSales || '0'),
-        giftCardSalesChange: typeof data.giftCardSalesChange === 'number' ? data.giftCardSalesChange : parseFloat(data.giftCardSalesChange || '0'),
-        date: data.date || new Date().toISOString().split('T')[0]
-      };
+      return parseSummary(data);
     }
     
-    return {
-      totalRevenue: 0, revenueChange: 0, totalOrders: 0, ordersChange: 0,
-      averageOrder: 0, averageOrderChange: 0, giftCardSales: 0, giftCardSalesChange: 0,
-      date: new Date().toISOString().split('T')[0]
-    };
+    return parseSummary({});
   } catch (error) {
     console.error('Error fetching daily summary:', error);
     throw error;
@@ -91,50 +82,34 @@ export const fetchDetailedTransactions = async (
     const queryString = buildQueryString(dateRange, startDate, endDate);
     const response = await apiRequest('GET', `/api/detailed-transactions?${queryString}`);
     
+    const parseBreakdown = (d: any): DetailedTransactionBreakdown => ({
+      partywirks: typeof d.partywirks === 'number' ? d.partywirks : parseFloat(d.partywirks || '0'),
+      bowlingWebResDeposits: typeof d.bowlingWebResDeposits === 'number' ? d.bowlingWebResDeposits : parseFloat(d.bowlingWebResDeposits || '0'),
+      laserTagWebResDeposits: typeof d.laserTagWebResDeposits === 'number' ? d.laserTagWebResDeposits : parseFloat(d.laserTagWebResDeposits || '0'),
+      tripleseat: typeof d.tripleseat === 'number' ? d.tripleseat : parseFloat(d.tripleseat || '0'),
+      tips: typeof d.tips === 'number' ? d.tips : parseFloat(d.tips || '0'),
+      serviceCharges: typeof d.serviceCharges === 'number' ? d.serviceCharges : parseFloat(d.serviceCharges || '0'),
+      autoGratuity: typeof d.autoGratuity === 'number' ? d.autoGratuity : parseFloat(d.autoGratuity || '0'),
+      taxes: typeof d.taxes === 'number' ? d.taxes : parseFloat(d.taxes || '0'),
+      refunds: typeof d.refunds === 'number' ? d.refunds : parseFloat(d.refunds || '0'),
+      returns: typeof d.returns === 'number' ? d.returns : parseFloat(d.returns || '0'),
+      discountsAndComps: typeof d.discountsAndComps === 'number' ? d.discountsAndComps : parseFloat(d.discountsAndComps || '0'),
+      depositClearings: typeof d.depositClearings === 'number' ? d.depositClearings : parseFloat(d.depositClearings || '0'),
+      giftCardSales: typeof d.giftCardSales === 'number' ? d.giftCardSales : parseFloat(d.giftCardSales || '0'),
+      giftCardRedemptions: typeof d.giftCardRedemptions === 'number' ? d.giftCardRedemptions : parseFloat(d.giftCardRedemptions || '0'),
+      totalTransactions: typeof d.totalTransactions === 'number' ? d.totalTransactions : parseInt(d.totalTransactions || '0', 10)
+    });
+
     if (typeof response === 'object' && response !== null) {
-      return {
-        partywirks: typeof response.partywirks === 'number' ? response.partywirks : parseFloat(response.partywirks || '0'),
-        bowlingWebResDeposits: typeof response.bowlingWebResDeposits === 'number' ? response.bowlingWebResDeposits : parseFloat(response.bowlingWebResDeposits || '0'),
-        laserTagWebResDeposits: typeof response.laserTagWebResDeposits === 'number' ? response.laserTagWebResDeposits : parseFloat(response.laserTagWebResDeposits || '0'),
-        tripleseat: typeof response.tripleseat === 'number' ? response.tripleseat : parseFloat(response.tripleseat || '0'),
-        tips: typeof response.tips === 'number' ? response.tips : parseFloat(response.tips || '0'),
-        serviceCharges: typeof response.serviceCharges === 'number' ? response.serviceCharges : parseFloat(response.serviceCharges || '0'),
-        autoGratuity: typeof response.autoGratuity === 'number' ? response.autoGratuity : parseFloat(response.autoGratuity || '0'),
-        taxes: typeof response.taxes === 'number' ? response.taxes : parseFloat(response.taxes || '0'),
-        refunds: typeof response.refunds === 'number' ? response.refunds : parseFloat(response.refunds || '0'),
-        returns: typeof response.returns === 'number' ? response.returns : parseFloat(response.returns || '0'),
-        discountsAndComps: typeof response.discountsAndComps === 'number' ? response.discountsAndComps : parseFloat(response.discountsAndComps || '0'),
-        depositClearings: typeof response.depositClearings === 'number' ? response.depositClearings : parseFloat(response.depositClearings || '0'),
-        giftCardSales: typeof response.giftCardSales === 'number' ? response.giftCardSales : parseFloat(response.giftCardSales || '0'),
-        totalTransactions: typeof response.totalTransactions === 'number' ? response.totalTransactions : parseInt(response.totalTransactions || '0', 10)
-      };
+      return parseBreakdown(response);
     }
     
     if (response instanceof Response) {
       const data = await response.json();
-      return {
-        partywirks: typeof data.partywirks === 'number' ? data.partywirks : parseFloat(data.partywirks || '0'),
-        bowlingWebResDeposits: typeof data.bowlingWebResDeposits === 'number' ? data.bowlingWebResDeposits : parseFloat(data.bowlingWebResDeposits || '0'),
-        laserTagWebResDeposits: typeof data.laserTagWebResDeposits === 'number' ? data.laserTagWebResDeposits : parseFloat(data.laserTagWebResDeposits || '0'),
-        tripleseat: typeof data.tripleseat === 'number' ? data.tripleseat : parseFloat(data.tripleseat || '0'),
-        tips: typeof data.tips === 'number' ? data.tips : parseFloat(data.tips || '0'),
-        serviceCharges: typeof data.serviceCharges === 'number' ? data.serviceCharges : parseFloat(data.serviceCharges || '0'),
-        autoGratuity: typeof data.autoGratuity === 'number' ? data.autoGratuity : parseFloat(data.autoGratuity || '0'),
-        taxes: typeof data.taxes === 'number' ? data.taxes : parseFloat(data.taxes || '0'),
-        refunds: typeof data.refunds === 'number' ? data.refunds : parseFloat(data.refunds || '0'),
-        returns: typeof data.returns === 'number' ? data.returns : parseFloat(data.returns || '0'),
-        discountsAndComps: typeof data.discountsAndComps === 'number' ? data.discountsAndComps : parseFloat(data.discountsAndComps || '0'),
-        depositClearings: typeof data.depositClearings === 'number' ? data.depositClearings : parseFloat(data.depositClearings || '0'),
-        giftCardSales: typeof data.giftCardSales === 'number' ? data.giftCardSales : parseFloat(data.giftCardSales || '0'),
-        totalTransactions: typeof data.totalTransactions === 'number' ? data.totalTransactions : parseInt(data.totalTransactions || '0', 10)
-      };
+      return parseBreakdown(data);
     }
     
-    return {
-      partywirks: 0, bowlingWebResDeposits: 0, laserTagWebResDeposits: 0,
-      tripleseat: 0, tips: 0, serviceCharges: 0, autoGratuity: 0,
-      taxes: 0, refunds: 0, returns: 0, discountsAndComps: 0, depositClearings: 0, giftCardSales: 0, totalTransactions: 0
-    };
+    return parseBreakdown({});
   } catch (error) {
     console.error('Error fetching detailed transactions:', error);
     throw error;

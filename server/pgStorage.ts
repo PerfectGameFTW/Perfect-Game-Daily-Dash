@@ -189,6 +189,9 @@ class PgStorage implements IStorage {
     
     return {
       totalRevenue,
+      grossPayments: totalRevenue,
+      totalRefunds: 0,
+      giftCardRedemptions: 0,
       revenueChange,
       totalOrders,
       ordersChange,

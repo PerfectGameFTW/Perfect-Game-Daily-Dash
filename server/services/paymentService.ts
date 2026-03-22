@@ -10,6 +10,7 @@ import { eq, and, between, desc, asc, sql, inArray } from 'drizzle-orm';
 import {
   transactions,
   refunds,
+  giftCardRedemptions,
   type Transaction, 
   type InsertTransaction,
   type DateRange,
@@ -225,7 +226,20 @@ export class PaymentService {
     startDate?: Date,
     endDate?: Date
   ): Promise<number> {
-    // Get proper UTC date boundaries based on Eastern business days
+    const breakdown = await this.getRevenueBreakdown(dateRange, startDate, endDate);
+    return breakdown.trueRevenue;
+  }
+
+  async getRevenueBreakdown(
+    dateRange: DateRange,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<{
+    grossPayments: number;
+    totalRefunds: number;
+    giftCardRedemptions: number;
+    trueRevenue: number;
+  }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
     const result = await db.select({
@@ -244,9 +258,23 @@ export class PaymentService {
         inArray(refunds.status, ['COMPLETED', 'PENDING'])
       ));
 
+    const redemptionResult = await db.select({
+      totalRedemptions: sql<number>`COALESCE(SUM(${giftCardRedemptions.amount}), 0)`,
+    }).from(giftCardRedemptions)
+      .where(
+        between(giftCardRedemptions.timestamp, start, end)
+      );
+
     const grossPayments = result[0]?.totalRevenue || 0;
     const totalRefunds = refundResult[0]?.totalRefunds || 0;
-    return grossPayments - totalRefunds;
+    const gcRedemptions = redemptionResult[0]?.totalRedemptions || 0;
+    
+    return {
+      grossPayments,
+      totalRefunds,
+      giftCardRedemptions: gcRedemptions,
+      trueRevenue: grossPayments - totalRefunds - gcRedemptions,
+    };
   }
   
   /**

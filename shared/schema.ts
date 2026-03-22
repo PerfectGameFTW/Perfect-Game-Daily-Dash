@@ -282,6 +282,9 @@ export interface OrderSummary {
 
 export interface DailySummary {
   totalRevenue: number;
+  grossPayments: number;
+  totalRefunds: number;
+  giftCardRedemptions: number;
   revenueChange: number;
   totalOrders: number;
   ordersChange: number;
@@ -325,5 +328,6 @@ export interface DetailedTransactionBreakdown {
   discountsAndComps: number;
   depositClearings: number;
   giftCardSales: number;
+  giftCardRedemptions: number;
   totalTransactions: number;
 }

@@ -16,6 +16,7 @@ import {
   type GiftCardSummary,
   refunds,
   transactions,
+  giftCardRedemptions as giftCardRedemptionsTable,
   orders as ordersTable
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
@@ -42,8 +43,9 @@ export class DashboardService {
   endUTC: '${endDate?.toISOString() || 'undefined'}'
 }`);
 
-    // Get current period data
-    const totalRevenue = await paymentService.getTotalRevenue(dateRange, startDate, endDate);
+    // Get current period data with full revenue breakdown
+    const revenueBreakdown = await paymentService.getRevenueBreakdown(dateRange, startDate, endDate);
+    const totalRevenue = revenueBreakdown.trueRevenue;
     const totalOrders = await orderService.getTotalOrders(dateRange, startDate, endDate);
     const giftCardSales = await giftCardService.getGiftCardSales(dateRange, startDate, endDate);
     
@@ -58,7 +60,7 @@ export class DashboardService {
   previousEndUTC: '${previousEnd.toISOString()}'
 }`);
     
-    // Get previous period data for comparison
+    // Get previous period data for comparison (also uses true revenue)
     const previousRevenue = await paymentService.getTotalRevenue('custom', previousStart, previousEnd);
     const previousOrders = await orderService.getTotalOrders('custom', previousStart, previousEnd);
     const previousGiftCardSales = await giftCardService.getGiftCardSales('custom', previousStart, previousEnd);
@@ -103,6 +105,9 @@ export class DashboardService {
 
     return {
       totalRevenue,
+      grossPayments: revenueBreakdown.grossPayments,
+      totalRefunds: revenueBreakdown.totalRefunds,
+      giftCardRedemptions: revenueBreakdown.giftCardRedemptions,
       revenueChange,
       totalOrders,
       ordersChange,
@@ -201,6 +206,7 @@ export class DashboardService {
     bowlingWebResDeposits: number;
     laserTagWebResDeposits: number;
     giftCardSales: number;
+    giftCardRedemptions: number;
     depositClearings: number;
     totalTransactions: number;
   }> {
@@ -272,6 +278,14 @@ export class DashboardService {
     
     // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
     const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
+
+    // Get gift card redemptions total for the period
+    const gcRedemptionRows = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM(amount), 0) as total
+      FROM ${giftCardRedemptionsTable}
+      WHERE timestamp BETWEEN ${start} AND ${end}
+    `);
+    const giftCardRedemptionsTotal = Number(gcRedemptionRows.rows[0]?.total || 0);
     
     // Calculate taxes from ALL orders (COMPLETED + OPEN) in the date range.
     // Square's Sales Summary includes tax from every order for the business day,
@@ -330,6 +344,7 @@ export class DashboardService {
       bowlingWebResDeposits: giftCardBreakdown.bowlingWebResDeposits,
       laserTagWebResDeposits: giftCardBreakdown.laserTagWebResDeposits,
       giftCardSales: giftCardBreakdown.giftCardSales,
+      giftCardRedemptions: giftCardRedemptionsTotal,
       depositClearings,
       totalTransactions: payments.length
     };
