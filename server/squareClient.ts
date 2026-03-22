@@ -847,7 +847,7 @@ export async function fetchGiftCardActivitiesPage(
   cursor: string | undefined,
   sortOrder: 'ASC' | 'DESC' = 'DESC'
 ): Promise<{
-  activities: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date }>;
+  activities: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date; squareOrderId?: string }>;
   nextCursor: string | undefined;
 }> {
   if (!process.env.SQUARE_LOCATION_ID) {
@@ -870,17 +870,19 @@ export async function fetchGiftCardActivitiesPage(
     const rawActivities = (response.result as any)?.giftCardActivities ?? [];
     const nextCursor: string | undefined = (response.result as any)?.cursor ?? undefined;
 
-    const activities: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date }> = [];
+    const activities: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date; squareOrderId?: string }> = [];
     for (const activity of rawActivities) {
       const giftCardId = activity.giftCardId;
       if (!giftCardId) continue;
       const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
       if (amountCents == null) continue;
       const createdAt = activity.createdAt ? new Date(activity.createdAt) : new Date(0);
+      const squareOrderId: string | undefined = activity.orderId ?? undefined;
       activities.push({
         giftCardId,
         activationAmountDollars: Number(amountCents) / 100,
         createdAt,
+        squareOrderId,
       });
     }
 
@@ -900,8 +902,9 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
   giftCardId: string;
   activationAmountDollars: number;
   createdAt: Date;
+  squareOrderId?: string;
 }>> {
-  const results: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date }> = [];
+  const results: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date; squareOrderId?: string }> = [];
 
   if (!process.env.SQUARE_LOCATION_ID) {
     console.error('[IncrementalGiftCardSync] Square location ID is not configured');
@@ -944,10 +947,13 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
         const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
         if (amountCents == null) continue;
 
+        const squareOrderId: string | undefined = activity.orderId ?? undefined;
+
         results.push({
           giftCardId,
           activationAmountDollars: Number(amountCents) / 100,
           createdAt: activityTime,
+          squareOrderId,
         });
       }
 

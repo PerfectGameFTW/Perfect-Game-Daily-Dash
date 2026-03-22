@@ -887,12 +887,12 @@ export class SyncService {
         return { processed: 0, created: 0, updated: 0, failed: 0, sinceDate: since.toISOString() };
       }
 
-      // Deduplicate by giftCardId — keep highest activation amount in case of duplicates
-      const uniqueActivations = new Map<string, number>();
-      for (const { giftCardId, activationAmountDollars } of recentActivations) {
-        const existing = uniqueActivations.get(giftCardId) ?? 0;
-        if (activationAmountDollars > existing) {
-          uniqueActivations.set(giftCardId, activationAmountDollars);
+      // Deduplicate by giftCardId — keep highest activation amount + associated squareOrderId
+      const uniqueActivations = new Map<string, { amount: number; squareOrderId?: string }>();
+      for (const { giftCardId, activationAmountDollars, squareOrderId } of recentActivations) {
+        const existing = uniqueActivations.get(giftCardId);
+        if (!existing || activationAmountDollars > existing.amount) {
+          uniqueActivations.set(giftCardId, { amount: activationAmountDollars, squareOrderId });
         }
       }
 
@@ -907,21 +907,16 @@ export class SyncService {
         status: `Processing ${uniqueActivations.size} unique activations`
       });
 
-      for (const [giftCardId, activationAmountDollars] of Array.from(uniqueActivations)) {
+      for (const [giftCardId, { amount: activationAmountDollars, squareOrderId }] of Array.from(uniqueActivations)) {
         try {
           if (existingSquareIds.has(giftCardId)) {
-            // Card already exists — fill in activation amount if still null
+            // Card already exists — fill in activation amount if still null, always update squareOrderId if we have one
+            const updateFields: Record<string, any> = { updatedAt: new Date() };
+            if (activationAmountDollars) updateFields.activationAmount = activationAmountDollars;
+            if (squareOrderId) updateFields.activationSquareOrderId = squareOrderId;
             await db.update(giftCards)
-              .set({
-                activationAmount: activationAmountDollars,
-                updatedAt: new Date()
-              })
-              .where(
-                and(
-                  eq(giftCards.squareId, giftCardId),
-                  isNull(giftCards.activationAmount)
-                )
-              );
+              .set(updateFields)
+              .where(eq(giftCards.squareId, giftCardId));
             updated++;
           } else {
             // Brand-new card — fetch from Square and insert
@@ -933,6 +928,7 @@ export class SyncService {
             }
 
             const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
+            if (squareOrderId) cardData.activationSquareOrderId = squareOrderId;
             await giftCardService.createGiftCard(cardData);
             existingSquareIds.add(giftCardId); // prevent double-insert in same run
             created++;
@@ -1082,7 +1078,7 @@ export class SyncService {
 
         console.log(`[HistoricalGiftCardBackfill] Page ${page + 1}: ${activities.length} ACTIVATE events (cursor: ${currentCursor?.slice(0, 20) ?? 'start'})`);
 
-        for (const { giftCardId, activationAmountDollars, createdAt } of activities) {
+        for (const { giftCardId, activationAmountDollars, createdAt, squareOrderId } of activities) {
           try {
             // Look up from the pre-loaded map — avoids a per-card API call.
             // Fall back to fetchGiftCardById only for cards not in the bulk list
@@ -1101,6 +1097,8 @@ export class SyncService {
             const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
             // Use the authoritative createdAt from the Activities API event (correct UTC)
             cardData.purchaseDate = createdAt;
+            // Link the gift card to its originating Square order (used to identify Web Res deposits)
+            if (squareOrderId) cardData.activationSquareOrderId = squareOrderId;
 
             if (existingSquareIds.has(giftCardId)) {
               // Card exists — upsert current balance and active status from Square.
@@ -1113,6 +1111,7 @@ export class SyncService {
                   isActive: cardData.isActive,
                   activationAmount: activationAmountDollars,
                   purchaseDate: sql`CASE WHEN ${giftCards.purchaseDate} IS NULL OR ${giftCards.purchaseDate} > ${createdAt} THEN ${createdAt} ELSE ${giftCards.purchaseDate} END`,
+                  ...(squareOrderId ? { activationSquareOrderId: squareOrderId } : {}),
                   updatedAt: new Date()
                 })
                 .where(eq(giftCards.squareId, giftCardId));

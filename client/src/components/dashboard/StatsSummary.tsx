@@ -294,18 +294,23 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center pt-3 border-t border-border">
+              <span className="text-muted-foreground">Bowling Web Res Deposits</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.bowlingWebResDeposits || 0)}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Laser Tag Web Res Deposits</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.laserTagWebResDeposits || 0)}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Gift Card Sales</span>
-              <span className="text-card-foreground font-medium">{formatCurrency(data?.giftCardSales || 0)}</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.giftCardSales || 0)}</span>
             </div>
 
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Partywirks Deposits</span>
               <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.partywirks || 0)}</span>
-            </div>
-
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Web Res Deposits</span>
-              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.webReservation || 0)}</span>
             </div>
 
             <div className="flex justify-between items-center">

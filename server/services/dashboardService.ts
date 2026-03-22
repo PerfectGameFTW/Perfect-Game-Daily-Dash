@@ -191,12 +191,12 @@ export class DashboardService {
     taxes: number;
     refunds: number;
     discountsAndComps: number;
+    bowlingWebResDeposits: number;
+    laserTagWebResDeposits: number;
     giftCardSales: number;
+    depositClearings: number;
     totalTransactions: number;
   }> {
-    // Get date range parameters
-    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    
     // Get payments for the specified date range
     const payments = await paymentService.getPaymentsByDateRange(
       dateRange,
@@ -207,7 +207,6 @@ export class DashboardService {
     
     // Initialize values
     let partywirks = 0;
-    let webReservation = 0;
     let tripleseat = 0;
     let tips = 0;
     let serviceCharges = 0;
@@ -223,8 +222,6 @@ export class DashboardService {
       const squareData: Record<string, any> = rawData
         ? (typeof rawData === 'string' ? JSON.parse(rawData) : rawData)
         : {};
-      
-      // Partywirks/Tripleseat are identified by order source — handled below via orders loop
       
       // Tips: Square stores tipMoney as a Money object { amount (cents), currency }
       if (squareData.tipMoney?.amount) {
@@ -246,13 +243,12 @@ export class DashboardService {
       }
     }
     
-    // Get gift card sales for the period
-    const giftCardSales = await giftCardService.getGiftCardSales(dateRange, startDate, endDate);
+    // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
+    const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
     
-    // Get order data to calculate discounts
+    // Get order data to calculate discounts, taxes, service charges, and 3rd-party deposit sources
     const orders = await orderService.getOrdersByDateRange(dateRange, startDate, endDate);
     
-    // Taxes, service charges, discounts, and 3rd-party sources all come from orders
     for (const order of orders) {
       if (order.totalTax) {
         taxes += order.totalTax;
@@ -262,11 +258,10 @@ export class DashboardService {
       }
 
       // Partywirks and Tripleseat identified by order source name
+      // (Web Reservation deposits are now tracked via gift card breakdown, not orders)
       const src: string = order.source || '';
       if (src === 'Perfect Game Partywirks') {
         partywirks += order.totalMoney || 0;
-      } else if (src === 'Web Reservation') {
-        webReservation += order.totalMoney || 0;
       } else if (src === 'Tripleseat') {
         tripleseat += order.totalMoney || 0;
       }
@@ -287,15 +282,16 @@ export class DashboardService {
     
     return {
       partywirks,
-      webReservation,
       tripleseat,
       tips,
       serviceCharges,
       taxes,
       refunds,
       discountsAndComps,
+      bowlingWebResDeposits: giftCardBreakdown.bowlingWebResDeposits,
+      laserTagWebResDeposits: giftCardBreakdown.laserTagWebResDeposits,
+      giftCardSales: giftCardBreakdown.giftCardSales,
       depositClearings,
-      giftCardSales,
       totalTransactions: payments.length
     };
   }

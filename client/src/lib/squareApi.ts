@@ -94,6 +94,8 @@ export const fetchDetailedTransactions = async (
     if (typeof response === 'object' && response !== null) {
       return {
         partywirks: typeof response.partywirks === 'number' ? response.partywirks : parseFloat(response.partywirks || '0'),
+        bowlingWebResDeposits: typeof response.bowlingWebResDeposits === 'number' ? response.bowlingWebResDeposits : parseFloat(response.bowlingWebResDeposits || '0'),
+        laserTagWebResDeposits: typeof response.laserTagWebResDeposits === 'number' ? response.laserTagWebResDeposits : parseFloat(response.laserTagWebResDeposits || '0'),
         tripleseat: typeof response.tripleseat === 'number' ? response.tripleseat : parseFloat(response.tripleseat || '0'),
         tips: typeof response.tips === 'number' ? response.tips : parseFloat(response.tips || '0'),
         serviceCharges: typeof response.serviceCharges === 'number' ? response.serviceCharges : parseFloat(response.serviceCharges || '0'),
@@ -110,6 +112,8 @@ export const fetchDetailedTransactions = async (
       const data = await response.json();
       return {
         partywirks: typeof data.partywirks === 'number' ? data.partywirks : parseFloat(data.partywirks || '0'),
+        bowlingWebResDeposits: typeof data.bowlingWebResDeposits === 'number' ? data.bowlingWebResDeposits : parseFloat(data.bowlingWebResDeposits || '0'),
+        laserTagWebResDeposits: typeof data.laserTagWebResDeposits === 'number' ? data.laserTagWebResDeposits : parseFloat(data.laserTagWebResDeposits || '0'),
         tripleseat: typeof data.tripleseat === 'number' ? data.tripleseat : parseFloat(data.tripleseat || '0'),
         tips: typeof data.tips === 'number' ? data.tips : parseFloat(data.tips || '0'),
         serviceCharges: typeof data.serviceCharges === 'number' ? data.serviceCharges : parseFloat(data.serviceCharges || '0'),
@@ -123,7 +127,8 @@ export const fetchDetailedTransactions = async (
     }
     
     return {
-      partywirks: 0, tripleseat: 0, tips: 0, serviceCharges: 0,
+      partywirks: 0, bowlingWebResDeposits: 0, laserTagWebResDeposits: 0,
+      tripleseat: 0, tips: 0, serviceCharges: 0,
       taxes: 0, refunds: 0, discountsAndComps: 0, depositClearings: 0, giftCardSales: 0, totalTransactions: 0
     };
   } catch (error) {

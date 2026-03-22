@@ -303,40 +303,62 @@ export class GiftCardService {
     startDate?: Date,
     endDate?: Date
   ): Promise<number> {
-    // Get proper UTC date boundaries based on Eastern business days
+    const breakdown = await this.getGiftCardBreakdown(dateRange, startDate, endDate);
+    return breakdown.giftCardSales;
+  }
+
+  /**
+   * Return gift card activations split into three buckets for the business day:
+   *  - bowlingWebResDeposits: gift cards whose activation order source = 'Web Reservation'
+   *  - laserTagWebResDeposits: gift cards whose activation order source = 'Web Reservation-Attraction'
+   *  - giftCardSales: all other activations (genuine gift card purchases)
+   *
+   * The split uses the activation_square_order_id column on gift_cards, which is
+   * populated during sync from the orderId field on Square ACTIVATE activity events.
+   * Cards with a NULL activation_square_order_id are treated as genuine gift card sales.
+   */
+  async getGiftCardBreakdown(
+    dateRange: DateRange,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<{ bowlingWebResDeposits: number; laserTagWebResDeposits: number; giftCardSales: number }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    
-    console.log(`Getting gift card sales with UTC dates: {
-  dateRange: '${dateRange}',
-  startUTC: '${start.toISOString()}',
-  endUTC: '${end.toISOString()}',
-  startDate: ${startDate ? `'${startDate.toISOString()}'` : 'undefined'},
-  endDate: ${endDate ? `'${endDate.toISOString()}'` : 'undefined'}
-}`);
-    
-    // Query the database for gift card sales using Drizzle's SQL template
-    // which properly handles parameterized queries
+
     const result = await db.execute(sql`
-      SELECT 
-        COALESCE(SUM(activation_amount), 0) as gift_card_sales,
-        COUNT(*) as gift_card_count
-      FROM gift_cards
-      WHERE purchase_date BETWEEN ${start} AND ${end}
-        AND activation_amount > 0
+      WITH classified AS (
+        SELECT
+          gc.square_id,
+          gc.activation_amount,
+          COALESCE(
+            -- Primary: use activation_square_order_id if populated
+            (SELECT o.source FROM orders o WHERE o.square_id = gc.activation_square_order_id LIMIT 1),
+            -- Fallback: match by activation amount + time proximity (within 5 min)
+            (SELECT o.source FROM orders o
+             WHERE o.total_money = gc.activation_amount
+               AND o.source IN ('Web Reservation', 'Web Reservation-Attraction')
+               AND ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) < 300
+             ORDER BY ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at)))
+             LIMIT 1)
+          ) AS matched_source
+        FROM gift_cards gc
+        WHERE gc.purchase_date BETWEEN ${start} AND ${end}
+          AND gc.activation_amount > 0
+      )
+      SELECT
+        COALESCE(SUM(CASE WHEN matched_source = 'Web Reservation'             THEN activation_amount ELSE 0 END), 0) AS bowling_web_res,
+        COALESCE(SUM(CASE WHEN matched_source = 'Web Reservation-Attraction'  THEN activation_amount ELSE 0 END), 0) AS laser_tag_web_res,
+        COALESCE(SUM(CASE WHEN matched_source IS NULL
+                           OR matched_source NOT IN ('Web Reservation', 'Web Reservation-Attraction')
+                                                    THEN activation_amount ELSE 0 END), 0) AS gift_card_sales
+      FROM classified
     `);
-    
-    // Access the result properly from the raw SQL query result with proper type conversion
-    const giftCardSales = parseFloat(String(result.rows?.[0]?.gift_card_sales || '0')) || 0;
-    const giftCardCount = parseInt(String(result.rows?.[0]?.gift_card_count || '0'), 10) || 0;
-    
-    console.log(`Gift card sales calculated from database using UTC: {
-  dateRange: '${dateRange}',
-  giftCardSales: ${giftCardSales},
-  giftCardCount: ${giftCardCount},
-  dateRangeStr: '${start.toISOString()} to ${end.toISOString()}'
-}`);
-    
-    return giftCardSales;
+
+    const row = result.rows?.[0] ?? {};
+    return {
+      bowlingWebResDeposits: parseFloat(String(row.bowling_web_res  || '0')) || 0,
+      laserTagWebResDeposits: parseFloat(String(row.laser_tag_web_res || '0')) || 0,
+      giftCardSales:          parseFloat(String(row.gift_card_sales  || '0')) || 0,
+    };
   }
   
   /**

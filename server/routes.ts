@@ -31,6 +31,7 @@ import { parse } from "date-fns";
 import * as squareClient from "./squareClient";
 import { and, gte, lte, sql, eq, gt, or, desc, count } from "drizzle-orm";
 import { syncService } from "./services/syncService";
+import { dashboardService } from "./services/dashboardService";
 import { getEasternDateRange } from "./dateUtils";
 // Helper function to safely process Square API response data
 function processSafeSquareData(data: any): any {
@@ -464,50 +465,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Get all completed transactions for the date range
-      const allTransactions = await pgStorage.getTransactions(parsedDateRange.data, startDate, endDate, 'completed');
-
-      // Get gift card sales directly from database using activation_amount with UTC dates
-      const giftCardSales = await pgStorage.getGiftCardSales(parsedDateRange.data, startDate, endDate);
-
-      console.log('Gift Card Sales for period using UTC dates:', {
-        dateRange: parsedDateRange.data,
-        startDate: startDate?.toISOString(),
-        endDate: endDate?.toISOString(),
-        giftCardSales
-      });
-
-      // Calculate transaction breakdowns
-      const detailedBreakdown = {
-        partywirks: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
-          'note' in t.squareData && typeof t.squareData.note === 'string' &&
-          t.squareData.note.toLowerCase().includes('partywirks'))
-          .reduce((sum, t) => sum + t.amount, 0),
-        tripleseat: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
-          'note' in t.squareData && typeof t.squareData.note === 'string' &&
-          t.squareData.note.toLowerCase().includes('tripleseat'))
-          .reduce((sum, t) => sum + t.amount, 0),
-        tips: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
-          'note' in t.squareData && typeof t.squareData.note === 'string' &&
-          t.squareData.note.toLowerCase().includes('tip'))
-          .reduce((sum, t) => sum + t.amount, 0),
-        serviceCharges: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
-          'note' in t.squareData && typeof t.squareData.note === 'string' &&
-          t.squareData.note.toLowerCase().includes('service charge'))
-          .reduce((sum, t) => sum + t.amount, 0),
-        taxes: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
-          'note' in t.squareData && typeof t.squareData.note === 'string' &&
-          t.squareData.note.toLowerCase().includes('tax'))
-          .reduce((sum, t) => sum + t.amount, 0),
-        refunds: allTransactions.filter(t => t.status === 'refunded')
-          .reduce((sum, t) => sum + t.amount, 0),
-        discountsAndComps: allTransactions.filter(t => t.squareData && typeof t.squareData === 'object' &&
-          'note' in t.squareData && typeof t.squareData.note === 'string' &&
-          (t.squareData.note.toLowerCase().includes('discount') || t.squareData.note.toLowerCase().includes('comp')))
-          .reduce((sum, t) => sum + t.amount, 0),
-        // Use the direct gift card sales value from gift_cards table (total activations only)
-        giftCardSales
-      };
+      // Delegate entirely to dashboardService which correctly computes all buckets
+      const detailedBreakdown = await dashboardService.getDetailedTransactionBreakdown(
+        parsedDateRange.data,
+        startDate,
+        endDate
+      );
 
       res.json(detailedBreakdown);
     } catch (error) {
