@@ -100,6 +100,7 @@ class OrderNotFoundError extends OrderError {
 // Import the router creators
 import { createApiRouter } from './routes/api';
 import { createAuthRouter } from './routes/auth';
+import { initWebSocket } from './ws';
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Create the routers using our service-based implementation
@@ -1424,7 +1425,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api", apiRouter);
   app.use("/api/auth", authRouter);
 
-  // Create HTTP server and return it
+  // Create HTTP server, attach WebSocket, and return it
   const httpServer = createServer(app);
+  initWebSocket(httpServer);
   return httpServer;
 }

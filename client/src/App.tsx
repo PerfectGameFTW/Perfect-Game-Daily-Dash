@@ -12,6 +12,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useEffect } from "react";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 // Authentication-aware router
 function Router() {
@@ -68,6 +69,8 @@ function Router() {
 
 // App wrapper
 function AppContent() {
+  useWebSocket();
+
   return (
     <AuthProvider>
       <ThemeProvider>

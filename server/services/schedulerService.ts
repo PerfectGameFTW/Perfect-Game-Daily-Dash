@@ -20,6 +20,7 @@ import cron from 'node-cron';
 import { syncService } from './syncService';
 import { backfillGiftCardActivationAmounts } from './enhancedGiftCardFix';
 import { giftCardService } from './giftCardService';
+import { broadcast } from '../ws';
 
 let schedulerStarted = false;
 
@@ -216,6 +217,8 @@ export async function runFrequentSync(): Promise<void> {
   } catch (err) {
     console.error(`${label} Refunds sync failed:`, err);
   }
+
+  broadcast('data-updated', { syncType: 'frequent' });
 }
 
 /**
@@ -300,4 +303,6 @@ export async function runNightlySync(): Promise<void> {
   }
 
   console.log(`${label} Nightly deep sync complete.`);
+
+  broadcast('data-updated', { syncType: 'nightly' });
 }

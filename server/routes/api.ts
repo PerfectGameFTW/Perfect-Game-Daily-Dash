@@ -13,6 +13,7 @@ import { syncService } from '../services/syncService';
 import { paymentService } from '../services/paymentService';
 import { DateRange, dateRangeSchema } from '../../shared/schema';
 import { giftCardFixerRouter } from '../api/giftCardFixer';
+import { broadcast } from '../ws';
 
 export function createApiRouter(): Router {
   const router = Router();
@@ -329,6 +330,8 @@ export function createApiRouter(): Router {
         message,
         result
       });
+
+      broadcast('data-updated', { syncType: validatedBody.type });
     } catch (error) {
       next(error);
     }
@@ -594,4 +597,6 @@ async function runHistoricalSync(startDate: Date): Promise<void> {
   }
 
   console.log(`${label} Historical sync complete across ${chunkIndex} monthly chunks.`);
+
+  broadcast('data-updated', { syncType: 'historical' });
 }
