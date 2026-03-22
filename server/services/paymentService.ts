@@ -6,7 +6,7 @@
  */
 
 import { db } from '../db';
-import { eq, and, between, desc, asc, sql } from 'drizzle-orm';
+import { eq, and, between, desc, asc, sql, inArray } from 'drizzle-orm';
 import {
   transactions, 
   type Transaction, 
@@ -227,13 +227,14 @@ export class PaymentService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    // Query the database for the total revenue - make sure we're using the right timezone boundaries
+    // Query the database for the total revenue - include both completed and pending (APPROVED)
+    // Square counts APPROVED payments in their "Total payments collected" figure, so we match that.
     const result = await db.select({
       totalRevenue: sql<number>`COALESCE(SUM(${transactions.amount}), 0)`,
     }).from(transactions)
       .where(and(
         between(transactions.timestamp, start, end),
-        eq(transactions.status, 'completed')
+        inArray(transactions.status, ['completed', 'pending'])
       ));
     
     const totalRevenue = result[0]?.totalRevenue || 0;
@@ -265,7 +266,7 @@ export class PaymentService {
         COALESCE(SUM(${transactions.amount}), 0) AS amount
       FROM ${transactions}
       WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
-        AND ${transactions.status} = 'completed'
+        AND ${transactions.status} IN ('completed', 'pending')
       GROUP BY hour
       ORDER BY hour
     `);

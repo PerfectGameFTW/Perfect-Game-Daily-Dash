@@ -580,6 +580,13 @@ export class SyncService {
           // Convert Square payment to our data model
           const paymentData = squareClient.convertSquarePaymentToTransaction(squarePayment);
           
+          // Skip $0 payments — these are declined cards, $0 partial tenders, etc.
+          // They carry no revenue and cause validation failures; Square excludes them from totals.
+          if (!paymentData.amount || paymentData.amount === 0) {
+            processed++;
+            continue;
+          }
+          
           // Check if payment exists
           let existingPayment;
           try {
