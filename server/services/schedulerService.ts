@@ -19,6 +19,7 @@
 import cron from 'node-cron';
 import { syncService } from './syncService';
 import { backfillGiftCardActivationAmounts } from './enhancedGiftCardFix';
+import { giftCardService } from './giftCardService';
 
 let schedulerStarted = false;
 
@@ -41,6 +42,19 @@ export function startScheduler(): void {
 
   console.log('[Scheduler] Frequent sync scheduled every 5 minutes');
   console.log('[Scheduler] Nightly deep sync scheduled at 3:00 AM Eastern Time');
+
+  // On startup: write activation_square_order_id for all gift cards that were
+  // created as Web Reservation deposits but have no link yet.
+  // This runs in the background (non-blocking) and is idempotent.
+  giftCardService.backfillActivationSquareOrderIds().then(({ updated }) => {
+    if (updated > 0) {
+      console.log(`[Scheduler] Order-ID backfill complete: ${updated} gift card(s) linked to their Web Reservation orders`);
+    } else {
+      console.log('[Scheduler] Order-ID backfill: all gift cards already linked — nothing to do');
+    }
+  }).catch(err => {
+    console.error('[Scheduler] Order-ID backfill error:', err);
+  });
 
   // On startup: if the historical gift card backfill has never completed,
   // run it in the background until finished so the dashboard has complete data.
@@ -171,6 +185,14 @@ export async function runNightlySync(): Promise<void> {
     console.log(`${label} Backfill: filled=${r.updatedViaActivitiesApi} corrected=${r.correctedViaActivitiesApi} unresolved=${r.stillUnresolved}`);
   } catch (err) {
     console.error(`${label} Activation backfill failed (non-fatal):`, err);
+  }
+
+  try {
+    console.log(`${label} Step 5/5: Order-ID backfill (link gift cards to Web Res orders)`);
+    const r = await giftCardService.backfillActivationSquareOrderIds();
+    console.log(`${label} Order-ID backfill: ${r.updated} gift card(s) linked`);
+  } catch (err) {
+    console.error(`${label} Order-ID backfill failed (non-fatal):`, err);
   }
 
   console.log(`${label} Nightly deep sync complete.`);

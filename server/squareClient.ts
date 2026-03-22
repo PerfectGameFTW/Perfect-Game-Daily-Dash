@@ -877,7 +877,8 @@ export async function fetchGiftCardActivitiesPage(
       const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
       if (amountCents == null) continue;
       const createdAt = activity.createdAt ? new Date(activity.createdAt) : new Date(0);
-      const squareOrderId: string | undefined = activity.orderId ?? undefined;
+      const squareOrderId: string | undefined =
+        activity.orderId ?? activity.activateActivityDetails?.orderId ?? undefined;
       activities.push({
         giftCardId,
         activationAmountDollars: Number(amountCents) / 100,
@@ -947,7 +948,8 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
         const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
         if (amountCents == null) continue;
 
-        const squareOrderId: string | undefined = activity.orderId ?? undefined;
+        const squareOrderId: string | undefined =
+          activity.orderId ?? activity.activateActivityDetails?.orderId ?? undefined;
 
         results.push({
           giftCardId,

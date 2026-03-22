@@ -309,13 +309,17 @@ export class GiftCardService {
 
   /**
    * Return gift card activations split into three buckets for the business day:
-   *  - bowlingWebResDeposits: gift cards whose activation order source = 'Web Reservation'
-   *  - laserTagWebResDeposits: gift cards whose activation order source = 'Web Reservation-Attraction'
-   *  - giftCardSales: all other activations (genuine gift card purchases)
+   *  - bowlingWebResDeposits: gift cards whose activation_square_order_id links to a
+   *    'Web Reservation' order
+   *  - laserTagWebResDeposits: gift cards whose activation_square_order_id links to a
+   *    'Web Reservation-Attraction' order
+   *  - giftCardSales: all other activations — NULL activation_square_order_id or order
+   *    with a different source (genuine gift card purchases)
    *
-   * The split uses the activation_square_order_id column on gift_cards, which is
-   * populated during sync from the orderId field on Square ACTIVATE activity events.
-   * Cards with a NULL activation_square_order_id are treated as genuine gift card sales.
+   * activation_square_order_id is populated by:
+   *   1. squareClient ACTIVATE event capture (when Square returns orderId in API response)
+   *   2. backfillActivationSquareOrderIds() — a one-time startup routine that matches
+   *      gift cards to Web Reservation orders by activation_amount + time proximity
    */
   async getGiftCardBreakdown(
     dateRange: DateRange,
@@ -325,32 +329,16 @@ export class GiftCardService {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
 
     const result = await db.execute(sql`
-      WITH classified AS (
-        SELECT
-          gc.square_id,
-          gc.activation_amount,
-          COALESCE(
-            -- Primary: use activation_square_order_id if populated
-            (SELECT o.source FROM orders o WHERE o.square_id = gc.activation_square_order_id LIMIT 1),
-            -- Fallback: match by activation amount + time proximity (within 5 min)
-            (SELECT o.source FROM orders o
-             WHERE o.total_money = gc.activation_amount
-               AND o.source IN ('Web Reservation', 'Web Reservation-Attraction')
-               AND ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) < 300
-             ORDER BY ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at)))
-             LIMIT 1)
-          ) AS matched_source
-        FROM gift_cards gc
-        WHERE gc.purchase_date BETWEEN ${start} AND ${end}
-          AND gc.activation_amount > 0
-      )
       SELECT
-        COALESCE(SUM(CASE WHEN matched_source = 'Web Reservation'             THEN activation_amount ELSE 0 END), 0) AS bowling_web_res,
-        COALESCE(SUM(CASE WHEN matched_source = 'Web Reservation-Attraction'  THEN activation_amount ELSE 0 END), 0) AS laser_tag_web_res,
-        COALESCE(SUM(CASE WHEN matched_source IS NULL
-                           OR matched_source NOT IN ('Web Reservation', 'Web Reservation-Attraction')
-                                                    THEN activation_amount ELSE 0 END), 0) AS gift_card_sales
-      FROM classified
+        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation'             THEN gc.activation_amount ELSE 0 END), 0) AS bowling_web_res,
+        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation-Attraction'  THEN gc.activation_amount ELSE 0 END), 0) AS laser_tag_web_res,
+        COALESCE(SUM(CASE WHEN o.source IS NULL
+                           OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction')
+                                              THEN gc.activation_amount ELSE 0 END), 0) AS gift_card_sales
+      FROM gift_cards gc
+      LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
+      WHERE gc.purchase_date BETWEEN ${start} AND ${end}
+        AND gc.activation_amount > 0
     `);
 
     const row = result.rows?.[0] ?? {};
@@ -359,6 +347,49 @@ export class GiftCardService {
       laserTagWebResDeposits: parseFloat(String(row.laser_tag_web_res || '0')) || 0,
       giftCardSales:          parseFloat(String(row.gift_card_sales  || '0')) || 0,
     };
+  }
+
+  /**
+   * One-time backfill: write activation_square_order_id for gift cards that were
+   * created as Web Reservation deposits but whose orderId was not available from
+   * the Square ACTIVATE activity API.
+   *
+   * Matching strategy: activation_amount = order.total_money AND
+   *   |gc.purchase_date - order.created_at| < 5 minutes AND
+   *   order.source IN ('Web Reservation', 'Web Reservation-Attraction')
+   *
+   * The 5-minute window is safe: Square creates the order first, then the staff
+   * activates the gift card at the POS within seconds to a few minutes.
+   *
+   * Only updates cards that still have activation_square_order_id IS NULL.
+   * Idempotent: safe to re-run; never overwrites existing links.
+   *
+   * @returns { updated: number } count of rows written
+   */
+  async backfillActivationSquareOrderIds(): Promise<{ updated: number }> {
+    const result = await db.execute(sql`
+      UPDATE gift_cards gc
+      SET activation_square_order_id = matched.square_id,
+          updated_at = NOW()
+      FROM (
+        SELECT DISTINCT ON (gc2.id)
+          gc2.id AS gc_id,
+          o.square_id
+        FROM gift_cards gc2
+        JOIN orders o
+          ON  o.total_money = gc2.activation_amount
+          AND o.source IN ('Web Reservation', 'Web Reservation-Attraction')
+          AND ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at))) < 300
+        WHERE gc2.activation_square_order_id IS NULL
+          AND gc2.activation_amount > 0
+        ORDER BY gc2.id, ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at)))
+      ) matched
+      WHERE gc.id = matched.gc_id
+    `);
+
+    const updated = (result as any).rowCount ?? 0;
+    console.log(`[GiftCardBackfill] activation_square_order_id backfill: ${updated} rows updated`);
+    return { updated };
   }
   
   /**
