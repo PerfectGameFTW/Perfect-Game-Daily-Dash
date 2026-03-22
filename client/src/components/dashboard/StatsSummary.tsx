@@ -254,7 +254,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Deposit Redemptions</span>
-              <span className="text-card-foreground font-medium">{formatCurrency(depositClearings)}</span>
+              <span className="text-card-foreground font-medium">({formatCurrency(depositClearings)})</span>
             </div>
 
             <div className="flex justify-between items-center">
