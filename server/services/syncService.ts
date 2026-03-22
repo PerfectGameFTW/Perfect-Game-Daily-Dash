@@ -29,6 +29,9 @@ export class SyncError extends Error {
 }
 
 export class SyncService {
+  /** In-memory lock to prevent concurrent backfill runs within a single process */
+  private _ordersPaymentsBackfillRunning = false;
+
   /**
    * Get the current sync state for a specific sync type
    * 
@@ -1210,16 +1213,24 @@ export class SyncService {
   ): Promise<{ alreadyRunning: boolean; message: string }> {
     const SYNC_TYPE = 'orders_payments_backfill';
 
+    // Primary lock: in-memory flag guards against concurrent starts within this process
+    if (this._ordersPaymentsBackfillRunning) {
+      console.log('[HistoricalBackfill] Already in progress (in-memory lock) — skipping duplicate start');
+      return { alreadyRunning: true, message: 'Backfill is already running' };
+    }
+
     const existingState = await this.getSyncState(SYNC_TYPE);
-    if (existingState?.status === 'in_progress') {
+
+    // Secondary guard: DB state can flag a run stuck in a previous process instance
+    if (existingState && !existingState.isComplete) {
       const elapsed = existingState.lastSyncedAt
         ? Date.now() - new Date(existingState.lastSyncedAt).getTime()
         : Infinity;
       if (elapsed < 10 * 60 * 1000) {
-        console.log('[HistoricalBackfill] Already in progress — skipping duplicate start');
+        console.log('[HistoricalBackfill] Previous run active in DB (< 10 min old) — treating as already running');
         return { alreadyRunning: true, message: 'Backfill is already running' };
       }
-      console.log('[HistoricalBackfill] Previous run appears stuck — restarting');
+      console.log('[HistoricalBackfill] Previous run appears stuck (> 10 min) — restarting');
     }
 
     // Build ordered list of chunk intervals
@@ -1234,12 +1245,25 @@ export class SyncService {
       cursor = chunkEnd;
     }
 
-    // Determine resume point from stored checkpoint
+    // Determine resume point from stored checkpoint — only if params match exactly
     let resumeFromChunk = 0;
     const savedCheckpoint = existingState?.lastCheckpoint as any;
     if (savedCheckpoint?.chunksCompleted && typeof savedCheckpoint.chunksCompleted === 'number') {
-      resumeFromChunk = savedCheckpoint.chunksCompleted;
-      console.log(`[HistoricalBackfill] Resuming from chunk ${resumeFromChunk} of ${chunks.length}`);
+      const cpStart = savedCheckpoint.startDate ?? '';
+      const cpEnd   = savedCheckpoint.endDate   ?? '';
+      const cpChunk = savedCheckpoint.chunkDays  ?? chunkDays;
+      const paramsMatch =
+        cpStart === startDate.toISOString() &&
+        cpEnd   === endDate.toISOString()   &&
+        cpChunk === chunkDays;
+
+      if (paramsMatch) {
+        resumeFromChunk = Math.min(savedCheckpoint.chunksCompleted, chunks.length);
+        console.log(`[HistoricalBackfill] Resuming from chunk ${resumeFromChunk} of ${chunks.length} (params match)`);
+      } else {
+        console.log(`[HistoricalBackfill] Checkpoint params differ from request — starting fresh`);
+        resumeFromChunk = 0;
+      }
     }
 
     const initialCheckpoint = {
@@ -1276,11 +1300,16 @@ export class SyncService {
       });
     }
 
+    // Acquire in-memory lock immediately (before setImmediate so any concurrent call is blocked)
+    this._ordersPaymentsBackfillRunning = true;
+
     // Fire background loop — non-blocking
     setImmediate(async () => {
       console.log(`[HistoricalBackfill] Starting: ${chunks.length} chunks of ${chunkDays} days each, resuming from chunk ${resumeFromChunk}`);
       let totalOrders = 0;
       let totalPayments = 0;
+      let failedChunks = 0;
+      try {
 
       for (let i = resumeFromChunk; i < chunks.length; i++) {
         const { start, end } = chunks[i];
@@ -1362,6 +1391,7 @@ export class SyncService {
           console.log(`[HistoricalBackfill] Chunk ${i + 1} payments: ${chunkPaymentsCreated} created, ${chunkPaymentsUpdated} updated, ${chunkPaymentsSkipped} skipped`);
 
         } catch (err) {
+          failedChunks++;
           console.error(`[HistoricalBackfill] Chunk ${i + 1} failed entirely:`, err);
           await this.updateSyncState(state.id, {
             errorMessage: `Chunk ${i + 1} (${start.toISOString().slice(0, 10)}): ${err instanceof Error ? err.message : String(err)}`,
@@ -1432,9 +1462,11 @@ export class SyncService {
         console.error('[HistoricalBackfill] Phase 2 failed:', err);
       }
 
+      const allSucceeded = failedChunks === 0;
+      const finalStatus = allSucceeded ? 'completed' : `partial_complete — ${failedChunks} chunk(s) failed`;
       await this.updateSyncState(state.id, {
-        isComplete: true,
-        status: 'completed',
+        isComplete: allSucceeded,
+        status: finalStatus,
         lastSyncedAt: new Date(),
         processedCount: totalOrders + totalPayments,
         lastCheckpoint: {
@@ -1442,11 +1474,27 @@ export class SyncService {
           endDate: endDate.toISOString(),
           chunkDays,
           totalChunks: chunks.length,
-          chunksCompleted: chunks.length,
+          chunksCompleted: chunks.length - failedChunks,
           lastCompletedDate: endDate.toISOString(),
+          failedChunks,
         },
       });
-      console.log(`[HistoricalBackfill] COMPLETE — ${totalOrders} orders + ${totalPayments} payments across ${chunks.length} chunks`);
+      if (allSucceeded) {
+        console.log(`[HistoricalBackfill] COMPLETE — ${totalOrders} orders + ${totalPayments} payments across ${chunks.length} chunks`);
+      } else {
+        console.warn(`[HistoricalBackfill] PARTIAL — ${failedChunks} chunk(s) failed; ${totalOrders} orders + ${totalPayments} payments processed`);
+      }
+      } catch (fatalErr) {
+        console.error('[HistoricalBackfill] Fatal error in background loop:', fatalErr);
+        try {
+          await this.updateSyncState(state.id, {
+            status: 'failed',
+            errorMessage: fatalErr instanceof Error ? fatalErr.message : String(fatalErr),
+          });
+        } catch { /* ignore secondary error */ }
+      } finally {
+        this._ordersPaymentsBackfillRunning = false;
+      }
     });
 
     return { alreadyRunning: false, message: `Backfill started: ${chunks.length} chunks of ${chunkDays} days each, resuming from chunk ${resumeFromChunk + 1}` };
@@ -1495,7 +1543,7 @@ export class SyncService {
     return {
       found: true,
       status: state.status ?? 'unknown',
-      isRunning: !state.isComplete && (state.status ?? '').startsWith('in_progress'),
+      isRunning: this._ordersPaymentsBackfillRunning || (!state.isComplete && (state.status ?? '').startsWith('in_progress')),
       isComplete: state.isComplete ?? false,
       chunksCompleted: done,
       totalChunks: total,
