@@ -525,6 +525,16 @@ export function createApiRouter(): Router {
   router.post('/sync/gift-cards/full', handleGiftCardFullSync);
   router.post('/sync/gift-cards-backfill', handleGiftCardFullSync);
 
+  router.post('/sync/quick', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { runFrequentSync } = await import('../services/schedulerService');
+      await runFrequentSync();
+      res.json({ success: true, message: 'Quick sync completed' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   return router;
 }
 

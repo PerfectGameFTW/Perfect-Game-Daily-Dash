@@ -43,17 +43,14 @@ export default function Dashboard() {
     }, 10);
   };
 
-  // Simple sync function - no progress tracking
   const handleSync = async () => {
-    if (isSyncing) return; // Prevent multiple sync requests
+    if (isSyncing) return;
 
     setIsSyncing(true);
     try {
-      const response = await fetch('/api/simple-sync', {
+      const response = await fetch('/api/sync/quick', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
+        headers: { 'Content-Type': 'application/json' }
       });
 
       if (!response.ok) {
@@ -61,17 +58,10 @@ export default function Dashboard() {
       }
 
       toast({
-        title: "Sync Started",
-        description: "Square data sync has been initiated.",
+        title: "Sync Complete",
+        description: "Square data has been synced successfully.",
         variant: "default",
       });
-
-      // Invalidate queries after a short delay
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['/api/summary'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/gift-card-summary'] });
-      }, 5000);
     } catch (error) {
       console.error('Sync error:', error);
       toast({
