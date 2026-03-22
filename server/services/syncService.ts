@@ -380,7 +380,15 @@ export class SyncService {
           }
           
           if (existingOrder && typeof existingOrder === 'object' && existingOrder !== null) {
-            // Order exists, skip for now (could implement update logic here)
+            await orderService.updateOrderBySquareId(orderData.squareId, {
+              status: orderData.status,
+              totalMoney: orderData.totalMoney,
+              totalTax: orderData.totalTax,
+              totalDiscount: orderData.totalDiscount,
+              closedAt: orderData.closedAt,
+              source: orderData.source,
+              squareData: orderData.squareData,
+            });
             updated++;
           } else {
             // Order doesn't exist, create it

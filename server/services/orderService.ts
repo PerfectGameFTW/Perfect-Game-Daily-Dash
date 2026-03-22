@@ -96,6 +96,14 @@ export class OrderService {
     
     return result[0];
   }
+
+  async updateOrderBySquareId(squareId: string, orderData: Partial<InsertOrder>): Promise<Order | null> {
+    const result = await db.update(orders)
+      .set(orderData)
+      .where(eq(orders.squareId, squareId))
+      .returning();
+    return result.length ? result[0] : null;
+  }
   
   /**
    * Get order items for an order
