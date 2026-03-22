@@ -11,16 +11,15 @@ export async function testConnection(): Promise<{ success: boolean, message: str
      throw new Error('Square access token is not configured');
    }
 
-   // Try to list a single location to test the connection
-   const response = await locationsApi.listLocations();
+   const response = await squareClient.locations.list();
 
-   if (!response.result || !response.result.locations) {
+   if (!response.locations) {
      throw new Error('Invalid response from Square API');
    }
 
    console.log('Square API test connection successful:', {
-     locationCount: response.result.locations.length,
-     locationIds: response.result.locations.map(l => l.id)
+     locationCount: response.locations.length,
+     locationIds: response.locations.map((l: any) => l.id)
    });
 
    return {
@@ -39,18 +38,7 @@ export async function testConnection(): Promise<{ success: boolean, message: str
 }
 
 import { pgStorage } from './pgStorage';
-import { 
-  Client, 
-  Environment,
-  OrdersApi,
-  LocationsApi,
-  PaymentsApi,
-  RefundsApi,
-  GiftCardsApi,
-  GiftCardActivitiesApi,
-  CatalogApi,
-  ApiError
-} from 'square';
+import { SquareClient, SquareEnvironment } from 'square';
 import {
   Transaction, InsertTransaction,
   GiftCard, InsertGiftCard,
@@ -92,20 +80,10 @@ function processSafeSquareData(data: any): any {
 
 dotenv.config();
 
-// Initialize Square client with production environment
-const squareClient = new Client({
-  accessToken: process.env.SQUARE_ACCESS_TOKEN || '',
-  environment: Environment.Production
+const squareClient = new SquareClient({
+  token: process.env.SQUARE_ACCESS_TOKEN || '',
+  environment: SquareEnvironment.Production
 });
-
-// Create API instance explicitly 
-const ordersApi = new OrdersApi(squareClient);
-const locationsApi = new LocationsApi(squareClient);
-const paymentsApi = new PaymentsApi(squareClient);
-const giftCardsApi = new GiftCardsApi(squareClient);
-const giftCardActivitiesApi = new GiftCardActivitiesApi(squareClient);
-const catalogApi = new CatalogApi(squareClient);
-const refundsApi = new RefundsApi(squareClient);
 
 // Update the fetchOrders method to better handle order data
 export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any[]> {
@@ -169,16 +147,16 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
         const request: any = { ...searchRequest };
         if (cursor) request.cursor = cursor;
 
-        const response = await ordersApi.searchOrders(request);
+        const response = await squareClient.orders.search(request);
 
-        if (!response.result || !Array.isArray(response.result.orders)) {
+        if (!response.orders || !Array.isArray(response.orders)) {
           if (page === 1) console.warn('No orders found in Square API response');
           break;
         }
 
-        const pageOrders = response.result.orders.filter((o: any) => o && o.id);
+        const pageOrders = response.orders.filter((o: any) => o && o.id);
         allOrders.push(...pageOrders);
-        cursor = (response.result as any).cursor ?? undefined;
+        cursor = (response as any).cursor ?? undefined;
 
         console.log(`Orders page ${page}: ${pageOrders.length} orders (cursor: ${cursor ? 'yes' : 'none'})`);
       } while (cursor);
@@ -333,11 +311,11 @@ export async function fetchOrdersByIds(orderIds: string[]): Promise<InsertOrder[
   for (let i = 0; i < orderIds.length; i += BATCH_SIZE) {
     const batch = orderIds.slice(i, i + BATCH_SIZE);
     try {
-      const response = await ordersApi.batchRetrieveOrders({
+      const response = await squareClient.orders.batchGet({
         locationId: process.env.SQUARE_LOCATION_ID!,
         orderIds: batch,
       });
-      const squareOrders = (response.result as { orders?: unknown[] }).orders ?? [];
+      const squareOrders = (response as any).orders ?? [];
       for (const squareOrder of squareOrders) {
         try {
           results.push(convertSquareOrderToOrder(squareOrder));
@@ -510,9 +488,9 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
     }
 
     let allPayments: any[] = [];
-    let cursor: string | undefined = undefined;
     let hasMorePages = true;
     let pageCount = 0;
+    let paymentsPage: any = null;
     const MAX_PAGES = 50; // Allow up to 50 pages (5,000 payments) per sync
     const TIMEOUT = 5 * 60 * 1000; // 5 minute timeout
 
@@ -527,26 +505,28 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
       }
 
       try {
-        const response = await paymentsApi.listPayments(
-          beginTime,
-          endTime,
-          'DESC',
-          cursor,
-          process.env.SQUARE_LOCATION_ID
-        );
+        if (pageCount === 1) {
+          paymentsPage = await squareClient.payments.list({
+            beginTime,
+            endTime,
+            sortOrder: 'DESC',
+            locationId: process.env.SQUARE_LOCATION_ID
+          });
+        } else {
+          paymentsPage = await paymentsPage!.getNextPage();
+        }
 
         const pageEndTime = Date.now();
         const pageProcessingTime = pageEndTime - pageStartTime;
 
         console.log('Square API Response:', {
           page: pageCount,
-          status: response.statusCode,
-          hasMore: !!response.result.cursor,
-          paymentCount: response.result.payments?.length || 0,
+          hasMore: paymentsPage.hasNextPage(),
+          paymentCount: paymentsPage.data?.length || 0,
           processingTimeMs: pageProcessingTime
         });
 
-        const payments = response.result.payments || [];
+        const payments = paymentsPage.data || [];
 
         if (!Array.isArray(payments)) {
           throw new Error(`Invalid response format from Square API: expected array, got ${typeof payments}`);
@@ -564,8 +544,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
           }
         }
 
-        cursor = response.result.cursor;
-        hasMorePages = !!cursor;
+        hasMorePages = paymentsPage.hasNextPage();
 
         if (hasMorePages) {
           await new Promise(resolve => setTimeout(resolve, 100));
@@ -576,7 +555,6 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
           message: pageError instanceof Error ? pageError.message : 'Unknown error',
           stack: pageError instanceof Error ? pageError.stack : undefined,
           page: pageCount,
-          cursor,
           timeElapsed: Date.now() - startTime
         };
         console.error('Error fetching payments page:', errorDetail);
@@ -834,47 +812,40 @@ export async function fetchGiftCardActivitiesMap(): Promise<Map<string, number>>
     return activationMap;
   }
 
-  let cursor: string | undefined = undefined;
   let pageCount = 0;
-  const MAX_PAGES = 200; // 200 pages × 50 items = 10,000 activities max
+  const MAX_PAGES = 200;
 
   console.log('Fetching ACTIVATE gift card activities from Square...');
 
+  let activitiesPage = await squareClient.giftCards.activities.list({
+    type: 'ACTIVATE',
+    locationId: process.env.SQUARE_LOCATION_ID,
+    limit: 50,
+  });
+
   while (pageCount < MAX_PAGES) {
     pageCount++;
-    try {
-      const response = await giftCardActivitiesApi.listGiftCardActivities(
-        undefined,          // giftCardId – omit to get all cards
-        'ACTIVATE',         // type
-        process.env.SQUARE_LOCATION_ID,
-        undefined,          // beginTime
-        undefined,          // endTime
-        50,                 // limit (max per page)
-        cursor,             // cursor for pagination
-        undefined           // sortOrder
-      );
+    const activities = activitiesPage.data ?? [];
 
-      // SDK maps gift_card_activities → giftCardActivities (camelCase)
-      const activities = (response.result as any)?.giftCardActivities ?? [];
+    for (const activity of activities) {
+      const giftCardId = activity.giftCardId;
+      if (!giftCardId) continue;
 
-      for (const activity of activities) {
-        const giftCardId = activity.giftCardId;
-        if (!giftCardId) continue;
-
-        const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
-        if (amountCents !== undefined && amountCents !== null) {
-          const amountDollars = Number(amountCents) / 100;
-          // Keep the first ACTIVATE event if there are multiple (shouldn't happen)
-          if (!activationMap.has(giftCardId)) {
-            activationMap.set(giftCardId, amountDollars);
-          }
+      const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
+      if (amountCents !== undefined && amountCents !== null) {
+        const amountDollars = Number(amountCents) / 100;
+        if (!activationMap.has(giftCardId)) {
+          activationMap.set(giftCardId, amountDollars);
         }
       }
+    }
 
-      console.log(`Gift card activities page ${pageCount}: ${activities.length} ACTIVATE events (total mapped: ${activationMap.size})`);
+    console.log(`Gift card activities page ${pageCount}: ${activities.length} ACTIVATE events (total mapped: ${activationMap.size})`);
 
-      cursor = (response.result as any)?.cursor ?? undefined;
-      if (!cursor) break; // No more pages
+    if (!activitiesPage.hasNextPage()) break;
+
+    try {
+      activitiesPage = await activitiesPage.getNextPage();
     } catch (error) {
       console.error(`Error fetching gift card activities page ${pageCount}:`, error);
       break;
@@ -907,19 +878,16 @@ export async function fetchGiftCardActivitiesPage(
   }
 
   try {
-    const response = await giftCardActivitiesApi.listGiftCardActivities(
-      undefined,                        // giftCardId – all cards
-      'ACTIVATE',                       // type filter
-      process.env.SQUARE_LOCATION_ID,
-      undefined,                        // beginTime
-      undefined,                        // endTime
-      50,                               // max per page
+    const activitiesPage = await squareClient.giftCards.activities.list({
+      type: 'ACTIVATE',
+      locationId: process.env.SQUARE_LOCATION_ID,
+      limit: 50,
       cursor,
-      sortOrder
-    );
+      sortOrder,
+    });
 
-    const rawActivities = (response.result as any)?.giftCardActivities ?? [];
-    const nextCursor: string | undefined = (response.result as any)?.cursor ?? undefined;
+    const rawActivities = activitiesPage.data ?? [];
+    const nextCursor: string | undefined = activitiesPage.response?.cursor ?? undefined;
 
     const activities: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date; squareOrderId?: string }> = [];
     for (const activity of rawActivities) {
@@ -963,57 +931,52 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
     return results;
   }
 
-  let cursor: string | undefined;
   let pageCount = 0;
 
   console.log(`[IncrementalGiftCardSync] Fetching ACTIVATE activities since ${since.toISOString()} (newest-first, stopping at cutoff)`);
 
+  let activitiesPage = await squareClient.giftCards.activities.list({
+    type: 'ACTIVATE',
+    locationId: process.env.SQUARE_LOCATION_ID,
+    limit: 50,
+    sortOrder: 'DESC',
+  });
+
   let reachedCutoff = false;
   while (!reachedCutoff) {
     pageCount++;
-    try {
-      const response = await giftCardActivitiesApi.listGiftCardActivities(
-        undefined,                        // giftCardId – all cards
-        'ACTIVATE',                       // type filter
-        process.env.SQUARE_LOCATION_ID,
-        undefined,                        // beginTime – no date filter (Square rejects it alone)
-        undefined,                        // endTime
-        50,                               // max per page
-        cursor,
-        'DESC'                            // sortOrder – explicit descending for deterministic cutoff
-      );
+    const activities = activitiesPage.data ?? [];
 
-      const activities = (response.result as any)?.giftCardActivities ?? [];
+    for (const activity of activities) {
+      const giftCardId = activity.giftCardId;
+      if (!giftCardId) continue;
 
-      for (const activity of activities) {
-        const giftCardId = activity.giftCardId;
-        if (!giftCardId) continue;
-
-        // Stop processing once we hit activities older than our cutoff
-        const activityTime = activity.createdAt ? new Date(activity.createdAt) : new Date(0);
-        if (activityTime <= since) {
-          reachedCutoff = true;
-          break;
-        }
-
-        const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
-        if (amountCents == null) continue;
-
-        const squareOrderId: string | undefined =
-          activity.orderId ?? activity.activateActivityDetails?.orderId ?? undefined;
-
-        results.push({
-          giftCardId,
-          activationAmountDollars: Number(amountCents) / 100,
-          createdAt: activityTime,
-          squareOrderId,
-        });
+      const activityTime = activity.createdAt ? new Date(activity.createdAt) : new Date(0);
+      if (activityTime <= since) {
+        reachedCutoff = true;
+        break;
       }
 
-      console.log(`[IncrementalGiftCardSync] Page ${pageCount}: ${activities.length} events scanned, ${results.length} new since cutoff${reachedCutoff ? ' (cutoff reached)' : ''}`);
+      const amountCents = activity.activateActivityDetails?.amountMoney?.amount;
+      if (amountCents == null) continue;
 
-      cursor = (response.result as any)?.cursor ?? undefined;
-      if (!cursor || activities.length === 0) break; // no more pages from Square
+      const squareOrderId: string | undefined =
+        activity.orderId ?? activity.activateActivityDetails?.orderId ?? undefined;
+
+      results.push({
+        giftCardId,
+        activationAmountDollars: Number(amountCents) / 100,
+        createdAt: activityTime,
+        squareOrderId,
+      });
+    }
+
+    console.log(`[IncrementalGiftCardSync] Page ${pageCount}: ${activities.length} events scanned, ${results.length} new since cutoff${reachedCutoff ? ' (cutoff reached)' : ''}`);
+
+    if (!activitiesPage.hasNextPage() || activities.length === 0) break;
+
+    try {
+      activitiesPage = await activitiesPage.getNextPage();
     } catch (error) {
       console.error(`[IncrementalGiftCardSync] Error on page ${pageCount}:`, error);
       break;
@@ -1030,9 +993,9 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
  */
 export async function fetchGiftCardById(squareId: string): Promise<any | null> {
   try {
-    const response = await giftCardsApi.retrieveGiftCard(squareId);
-    if (!response.result.giftCard) return null;
-    return processSafeSquareData(response.result.giftCard);
+    const response = await squareClient.giftCards.get({ id: squareId });
+    if (!response.giftCard) return null;
+    return processSafeSquareData(response.giftCard);
   } catch (error) {
     console.error(`[IncrementalGiftCardSync] Error fetching card ${squareId}:`, error);
     return null;
@@ -1043,47 +1006,36 @@ export async function fetchGiftCardById(squareId: string): Promise<any | null> {
 export async function fetchGiftCards(): Promise<any[]> {
   try {
     let allGiftCards: any[] = [];
-    let cursor: string | undefined = undefined;
-    let hasMorePages = true;
     let pageCount = 0;
+    let giftCardsPage = await squareClient.giftCards.list({ limit: 100 });
 
-    while (hasMorePages) {
+    while (true) {
       pageCount++;
 
+      if (!giftCardsPage.data || giftCardsPage.data.length === 0) {
+        if (pageCount === 1) console.log('No gift cards found in response');
+        break;
+      }
+
+      const safeGiftCards = giftCardsPage.data.map((card: any) => {
+        try {
+          return processSafeSquareData(card);
+        } catch (error) {
+          console.error(`Error processing gift card:`, error);
+          return null;
+        }
+      }).filter(card => card !== null);
+
+      allGiftCards = [...allGiftCards, ...safeGiftCards];
+
+      if (!giftCardsPage.hasNextPage()) break;
+
       try {
-        const response = await giftCardsApi.listGiftCards(
-          undefined,  // type
-          undefined,  // state
-          100,        // limit
-          cursor,     // cursor
-          undefined   // customerId
-        );
-
-        if (!response.result.giftCards) {
-          console.log('No gift cards found in response');
-          break;
-        }
-
-        // Process each gift card to ensure it's safe for database storage
-        const safeGiftCards = response.result.giftCards.map(card => {
-          try {
-            return processSafeSquareData(card);
-          } catch (error) {
-            console.error(`Error processing gift card:`, error);
-            return null;
-          }
-        }).filter(card => card !== null); // Remove any cards that failed processing
-
-        allGiftCards = [...allGiftCards, ...safeGiftCards];
-        cursor = response.result.cursor;
-        hasMorePages = !!cursor;
-
-        if (hasMorePages) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        giftCardsPage = await giftCardsPage.getNextPage();
       } catch (error) {
         console.error('Error fetching gift cards page:', error);
-        hasMorePages = false;
+        break;
       }
     }
 
@@ -1129,39 +1081,32 @@ export async function fetchRefunds(startDate?: Date, endDate?: Date): Promise<an
     }
 
     let allRefunds: any[] = [];
-    let cursor: string | undefined = undefined;
-    let hasMorePages = true;
     let pageCount = 0;
     const MAX_PAGES = 50;
     const TIMEOUT = 5 * 60 * 1000;
 
-    while (hasMorePages && pageCount < MAX_PAGES) {
+    let refundsPage = await squareClient.refunds.list({
+      beginTime,
+      endTime,
+      sortOrder: 'DESC',
+      locationId: process.env.SQUARE_LOCATION_ID,
+      limit: 100,
+    });
+
+    while (pageCount < MAX_PAGES) {
       pageCount++;
       if (Date.now() - startTime > TIMEOUT) {
         throw new Error('Refund sync timeout reached after 5 minutes');
       }
 
+      const refundsList = refundsPage.data || [];
+      allRefunds.push(...refundsList);
+
+      if (!refundsPage.hasNextPage()) break;
+
       try {
-        const response = await refundsApi.listPaymentRefunds(
-          beginTime,
-          endTime,
-          'DESC',
-          cursor,
-          process.env.SQUARE_LOCATION_ID,
-          undefined,
-          undefined,
-          100
-        );
-
-        const refundsList = response.result.refunds || [];
-        allRefunds.push(...refundsList);
-
-        cursor = response.result.cursor;
-        hasMorePages = !!cursor;
-
-        if (hasMorePages) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        refundsPage = await refundsPage.getNextPage();
       } catch (pageError) {
         console.error(`Error fetching refunds page ${pageCount}:`, pageError instanceof Error ? pageError.message : pageError);
         throw pageError;
@@ -1219,13 +1164,11 @@ function mapSquareCategory(itemName: string, itemType?: string): Category {
 export async function searchCatalogForGiftCards(): Promise<any[]> {
   try {
     // Call Square Catalog API to find gift card items
-    const response = await catalogApi.listCatalog(
-      undefined, // cursor
-      "ITEM" // object_types - specifically looking for catalog items
-    );
+    const catalogPage = await squareClient.catalog.list({
+      types: "ITEM",
+    });
 
-    // Filter to find gift card items
-    const giftCardItems = (response.result.objects || []).filter((item: any) => {
+    const giftCardItems = (catalogPage.data || []).filter((item: any) => {
       if (item.type !== 'ITEM') return false;
 
       // Check item data
@@ -1441,4 +1384,4 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
   }
 }
 
-export { squareClient, ordersApi, paymentsApi, giftCardsApi, catalogApi };
+export { squareClient };

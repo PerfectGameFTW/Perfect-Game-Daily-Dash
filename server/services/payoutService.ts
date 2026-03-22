@@ -1,4 +1,4 @@
-import { Client, Environment } from 'square';
+import { SquareClient, SquareEnvironment } from 'square';
 import { db } from '../db';
 import { sql } from 'drizzle-orm';
 import { payoutFeeEntries } from '../../shared/schema';
@@ -6,12 +6,10 @@ import { syncService } from './syncService';
 import { getEasternDateRange } from '../dateUtils';
 import type { DateRange, InsertPayoutFeeEntry } from '../../shared/schema';
 
-const squareClient = new Client({
-  accessToken: process.env.SQUARE_ACCESS_TOKEN || '',
-  environment: Environment.Production
+const squareClient = new SquareClient({
+  token: process.env.SQUARE_ACCESS_TOKEN || '',
+  environment: SquareEnvironment.Production
 });
-
-const payoutsApi = squareClient.payoutsApi;
 
 interface PayoutSyncResult {
   payoutsProcessed: number;
@@ -25,40 +23,31 @@ export class PayoutService {
     if (!locationId) throw new Error('SQUARE_LOCATION_ID not configured');
 
     const beginTime = sinceDate?.toISOString() ?? '2025-01-01T00:00:00Z';
-    let cursor: string | undefined;
     let payoutsProcessed = 0;
     let entriesCreated = 0;
     let entriesSkipped = 0;
 
-    do {
-      const response = await payoutsApi.listPayouts(
-        locationId,
-        undefined,
-        beginTime,
-        undefined,
-        'ASC',
-        cursor,
-        100
-      );
+    let payoutsPage = await squareClient.payouts.list({
+      locationId,
+      beginTime,
+      sortOrder: 'ASC',
+      limit: 100,
+    });
 
-      const payouts = response.result.payouts || [];
-      cursor = response.result.cursor as string | undefined;
+    while (true) {
+      const payouts = payoutsPage.data || [];
 
       for (const payout of payouts) {
         if (!payout.id) continue;
         payoutsProcessed++;
 
-        let entryCursor: string | undefined;
-        do {
-          const entryResponse = await payoutsApi.listPayoutEntries(
-            payout.id,
-            undefined,
-            entryCursor,
-            100
-          );
+        let entriesPage = await squareClient.payouts.listEntries({
+          payoutId: payout.id,
+          limit: 100,
+        });
 
-          const entries = entryResponse.result.payoutEntries || [];
-          entryCursor = entryResponse.result.cursor as string | undefined;
+        while (true) {
+          const entries = entriesPage.data || [];
 
           const batch: InsertPayoutFeeEntry[] = [];
           for (const entry of entries) {
@@ -111,13 +100,16 @@ export class PayoutService {
               entriesSkipped += batch.length;
             }
           }
-        } while (entryCursor);
+
+          if (!entriesPage.hasNextPage()) break;
+          entriesPage = await entriesPage.getNextPage();
+        }
       }
 
-      if (cursor) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    } while (cursor);
+      if (!payoutsPage.hasNextPage()) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      payoutsPage = await payoutsPage.getNextPage();
+    }
 
     return { payoutsProcessed, entriesCreated, entriesSkipped };
   }

@@ -6,6 +6,7 @@ A full-stack dashboard that syncs and visualizes daily sales, revenue, and gift 
 ## Architecture
 - **Frontend**: React + TypeScript + TanStack Query + shadcn/ui (Vite dev server)
 - **Backend**: Express.js + TypeScript
+- **Square SDK**: `square` v44.0.1 (uses `SquareClient` / `SquareEnvironment` — no axios dependency)
 - **Database**: PostgreSQL via Drizzle ORM
 - **Timezone**: UTC stored in DB; Eastern Time boundaries applied at query time via `getEasternDateRange` in `server/dateUtils.ts`
 

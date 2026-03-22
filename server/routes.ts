@@ -742,25 +742,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Sending Orders search request:", JSON.stringify(searchRequest, null, 2));
       
       // Make the API call directly
-      const response = await squareClient.ordersApi.searchOrders(searchRequest);
+      const response = await squareClient.orders.search(searchRequest);
       
-      // Process the response
-      console.log("Orders API response status:", response.statusCode);
-      
-      const orderCount = response.result.orders?.length || 0;
+      const orderCount = response.orders?.length || 0;
       console.log(`Found ${orderCount} orders in test call`);
       
-      // Prepare safe response data
       const safeResponse = {
         success: true,
-        statusCode: response.statusCode,
         orderCount: orderCount,
         hasOrders: orderCount > 0,
         sampleData: orderCount > 0 ? {
-          orderId: response.result.orders?.[0].id,
-          state: response.result.orders?.[0].state,
-          createdAt: response.result.orders?.[0].createdAt,
-          lineItemCount: response.result.orders?.[0].lineItems?.length || 0
+          orderId: response.orders?.[0].id,
+          state: response.orders?.[0].state,
+          createdAt: response.orders?.[0].createdAt,
+          lineItemCount: response.orders?.[0].lineItems?.length || 0
         } : null
       };
       
