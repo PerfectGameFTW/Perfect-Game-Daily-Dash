@@ -342,6 +342,12 @@ export interface ProcessingFeeBreakdown {
   netFees: number;
 }
 
+export interface GcRedemptionBreakdown {
+  bowlingDepositRedemptions: number;
+  laserTagDepositRedemptions: number;
+  giftCardRedemptions: number;
+}
+
 export interface DetailedTransactionBreakdown {
   partywirks: number;
   bowlingWebResDeposits: number;
@@ -357,6 +363,7 @@ export interface DetailedTransactionBreakdown {
   depositClearings: number;
   giftCardSales: number;
   giftCardRedemptions: number;
+  gcRedemptionBreakdown: GcRedemptionBreakdown;
   processingFees: ProcessingFeeBreakdown;
   totalTransactions: number;
 }

@@ -11,7 +11,6 @@ import {
   ChevronDown,
   TrendingUp,
   DollarSign,
-  Gift,
   Users,
   Receipt,
   Tag,
@@ -53,6 +52,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   });
 
   const [feesExpanded, setFeesExpanded] = useState(false);
+  const [gcRedemptionsExpanded, setGcRedemptionsExpanded] = useState(false);
   
   if (isLoading || isDetailedLoading) {
     return (
@@ -87,6 +87,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const feeReimbursements = toNum(processingFees?.reimbursements);
   const thirdPartyFees = toNum(processingFees?.thirdPartyFees);
   const netProcessingFees = toNum(processingFees?.netFees);
+
+  const gcBreakdown = detailedTransactions?.gcRedemptionBreakdown;
+  const bowlingDepositRedemptions = toNum(gcBreakdown?.bowlingDepositRedemptions);
+  const laserTagDepositRedemptions = toNum(gcBreakdown?.laserTagDepositRedemptions);
+  const pureGcRedemptions = toNum(gcBreakdown?.giftCardRedemptions);
 
   const refundsAndReturns = refunds + returns;
   const trueRevenue = totalRevenue - depositClearings;
@@ -256,10 +261,39 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <span className="text-card-foreground font-medium">({formatCurrency(refundsAndReturns)})</span>
             </div>
 
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Gift Card Redemptions</span>
+            <div
+              className="flex justify-between items-center cursor-pointer select-none"
+              onClick={() => setGcRedemptionsExpanded(!gcRedemptionsExpanded)}
+            >
+              <div className="flex items-center gap-1.5">
+                {gcRedemptionsExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+                ) : (
+                  <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0 rotate-90" />
+                )}
+                <span className="text-muted-foreground">Gift Card Redemptions</span>
+              </div>
               <span className="text-card-foreground font-medium">({formatCurrency(giftCardRedemptionsAmount)})</span>
             </div>
+
+            {gcRedemptionsExpanded && (
+              <>
+                <div className="flex justify-between items-center pl-6">
+                  <span className="text-muted-foreground text-sm">Bowling Deposit Redemptions</span>
+                  <span className="text-card-foreground font-medium">({formatCurrency(bowlingDepositRedemptions)})</span>
+                </div>
+
+                <div className="flex justify-between items-center pl-6">
+                  <span className="text-muted-foreground text-sm">Laser Tag Deposit Redemptions</span>
+                  <span className="text-card-foreground font-medium">({formatCurrency(laserTagDepositRedemptions)})</span>
+                </div>
+
+                <div className="flex justify-between items-center pl-6">
+                  <span className="text-muted-foreground text-sm">Gift Card Redemptions</span>
+                  <span className="text-card-foreground font-medium">({formatCurrency(pureGcRedemptions)})</span>
+                </div>
+              </>
+            )}
 
             <div className="flex justify-between items-center pt-3 border-t border-border">
               <div className="flex items-center gap-1.5">

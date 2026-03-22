@@ -209,6 +209,11 @@ export class DashboardService {
     laserTagWebResDeposits: number;
     giftCardSales: number;
     giftCardRedemptions: number;
+    gcRedemptionBreakdown: {
+      bowlingDepositRedemptions: number;
+      laserTagDepositRedemptions: number;
+      giftCardRedemptions: number;
+    };
     depositClearings: number;
     processingFees: ProcessingFeeBreakdown;
     totalTransactions: number;
@@ -282,15 +287,40 @@ export class DashboardService {
     // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
     const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
 
-    const gcRedemptionRows = await db.execute<{ total: number }>(sql`
-      SELECT COALESCE(SUM((tender->'amountMoney'->>'amount')::numeric / 100), 0) as total
-      FROM ${ordersTable}
-      CROSS JOIN LATERAL jsonb_array_elements(${ordersTable.squareData}->'tenders') as tender
-      WHERE tender->>'type' = 'SQUARE_GIFT_CARD'
-        AND ${ordersTable.status} = 'COMPLETED'
-        AND COALESCE(${ordersTable.closedAt}, ${ordersTable.createdAt}) BETWEEN ${start} AND ${end}
+    const gcRedemptionRows = await db.execute<{
+      total: number;
+      bowling_redemptions: number;
+      laser_tag_redemptions: number;
+      gc_redemptions: number;
+    }>(sql`
+      SELECT
+        COALESCE(SUM(tender_amount), 0) as total,
+        COALESCE(SUM(CASE WHEN activation_source = 'Web Reservation' THEN tender_amount ELSE 0 END), 0) as bowling_redemptions,
+        COALESCE(SUM(CASE WHEN activation_source = 'Web Reservation-Attraction' THEN tender_amount ELSE 0 END), 0) as laser_tag_redemptions,
+        COALESCE(SUM(CASE WHEN activation_source IS NULL
+                           OR activation_source NOT IN ('Web Reservation', 'Web Reservation-Attraction')
+                      THEN tender_amount ELSE 0 END), 0) as gc_redemptions
+      FROM (
+        SELECT DISTINCT ON (o.square_id, tender->>'id')
+          (tender->'amountMoney'->>'amount')::numeric / 100 as tender_amount,
+          activation_order.source as activation_source
+        FROM ${ordersTable} o
+        CROSS JOIN LATERAL jsonb_array_elements(o.square_data->'tenders') as tender
+        LEFT JOIN gift_cards gc ON RIGHT(gc.gan, 4) = tender->'cardDetails'->'card'->>'last4'
+          AND gc.gan IS NOT NULL
+        LEFT JOIN ${ordersTable} activation_order ON activation_order.square_id = gc.activation_square_order_id
+        WHERE tender->>'type' = 'SQUARE_GIFT_CARD'
+          AND o.status = 'COMPLETED'
+          AND COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
+        ORDER BY o.square_id, tender->>'id',
+          gc.activation_square_order_id IS NOT NULL DESC,
+          gc.id DESC
+      ) sub
     `);
     const giftCardRedemptionsTotal = Number(gcRedemptionRows.rows[0]?.total || 0);
+    const bowlingRedemptions = Number(gcRedemptionRows.rows[0]?.bowling_redemptions || 0);
+    const laserTagRedemptions = Number(gcRedemptionRows.rows[0]?.laser_tag_redemptions || 0);
+    const pureGcRedemptions = Number(gcRedemptionRows.rows[0]?.gc_redemptions || 0);
     
     // Calculate taxes from ALL orders (COMPLETED + OPEN) in the date range.
     // Square's Sales Summary includes tax from every order for the business day,
@@ -357,6 +387,11 @@ export class DashboardService {
       laserTagWebResDeposits: giftCardBreakdown.laserTagWebResDeposits,
       giftCardSales: giftCardBreakdown.giftCardSales,
       giftCardRedemptions: giftCardRedemptionsTotal,
+      gcRedemptionBreakdown: {
+        bowlingDepositRedemptions: bowlingRedemptions,
+        laserTagDepositRedemptions: laserTagRedemptions,
+        giftCardRedemptions: pureGcRedemptions,
+      },
       depositClearings,
       processingFees,
       totalTransactions: payments.length

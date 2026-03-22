@@ -1,5 +1,5 @@
 import { apiRequest } from "./queryClient";
-import { DateRange, DailySummary, GiftCardSummary, DetailedTransactionBreakdown, ProcessingFeeBreakdown } from "@shared/schema";
+import { DateRange, DailySummary, GiftCardSummary, DetailedTransactionBreakdown, ProcessingFeeBreakdown, GcRedemptionBreakdown } from "@shared/schema";
 
 const toFloat = (v: unknown): number => typeof v === 'number' ? v : parseFloat(String(v ?? 0)) || 0;
 const toInt = (v: unknown): number => typeof v === 'number' ? v : parseInt(String(v ?? 0), 10) || 0;
@@ -97,6 +97,15 @@ export const fetchDetailedTransactions = async (
       };
     };
 
+    const parseGcBreakdown = (g: unknown): GcRedemptionBreakdown => {
+      const obj = (g && typeof g === 'object' ? g : {}) as Record<string, unknown>;
+      return {
+        bowlingDepositRedemptions: toFloat(obj.bowlingDepositRedemptions),
+        laserTagDepositRedemptions: toFloat(obj.laserTagDepositRedemptions),
+        giftCardRedemptions: toFloat(obj.giftCardRedemptions),
+      };
+    };
+
     const parseBreakdown = (d: Record<string, unknown>): DetailedTransactionBreakdown => ({
       partywirks: toFloat(d.partywirks),
       bowlingWebResDeposits: toFloat(d.bowlingWebResDeposits),
@@ -112,6 +121,7 @@ export const fetchDetailedTransactions = async (
       depositClearings: toFloat(d.depositClearings),
       giftCardSales: toFloat(d.giftCardSales),
       giftCardRedemptions: toFloat(d.giftCardRedemptions),
+      gcRedemptionBreakdown: parseGcBreakdown(d.gcRedemptionBreakdown),
       processingFees: parseFees(d.processingFees),
       totalTransactions: toInt(d.totalTransactions)
     });
