@@ -58,7 +58,7 @@ function todayDateStrET(): string {
 }
 
 function isIntercardConfigured(): boolean {
-  return Boolean(INTERCARD_MAC_ID && INTERCARD_CORP_ID && INTERCARD_HOST);
+  return Boolean(INTERCARD_MAC_ID && INTERCARD_HOST);
 }
 
 export class IntercardService {
@@ -175,10 +175,10 @@ export class IntercardService {
     result.ok = true;
     result.fetched = fetchResult.rows.length;
 
-    if (fetchResult.rows.length === 0) return result;
-
     await db.delete(intercardRevenue)
       .where(eq(intercardRevenue.date, dateStr));
+
+    if (fetchResult.rows.length === 0) return result;
 
     for (const row of fetchResult.rows) {
       try {
