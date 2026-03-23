@@ -12,4 +12,10 @@ export function validateEnv(): void {
     console.error(`Missing required environment variables: ${missing.join(', ')}`);
     process.exit(1);
   }
+
+  const intercardVars = ['INTERCARD_HOST', 'INTERCARD_MAC_ID', 'INTERCARD_CORP_ID'];
+  const missingIntercard = intercardVars.filter((key) => !process.env[key]);
+  if (missingIntercard.length > 0) {
+    console.warn(`[validateEnv] Intercard integration disabled — missing: ${missingIntercard.join(', ')}`);
+  }
 }

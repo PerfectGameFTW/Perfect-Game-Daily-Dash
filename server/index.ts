@@ -120,6 +120,21 @@ async function exitWithError(error: unknown) {
 
     log('Creating database indexes if missing...');
     try {
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS intercard_revenue (
+        id SERIAL PRIMARY KEY,
+        date TEXT NOT NULL,
+        location_id TEXT NOT NULL,
+        device_type TEXT NOT NULL,
+        device_name TEXT NOT NULL,
+        cash_revenue REAL NOT NULL DEFAULT 0,
+        credit_card_revenue REAL NOT NULL DEFAULT 0,
+        cash_refunds REAL NOT NULL DEFAULT 0,
+        credit_refunds REAL NOT NULL DEFAULT 0,
+        other_payment REAL NOT NULL DEFAULT 0,
+        customer_card_use REAL NOT NULL DEFAULT 0,
+        revenue REAL NOT NULL DEFAULT 0,
+        synced_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`);
       await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at)`);
       await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_orders_square_id ON orders (square_id)`);
       await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions (timestamp)`);
@@ -131,6 +146,7 @@ async function exitWithError(error: unknown) {
       await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_payout_fee_entries_effective_at ON payout_fee_entries (effective_at)`);
       await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_order_line_items_order_id ON order_line_items (order_id)`);
       await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_sync_state_sync_type ON sync_state (sync_type)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_intercard_revenue_date ON intercard_revenue (date)`);
       log('✓ Database indexes verified');
     } catch (indexError) {
       log(`⚠ Warning: Could not create indexes: ${indexError instanceof Error ? indexError.message : 'Unknown error'}`);
