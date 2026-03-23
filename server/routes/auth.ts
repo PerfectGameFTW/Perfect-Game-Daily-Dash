@@ -8,6 +8,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { authService } from '../services/authService';
 import { createSafeUser, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
+import { authLimiter } from '../middleware/rateLimiter';
 
 // Validation schemas
 const loginSchema = z.object({
@@ -87,8 +88,7 @@ export function createAuthRouter(): Router {
     }
   });
 
-  // Login endpoint
-  router.post('/login', async (req: Request & { session?: any }, res: Response) => {
+  router.post('/login', authLimiter, async (req: Request & { session?: any }, res: Response) => {
     try {
       // Validate input
       const validationResult = loginSchema.safeParse(req.body);
@@ -162,8 +162,7 @@ export function createAuthRouter(): Router {
           return res.status(500).json({ error: 'Failed to logout' });
         }
         
-        // Clear the cookie on the client
-        res.clearCookie('connect.sid');
+        res.clearCookie('pg.sid');
         res.json({ success: true });
       });
     } else {

@@ -3,9 +3,11 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { db, sql, pool } from "./db"; // Import db, sql and pool
+import { db, sql, pool } from "./db";
 import { authService } from "./services/authService";
 import { startScheduler } from "./services/schedulerService";
+import { validateEnv } from "./validateEnv";
+import { apiLimiter } from "./middleware/rateLimiter";
 
 // Prevent unhandled async errors from crashing the process.
 // Node.js 15+ exits by default on unhandledRejection — this keeps the server alive.
@@ -17,10 +19,14 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught exception (caught by global handler):', err);
 });
 
+validateEnv();
+
 const app = express();
 app.disable('etag');
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+app.use('/api', apiLimiter);
 
 // Configure session middleware
 const PgSession = connectPgSimple(session);
@@ -30,16 +36,16 @@ app.use(session({
     tableName: 'sessions', // Default table name
     createTableIfMissing: true
   }),
-  secret: process.env.SESSION_SECRET || 'perfect-game-dashboard-secret',
-  resave: true, // Changed to true to ensure session is saved on every request
-  saveUninitialized: true, // Changed to true to ensure new sessions are saved
+  secret: process.env.SESSION_SECRET!,
+  resave: false,
+  saveUninitialized: false,
   cookie: {
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    secure: false, // Changed to false to work in development
-    sameSite: 'lax', // Helps with CSRF protection but allows normal navigation
-    httpOnly: true // Prevents JavaScript access to cookie
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    httpOnly: true
   },
-  name: 'pg.sid' // Added custom name to avoid conflicts
+  name: 'pg.sid'
 }));
 
 // Add startup timestamp and environment check
@@ -100,21 +106,33 @@ async function exitWithError(error: unknown) {
       await db.execute(sql`SELECT version()`);
       log('✓ Database connection verified');
       
-      // Create initial admin user if none exists
-      try {
-        const adminUser = await authService.createInitialAdmin('admin', 'perfgame2025');
-        if (adminUser) {
-          log('✓ Created initial admin user: admin');
-        } else {
-          log('ℹ Users already exist, skipping initial admin creation');
-        }
-      } catch (adminError) {
-        log(`⚠ Warning: Could not create initial admin: ${adminError instanceof Error ? adminError.message : 'Unknown error'}`);
-        // Don't throw error, just log warning as this isn't critical
+      const usersExist = await authService.checkUsersExist();
+      if (usersExist) {
+        log('ℹ Users already exist, skipping initial admin creation');
+      } else {
+        log('ℹ No users exist — register the first admin via /register');
       }
     } catch (dbError) {
       log('✗ Database connection failed', 'error');
       throw dbError;
+    }
+
+    log('Creating database indexes if missing...');
+    try {
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_orders_square_id ON orders (square_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions (timestamp)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_transactions_square_id ON transactions (square_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_gift_cards_purchase_date ON gift_cards (purchase_date)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_gift_cards_square_id ON gift_cards (square_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_refunds_created_at ON refunds (created_at)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_refunds_square_refund_id ON refunds (square_refund_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_payout_fee_entries_effective_at ON payout_fee_entries (effective_at)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_order_line_items_order_id ON order_line_items (order_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_sync_state_sync_type ON sync_state (sync_type)`);
+      log('✓ Database indexes verified');
+    } catch (indexError) {
+      log(`⚠ Warning: Could not create indexes: ${indexError instanceof Error ? indexError.message : 'Unknown error'}`);
     }
 
     log('Registering routes...');

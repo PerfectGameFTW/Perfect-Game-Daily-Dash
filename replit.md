@@ -101,3 +101,16 @@ Square's cost-plus pricing model charges the full processing fee per transaction
 - `shared/schema.ts` — Drizzle ORM schema (single source of truth for types)
 - `client/src/pages/Admin.tsx` — admin panel with user management and sync controls
 - `client/src/components/dashboard/Header.tsx` — header with last-synced indicator
+- `server/middleware/rateLimiter.ts` — API, auth, and sync rate limiters
+- `server/validateEnv.ts` — startup environment variable validation
+- `client/src/components/ErrorBoundary.tsx` — React error boundary
+
+## Security Hardening
+- **Rate limiting**: All `/api` routes limited to 100 req/min; login limited to 10 attempts per 15 min; sync endpoints limited to 5 req/min
+- **Auth on API routes**: All data-fetching routes require authenticated session (except `/api/health` and `/api/sync/status`)
+- **Admin-only sync**: All sync/backfill POST endpoints require admin role
+- **Error boundary**: React ErrorBoundary wraps the entire app to prevent white-screen crashes
+- **Env validation**: Required env vars (`DATABASE_URL`, `SQUARE_ACCESS_TOKEN`, `SQUARE_LOCATION_ID`) checked at startup; warning for missing `SESSION_SECRET`
+- **Database indexes**: Indexes created at startup on all frequently-queried timestamp and ID columns
+- **Health check**: `GET /api/health` returns `{ status: "ok", timestamp }` for monitoring
+- **Session security**: httpOnly cookies, 30-day expiry, sameSite lax, PostgreSQL-backed session store

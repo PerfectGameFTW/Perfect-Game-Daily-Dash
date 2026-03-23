@@ -14,14 +14,26 @@ import { paymentService } from '../services/paymentService';
 import { DateRange, dateRangeSchema } from '../../shared/schema';
 import { giftCardFixerRouter } from '../api/giftCardFixer';
 import { broadcast } from '../ws';
+import { requireAuth, requireAdmin } from '../middleware/auth';
+import { syncLimiter } from '../middleware/rateLimiter';
 
 export function createApiRouter(): Router {
   const router = Router();
   
-  // Request logging middleware
   router.use((req, _res, next) => {
     console.log(`${new Date().toISOString()} [${req.method}] ${req.url}`);
     next();
+  });
+
+  router.get('/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  router.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path === '/health' || req.path === '/sync/status') {
+      return next();
+    }
+    requireAuth(req, res, next);
   });
   
   /**
@@ -208,7 +220,7 @@ export function createApiRouter(): Router {
    * where payments records were missing since March 6, 2025. This is part of our
    * dual-track strategy for maintaining data consistency during the transition.
    */
-  router.post('/sync', async (req: Request, res: Response, next: NextFunction) => {
+  router.post('/sync', requireAdmin, syncLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const syncSchema = z.object({
         type: z.enum(['orders', 'payments', 'gift_cards', 'gift_card_redemptions', 'refunds', 'all', 'missing_payments']),
@@ -345,7 +357,7 @@ export function createApiRouter(): Router {
    * 
    * Returns detailed results of the operation including counts and individual card fixes.
    */
-  router.post('/fix-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
+  router.post('/fix-gift-cards', requireAdmin, syncLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       // Use the Activities-API-first backfill (preferred) with order-matching fallback
       const { backfillGiftCardActivationAmounts } = await import('../services/enhancedGiftCardFix');
@@ -449,7 +461,7 @@ export function createApiRouter(): Router {
    *
    * Returns 202 immediately so the HTTP request never times out.
    */
-  router.post('/sync/historical', async (req: Request, res: Response, next: NextFunction) => {
+  router.post('/sync/historical', requireAdmin, syncLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const twoYearsAgo = new Date();
       twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
@@ -506,10 +518,10 @@ export function createApiRouter(): Router {
     }
   }
 
-  router.post('/sync/gift-cards/full', handleGiftCardFullSync);
-  router.post('/sync/gift-cards-backfill', handleGiftCardFullSync);
+  router.post('/sync/gift-cards/full', requireAdmin, syncLimiter, handleGiftCardFullSync);
+  router.post('/sync/gift-cards-backfill', requireAdmin, syncLimiter, handleGiftCardFullSync);
 
-  router.post('/sync/quick', async (_req: Request, res: Response, next: NextFunction) => {
+  router.post('/sync/quick', requireAdmin, syncLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const { runFrequentSync } = await import('../services/schedulerService');
       await runFrequentSync();

@@ -11,6 +11,7 @@ import GiftCardTest from "@/pages/GiftCardTest";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
@@ -84,9 +85,11 @@ function AppContent() {
 // Root component
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AppContent />
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AppContent />
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
