@@ -22,19 +22,30 @@ interface IntercardRevenueRow {
   Revenue: number;
 }
 
+interface FetchResult {
+  ok: boolean;
+  rows: IntercardRevenueRow[];
+  errorType?: 'missing_config' | 'auth_failed' | 'api_error' | 'network_error' | 'parse_error';
+}
+
+interface BackfillCheckpoint {
+  lastDate: string;
+  daysProcessed: number;
+  failedDays: number;
+}
+
 function formatDateET(d: Date): string {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
-  return parts;
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
 }
 
 function getEasternUtcOffset(d: Date): number {
-  const jan = new Date(d.getFullYear(), 0, 1);
-  const jul = new Date(d.getFullYear(), 6, 1);
-  const stdOffset = Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
   const eastern = new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const utc = new Date(d.toLocaleString('en-US', { timeZone: 'UTC' }));
-  const diffMinutes = Math.round((eastern.getTime() - utc.getTime()) / 60000);
-  return diffMinutes;
+  return Math.round((eastern.getTime() - utc.getTime()) / 60000);
+}
+
+function isIntercardConfigured(): boolean {
+  return Boolean(INTERCARD_MAC_ID && INTERCARD_CORP_ID && INTERCARD_HOST);
 }
 
 export class IntercardService {
@@ -70,22 +81,19 @@ export class IntercardService {
     }
   }
 
-  async fetchRevenueReportByDateStr(startDateStr: string, endDateStr?: string): Promise<IntercardRevenueRow[]> {
+  async fetchRevenueByDateStr(startDateStr: string, endDateStr?: string): Promise<FetchResult> {
+    if (!isIntercardConfigured()) {
+      return { ok: false, rows: [], errorType: 'missing_config' };
+    }
+
     const dateForOffset = new Date(startDateStr + 'T12:00:00');
     const utcOffset = String(getEasternUtcOffset(dateForOffset));
-    return this.fetchRevenueReportRaw(startDateStr, endDateStr || startDateStr, utcOffset);
-  }
-
-  private async fetchRevenueReportRaw(startDateStr: string, endDateStr: string, utcOffset: string): Promise<IntercardRevenueRow[]> {
-    if (!INTERCARD_MAC_ID) {
-      console.warn('[Intercard] INTERCARD_MAC_ID not set — skipping fetch');
-      return [];
-    }
+    const end = endDateStr || startDateStr;
 
     const params = new URLSearchParams({
       macId: INTERCARD_MAC_ID,
       startdate: startDateStr,
-      enddate: endDateStr,
+      enddate: end,
       utcOffset,
       isBusinessDay: 'true',
     });
@@ -110,42 +118,56 @@ export class IntercardService {
 
       clearTimeout(timeout);
 
+      if (response.status === 401 || response.status === 403) {
+        const text = await response.text();
+        console.error(`[Intercard] Auth error ${response.status}: ${text}`);
+        this.cachedToken = null;
+        this.tokenExpiresAt = 0;
+        return { ok: false, rows: [], errorType: 'auth_failed' };
+      }
+
       if (!response.ok) {
         const text = await response.text();
         console.error(`[Intercard] API error ${response.status}: ${text}`);
-        return [];
+        return { ok: false, rows: [], errorType: 'api_error' };
       }
 
       const data = await response.json();
       if (!Array.isArray(data)) {
         console.error('[Intercard] Unexpected response format:', typeof data);
-        return [];
+        return { ok: false, rows: [], errorType: 'parse_error' };
       }
 
       console.log(`[Intercard] Fetched ${data.length} revenue rows`);
-      return data as IntercardRevenueRow[];
+      return { ok: true, rows: data as IntercardRevenueRow[] };
     } catch (err) {
       console.error('[Intercard] Fetch error:', err);
-      return [];
+      return { ok: false, rows: [], errorType: 'network_error' };
     }
   }
 
   async syncSingleDay(dateStr: string): Promise<{
+    ok: boolean;
     fetched: number;
     upserted: number;
     failed: number;
   }> {
-    const result = { fetched: 0, upserted: 0, failed: 0 };
+    const result = { ok: false, fetched: 0, upserted: 0, failed: 0 };
 
-    const rows = await this.fetchRevenueReportByDateStr(dateStr);
-    result.fetched = rows.length;
+    const fetchResult = await this.fetchRevenueByDateStr(dateStr);
+    if (!fetchResult.ok) {
+      return result;
+    }
 
-    if (rows.length === 0) return result;
+    result.ok = true;
+    result.fetched = fetchResult.rows.length;
+
+    if (fetchResult.rows.length === 0) return result;
 
     await db.delete(intercardRevenue)
       .where(eq(intercardRevenue.date, dateStr));
 
-    for (const row of rows) {
+    for (const row of fetchResult.rows) {
       try {
         await db.insert(intercardRevenue).values({
           date: dateStr,
@@ -171,8 +193,9 @@ export class IntercardService {
   }
 
   async syncToday(): Promise<void> {
-    const todayStr = formatDateET(new Date());
+    if (!isIntercardConfigured()) return;
 
+    const todayStr = formatDateET(new Date());
     const dayResult = await this.syncSingleDay(todayStr);
     if (dayResult.upserted > 0) {
       console.log(`[Intercard] Today sync: ${dayResult.upserted} records`);
@@ -180,6 +203,11 @@ export class IntercardService {
   }
 
   async runHistoricalBackfill(): Promise<void> {
+    if (!isIntercardConfigured()) {
+      console.log('[Intercard] Skipping backfill — Intercard not configured');
+      return;
+    }
+
     const syncType = 'intercard_backfill';
     const existingState = await db.select().from(syncState)
       .where(eq(syncState.syncType, syncType))
@@ -190,7 +218,12 @@ export class IntercardService {
       return;
     }
 
-    let checkpoint: any = existingState.length > 0 ? existingState[0].lastCheckpoint : null;
+    const rawCheckpoint = existingState.length > 0 ? existingState[0].lastCheckpoint : null;
+    const checkpoint: BackfillCheckpoint | null =
+      rawCheckpoint && typeof rawCheckpoint === 'object' && 'lastDate' in rawCheckpoint
+        ? rawCheckpoint as BackfillCheckpoint
+        : null;
+
     const backfillStart = new Date('2025-01-01');
     const backfillEnd = new Date();
 
@@ -218,27 +251,51 @@ export class IntercardService {
     }
 
     let daysProcessed = checkpoint?.daysProcessed || 0;
+    let failedDays = checkpoint?.failedDays || 0;
+    let consecutiveFailures = 0;
 
     while (currentDate <= backfillEnd) {
       const dateStr = formatDateET(currentDate);
 
       try {
         const dayResult = await this.syncSingleDay(dateStr);
-        daysProcessed++;
 
-        if (daysProcessed % 30 === 0) {
-          console.log(`[Intercard] Backfill progress: ${daysProcessed} days, date=${dateStr}`);
+        if (dayResult.ok) {
+          daysProcessed++;
+          consecutiveFailures = 0;
+        } else {
+          failedDays++;
+          consecutiveFailures++;
+        }
+
+        if (daysProcessed % 30 === 0 && daysProcessed > 0) {
+          console.log(`[Intercard] Backfill progress: ${daysProcessed} days synced, ${failedDays} failed, date=${dateStr}`);
+        }
+
+        if (consecutiveFailures >= 10) {
+          console.error(`[Intercard] Backfill paused: ${consecutiveFailures} consecutive failures at ${dateStr}`);
+          await db.update(syncState)
+            .set({
+              status: 'paused',
+              lastSyncedAt: new Date(),
+              processedCount: daysProcessed,
+              lastCheckpoint: { lastDate: dateStr, daysProcessed, failedDays } satisfies BackfillCheckpoint,
+              errorMessage: `Paused after ${consecutiveFailures} consecutive failures`,
+            })
+            .where(eq(syncState.syncType, syncType));
+          return;
         }
 
         await db.update(syncState)
           .set({
             lastSyncedAt: new Date(),
             processedCount: daysProcessed,
-            lastCheckpoint: { lastDate: dateStr, daysProcessed },
+            lastCheckpoint: { lastDate: dateStr, daysProcessed, failedDays } satisfies BackfillCheckpoint,
           })
           .where(eq(syncState.syncType, syncType));
       } catch (err) {
         console.error(`[Intercard] Backfill error for ${dateStr}:`, err);
+        failedDays++;
       }
 
       currentDate.setDate(currentDate.getDate() + 1);
@@ -246,16 +303,29 @@ export class IntercardService {
       await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    await db.update(syncState)
-      .set({
-        isComplete: true,
-        status: 'completed',
-        lastSyncedAt: new Date(),
-        processedCount: daysProcessed,
-      })
-      .where(eq(syncState.syncType, syncType));
-
-    console.log(`[Intercard] Historical backfill complete: ${daysProcessed} days processed`);
+    if (failedDays > 0) {
+      console.warn(`[Intercard] Historical backfill finished with ${failedDays} failed days out of ${daysProcessed + failedDays} total`);
+      await db.update(syncState)
+        .set({
+          isComplete: false,
+          status: 'completed_with_errors',
+          lastSyncedAt: new Date(),
+          processedCount: daysProcessed,
+          errorMessage: `${failedDays} days failed`,
+        })
+        .where(eq(syncState.syncType, syncType));
+    } else {
+      await db.update(syncState)
+        .set({
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: new Date(),
+          processedCount: daysProcessed,
+          errorMessage: null,
+        })
+        .where(eq(syncState.syncType, syncType));
+      console.log(`[Intercard] Historical backfill complete: ${daysProcessed} days processed`);
+    }
   }
 
   async getRevenueForDateRange(
