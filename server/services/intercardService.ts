@@ -175,32 +175,34 @@ export class IntercardService {
     result.ok = true;
     result.fetched = fetchResult.rows.length;
 
-    await db.delete(intercardRevenue)
-      .where(eq(intercardRevenue.date, dateStr));
+    await db.transaction(async (tx) => {
+      await tx.delete(intercardRevenue)
+        .where(eq(intercardRevenue.date, dateStr));
 
-    if (fetchResult.rows.length === 0) return result;
+      if (fetchResult.rows.length === 0) return;
 
-    for (const row of fetchResult.rows) {
-      try {
-        await db.insert(intercardRevenue).values({
-          date: dateStr,
-          locationId: String(row.LocationID ?? ''),
-          deviceType: String(row.DeviceType ?? ''),
-          deviceName: String(row.DeviceName ?? ''),
-          cashRevenue: Number(row.CashRevenue) || 0,
-          creditCardRevenue: Number(row.CreditCardRevenue) || 0,
-          cashRefunds: Number(row.CashRefunds) || 0,
-          creditRefunds: Number(row.CreditRefunds) || 0,
-          otherPayment: Number(row.OtherPayment) || 0,
-          customerCardUse: Number(row.CustomerCardUse) || 0,
-          revenue: Number(row.Revenue) || 0,
-        });
-        result.upserted++;
-      } catch (err) {
-        result.failed++;
-        console.error('[Intercard] Insert error:', err);
+      for (const row of fetchResult.rows) {
+        try {
+          await tx.insert(intercardRevenue).values({
+            date: dateStr,
+            locationId: String(row.LocationID ?? ''),
+            deviceType: String(row.DeviceType ?? ''),
+            deviceName: String(row.DeviceName ?? ''),
+            cashRevenue: Number(row.CashRevenue) || 0,
+            creditCardRevenue: Number(row.CreditCardRevenue) || 0,
+            cashRefunds: Number(row.CashRefunds) || 0,
+            creditRefunds: Number(row.CreditRefunds) || 0,
+            otherPayment: Number(row.OtherPayment) || 0,
+            customerCardUse: Number(row.CustomerCardUse) || 0,
+            revenue: Number(row.Revenue) || 0,
+          });
+          result.upserted++;
+        } catch (err) {
+          result.failed++;
+          console.error('[Intercard] Insert error:', err);
+        }
       }
-    }
+    });
 
     return result;
   }
