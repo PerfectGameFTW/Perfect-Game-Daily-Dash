@@ -21,7 +21,6 @@ export default function GiftCardActivity({
   const chartRef = useRef<HTMLCanvasElement>(null);
   const chartInstance = useRef<Chart | null>(null);
 
-  // API data fetching
   const { data, isLoading } = useQuery({
     queryKey: ['/api/gift-card-summary', dateRange, customStartDate?.toISOString(), customEndDate?.toISOString()],
     queryFn: () => fetchGiftCardSummary(dateRange, customStartDate, customEndDate),
@@ -29,34 +28,31 @@ export default function GiftCardActivity({
   });
 
   useEffect(() => {
-    // Cleanup previous chart
     if (chartInstance.current) {
       chartInstance.current.destroy();
     }
 
     if (!chartRef.current || isLoading || !data) return;
 
-    // Create new chart
     const ctx = chartRef.current.getContext('2d');
     if (!ctx) return;
 
-    // Custom colors for the chart - Pantone colors converted to hex
-    const primaryColor = '#0A3161'; // Pantone 653c
-    const secondaryColor = '#C4D600'; // Pantone 382c
+    const primaryColor = '#0A3161';
+    const secondaryColor = '#C4D600';
     
     chartInstance.current = new Chart(ctx, {
       type: 'doughnut',
       data: {
-        labels: ['Gift Card Sales', 'Gift Card Redemptions'],
+        labels: ['Total Gift Card Sales', 'Total Gift Card Redemptions'],
         datasets: [{
           data: [data.soldAmount, data.redeemedAmount],
           backgroundColor: [
-            primaryColor + 'e6',  // Primary color with alpha (90%)
-            secondaryColor + 'b3'  // Secondary color with alpha (70%)
+            primaryColor + 'e6',
+            secondaryColor + 'b3'
           ],
           borderColor: [
-            primaryColor,        // Primary color
-            secondaryColor + 'cc' // Secondary color with alpha (80%)
+            primaryColor,
+            secondaryColor + 'cc'
           ],
           borderWidth: 2,
           hoverOffset: 6,
@@ -114,7 +110,6 @@ export default function GiftCardActivity({
       }
     });
 
-    // Cleanup on unmount
     return () => {
       if (chartInstance.current) {
         chartInstance.current.destroy();
@@ -124,18 +119,10 @@ export default function GiftCardActivity({
 
   return (
     <div className="bg-card backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl overflow-hidden">
-      <div className="flex flex-col items-center justify-center">
-        <div className="space-y-1 text-center">
-          <h2 className="text-xl font-bold text-card-foreground">
-            Gift Card Activity
-          </h2>
-          {data && !isLoading && (
-            <div className="flex items-center justify-center text-muted-foreground text-sm">
-              <TrendingUp size={16} className="mr-1 text-primary" />
-              <span>Total sales: {formatCurrency(data?.soldAmount || 0)}</span>
-            </div>
-          )}
-        </div>
+      <div className="text-center">
+        <h2 className="text-xl font-bold text-card-foreground">
+          Total Gift Card Activity
+        </h2>
       </div>
       
       {isLoading ? (
@@ -154,19 +141,10 @@ export default function GiftCardActivity({
         </>
       ) : (
         <>
-          <div className="mt-4 flex items-center justify-between mb-4">
-            <h4 className="text-base font-medium text-card-foreground">
-              {dateRange === 'yesterday' ? 'Gift Card Sales Yesterday' : 'Gift Card Sales Today'}
-            </h4>
-            <span className="text-2xl font-bold text-primary">{formatCurrency(data?.soldAmount || 0)}</span>
-          </div>
-          
-          {/* Donut Chart for Gift Card Sales vs Redemptions */}
-          <div className="mt-2 h-64">
+          <div className="mt-4 h-64">
             <canvas ref={chartRef}></canvas>
           </div>
           
-          {/* Gift Card Metrics */}
           <div className="mt-6 grid grid-cols-2 gap-4">
             <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
               <div className="flex items-center">

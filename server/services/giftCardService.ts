@@ -230,32 +230,19 @@ export class GiftCardService {
     startDate?: Date,
     endDate?: Date
   ): Promise<GiftCardSummary> {
-    // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    
-    console.log(`Getting gift card summary with UTC dates: {
-  dateRange: '${dateRange}',
-  startUTC: '${start.toISOString()}',
-  endUTC: '${end.toISOString()}',
-  startDate: ${startDate ? `'${startDate.toISOString()}'` : 'undefined'},
-  endDate: ${endDate ? `'${endDate.toISOString()}'` : 'undefined'}
-}`);
-    
-    // Query the database for gift card activations using Drizzle's SQL template
-    // which properly handles parameterized queries
+
     const activationsResult = await db.execute(sql`
       SELECT 
         COUNT(*) as sold_count,
-        COALESCE(SUM(activation_amount), 0) as sold_amount
-      FROM gift_cards
-      WHERE purchase_date BETWEEN ${start} AND ${end}
-        AND activation_amount > 0
+        COALESCE(SUM(gc.activation_amount), 0) as sold_amount
+      FROM gift_cards gc
+      LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
+      WHERE gc.purchase_date BETWEEN ${start} AND ${end}
+        AND gc.activation_amount > 0
+        AND (o.source IS NULL OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction'))
     `);
-    
-    console.log(`Gift card activations raw result:`, JSON.stringify(activationsResult.rows));
-    
-    // Query the database for gift card redemptions using Drizzle's SQL template
-    // which properly handles parameterized queries
+
     const redemptionsResult = await db.execute(sql`
       SELECT 
         COUNT(*) as redeemed_count,
@@ -263,27 +250,13 @@ export class GiftCardService {
       FROM gift_card_redemptions
       WHERE timestamp BETWEEN ${start} AND ${end}
     `);
-    
-    console.log(`Gift card redemptions raw result:`, JSON.stringify(redemptionsResult.rows));
-    
-    // Access the result properly from the raw SQL query results
-    // Convert all values to numbers to avoid type issues
+
     const soldCount = parseInt(String(activationsResult.rows?.[0]?.sold_count || '0'), 10) || 0;
     const soldAmount = parseFloat(String(activationsResult.rows?.[0]?.sold_amount || '0')) || 0;
     const redeemedCount = parseInt(String(redemptionsResult.rows?.[0]?.redeemed_count || '0'), 10) || 0;
     const redeemedAmount = parseFloat(String(redemptionsResult.rows?.[0]?.redeemed_amount || '0')) || 0;
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
-    
-    console.log(`Gift card summary calculated using proper Eastern timezone boundaries: {
-  dateRange: '${dateRange}',
-  soldCount: ${soldCount},
-  soldAmount: ${soldAmount},
-  redeemedCount: ${redeemedCount},
-  redeemedAmount: ${redeemedAmount},
-  averageValue: ${averageValue},
-  dateRangeStr: '${start.toISOString()} to ${end.toISOString()}'
-}`);
-    
+
     return {
       soldCount,
       soldAmount,
