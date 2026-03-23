@@ -251,18 +251,37 @@ export class GiftCardService {
       WHERE timestamp BETWEEN ${start} AND ${end}
     `);
 
+    const allTimeActivationsResult = await db.execute(sql`
+      SELECT COALESCE(SUM(gc.activation_amount), 0) as total_activated
+      FROM gift_cards gc
+      LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
+      WHERE gc.purchase_date <= ${end}
+        AND gc.activation_amount > 0
+        AND (o.source IS NULL OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction'))
+    `);
+
+    const allTimeRedemptionsResult = await db.execute(sql`
+      SELECT COALESCE(SUM(amount), 0) as total_redeemed
+      FROM gift_card_redemptions
+      WHERE timestamp <= ${end}
+    `);
+
     const soldCount = parseInt(String(activationsResult.rows?.[0]?.sold_count || '0'), 10) || 0;
     const soldAmount = parseFloat(String(activationsResult.rows?.[0]?.sold_amount || '0')) || 0;
     const redeemedCount = parseInt(String(redemptionsResult.rows?.[0]?.redeemed_count || '0'), 10) || 0;
     const redeemedAmount = parseFloat(String(redemptionsResult.rows?.[0]?.redeemed_amount || '0')) || 0;
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
+    const totalActivated = parseFloat(String(allTimeActivationsResult.rows?.[0]?.total_activated || '0')) || 0;
+    const totalRedeemed = parseFloat(String(allTimeRedemptionsResult.rows?.[0]?.total_redeemed || '0')) || 0;
+    const outstandingBalance = totalActivated - totalRedeemed;
 
     return {
       soldCount,
       soldAmount,
       redeemedCount,
       redeemedAmount,
-      averageValue
+      averageValue,
+      outstandingBalance
     };
   }
   
