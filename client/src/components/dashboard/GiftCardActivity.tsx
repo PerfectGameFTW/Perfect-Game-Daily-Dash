@@ -164,9 +164,10 @@ export default function GiftCardActivity({
           {/* Donut Chart for Gift Card Sales vs Redemptions */}
           <div className="mt-2 h-64">
             <canvas ref={chartRef}></canvas>
+          </div>
             
-            {/* Horizontal bars showing percentages */}
-            <div className="mt-4 space-y-4">
+          {/* Horizontal bars showing percentages */}
+          <div className="mt-4 space-y-4">
               <div>
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-muted-foreground">Gift Card Sales</span>
@@ -198,7 +199,6 @@ export default function GiftCardActivity({
                   />
                 </div>
               </div>
-            </div>
           </div>
           
           {/* Gift Card Metrics */}
