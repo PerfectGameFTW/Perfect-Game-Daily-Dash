@@ -174,7 +174,7 @@ export default function GiftCardActivity({
                   <DollarSign className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-muted-foreground">Outstanding Value</div>
+                  <div className="text-sm font-medium text-muted-foreground">Total Outstanding Value</div>
                   <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency((data?.soldAmount || 0) - (data?.redeemedAmount || 0))}</div>
                 </div>
               </div>
