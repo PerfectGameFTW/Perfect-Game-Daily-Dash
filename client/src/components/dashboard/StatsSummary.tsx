@@ -54,6 +54,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
   const [feesExpanded, setFeesExpanded] = useState(false);
   const [gcRedemptionsExpanded, setGcRedemptionsExpanded] = useState(false);
+  const [intercardExpanded, setIntercardExpanded] = useState(false);
   
   if (isLoading || isDetailedLoading) {
     return (
@@ -488,36 +489,55 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.tripleseat || 0)}</span>
             </div>
 
-            <div className="flex justify-between items-center">
+            <div
+              className="flex justify-between items-center cursor-pointer select-none"
+              onClick={() => setIntercardExpanded(!intercardExpanded)}
+            >
               <div className="flex items-center gap-1.5">
-                <span className="text-muted-foreground">Intercard Cash Revenue</span>
-                {(intercardCash > 0 || squareKioskCash > 0) && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        {kioskCashMatches ? (
-                          <Check className="h-3.5 w-3.5 text-green-400 shrink-0" />
-                        ) : (
-                          <X className="h-3.5 w-3.5 text-red-400 shrink-0" />
-                        )}
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
-                        <p className="font-semibold mb-1">{kioskCashMatches ? "Amounts match" : "Amounts do not match"}</p>
-                        <p>Square Kiosk Cash: {formatCurrency(squareKioskCash)}</p>
-                        <p>Intercard API Cash: {formatCurrency(intercardCash)}</p>
-                        <p className="text-muted-foreground/80 text-[10px] pt-1">Square "Intercard Kiosk Cash" items are excluded from gross payments to prevent double-counting.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                {intercardExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+                ) : (
+                  <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0 rotate-90" />
                 )}
+                <span className="text-muted-foreground">Intercard Revenue</span>
               </div>
-              <span className="text-card-foreground font-medium">{formatCurrency(intercardCash)}</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(intercardRev)}</span>
             </div>
 
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Intercard Credit Card Revenue</span>
-              <span className="text-card-foreground font-medium">{formatCurrency(intercardCredit)}</span>
-            </div>
+            {intercardExpanded && (
+              <>
+                <div className="flex justify-between items-center pl-6">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground text-sm">Cash Revenue</span>
+                    {(intercardCash > 0 || squareKioskCash > 0) && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            {kioskCashMatches ? (
+                              <Check className="h-3.5 w-3.5 text-green-400 shrink-0" />
+                            ) : (
+                              <X className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
+                            <p className="font-semibold mb-1">{kioskCashMatches ? "Amounts match" : "Amounts do not match"}</p>
+                            <p>Square Kiosk Cash: {formatCurrency(squareKioskCash)}</p>
+                            <p>Intercard API Cash: {formatCurrency(intercardCash)}</p>
+                            <p className="text-muted-foreground/80 text-[10px] pt-1">Square "Intercard Kiosk Cash" items are excluded from gross payments to prevent double-counting.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                  </div>
+                  <span className="text-card-foreground font-medium">{formatCurrency(intercardCash)}</span>
+                </div>
+
+                <div className="flex justify-between items-center pl-6">
+                  <span className="text-muted-foreground text-sm">Credit Card Revenue</span>
+                  <span className="text-card-foreground font-medium">{formatCurrency(intercardCredit)}</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
