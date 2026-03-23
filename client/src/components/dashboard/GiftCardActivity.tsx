@@ -165,41 +165,6 @@ export default function GiftCardActivity({
           <div className="mt-2 h-64">
             <canvas ref={chartRef}></canvas>
           </div>
-            
-          {/* Horizontal bars showing percentages */}
-          <div className="mt-4 space-y-4">
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-muted-foreground">Gift Card Sales</span>
-                  <span className="font-semibold text-card-foreground">{formatCurrency(data?.soldAmount || 0)}</span>
-                </div>
-                <div className="h-2 bg-accent/20 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full rounded-full" 
-                    style={{ 
-                      width: `${data?.soldAmount ? Math.min(100, (data.soldAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%`,
-                      backgroundColor: '#0A3161' // Pantone 653c
-                    }} 
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-muted-foreground">Gift Card Redemptions</span>
-                  <span className="font-semibold text-card-foreground">{formatCurrency(data?.redeemedAmount || 0)}</span>
-                </div>
-                <div className="h-2 bg-accent/20 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full rounded-full" 
-                    style={{ 
-                      width: `${data?.redeemedAmount ? Math.min(100, (data.redeemedAmount / (data.soldAmount + data.redeemedAmount + 0.01)) * 100) : 0}%`,
-                      backgroundColor: '#C4D600' // Pantone 382c
-                    }} 
-                  />
-                </div>
-              </div>
-          </div>
           
           {/* Gift Card Metrics */}
           <div className="mt-6 grid grid-cols-2 gap-4">
