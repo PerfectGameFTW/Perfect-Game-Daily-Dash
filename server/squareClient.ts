@@ -432,14 +432,6 @@ export function isGiftCardRedemption(payment: any): boolean {
         sourceId = payment.cardDetails.card.id;
       }
 
-      console.log(`Found gift card redemption payment:`, {
-        paymentId: payment.id,
-        sourceType: payment.sourceType,
-        cardDetails: payment.cardDetails,
-        sourceId: sourceId,
-        amount: payment.amountMoney ? Number(payment.amountMoney.amount) / 100 : 0
-      });
-
       // Add additional information to the payment object
       payment.isGiftCardRedemption = true;
       payment.sourceId = sourceId;
