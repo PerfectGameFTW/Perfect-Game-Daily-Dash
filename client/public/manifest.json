@@ -1,6 +1,6 @@
 {
-  "name": "Perfect Game Sales Tracker",
-  "short_name": "PG Sales",
+  "name": "Daily Dash",
+  "short_name": "Daily Dash",
   "description": "Daily sales, revenue, and gift card activity dashboard",
   "start_url": "/",
   "display": "standalone",
