@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { eq, sql } from 'drizzle-orm';
 import { intercardRevenue, syncState, type DateRange } from '../../shared/schema';
-import { getEasternDateRange } from '../dateUtils';
+import { getEasternBusinessDateStrings } from '../dateUtils';
 
 const INTERCARD_HOST = (process.env.INTERCARD_HOST || 'https://development.intercardinc.com').replace(/\/+$/, '');
 const INTERCARD_MAC_ID = process.env.INTERCARD_MAC_ID || '';
@@ -333,10 +333,7 @@ export class IntercardService {
     startDate?: Date,
     endDate?: Date,
   ): Promise<number> {
-    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-
-    const startStr = formatDateET(start);
-    const endStr = formatDateET(end);
+    const { startStr, endStr } = getEasternBusinessDateStrings(dateRange, startDate, endDate);
 
     const result = await db.execute<{ total: number }>(sql`
       SELECT COALESCE(SUM(revenue), 0) as total

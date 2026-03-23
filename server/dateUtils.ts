@@ -135,6 +135,77 @@ export function getEasternDateRange(
   return { start: startUTC, end: endUTC };
 }
 
+export function getEasternBusinessDateStrings(
+  dateRange: DateRange,
+  inputStartDate?: Date,
+  inputEndDate?: Date
+): { startStr: string; endStr: string } {
+  const now = new Date();
+  const todayET = currentBusinessDayET(now);
+
+  let startStr: string;
+  let endStr: string;
+
+  if (inputStartDate && inputEndDate && dateRange === 'custom') {
+    startStr = formatInTimeZone(inputStartDate, EASTERN_TIMEZONE, 'yyyy-MM-dd');
+    endStr   = formatInTimeZone(inputEndDate,   EASTERN_TIMEZONE, 'yyyy-MM-dd');
+  } else {
+    switch (dateRange) {
+      case 'today':
+        startStr = todayET;
+        endStr   = todayET;
+        break;
+
+      case 'yesterday': {
+        const [y, m, d] = todayET.split('-').map(Number);
+        const yesterdayET = new Date(y, m - 1, d - 1);
+        startStr = format(yesterdayET, 'yyyy-MM-dd');
+        endStr   = startStr;
+        break;
+      }
+
+      case 'last7days': {
+        const [y, m, d] = todayET.split('-').map(Number);
+        const sixDaysAgo = new Date(y, m - 1, d - 6);
+        startStr = format(sixDaysAgo, 'yyyy-MM-dd');
+        endStr   = todayET;
+        break;
+      }
+
+      case 'last30days': {
+        const [y, m, d] = todayET.split('-').map(Number);
+        const twentyNineDaysAgo = new Date(y, m - 1, d - 29);
+        startStr = format(twentyNineDaysAgo, 'yyyy-MM-dd');
+        endStr   = todayET;
+        break;
+      }
+
+      case 'thisMonth': {
+        const [year, month] = todayET.split('-');
+        startStr = `${year}-${month}-01`;
+        endStr   = todayET;
+        break;
+      }
+
+      case 'lastMonth': {
+        const [y, m] = todayET.split('-').map(Number);
+        const thisMonthStart = new Date(y, m - 1, 1);
+        const lastMonthStart = subMonths(thisMonthStart, 1);
+        const lastMonthEnd   = endOfMonth(lastMonthStart);
+        startStr = format(lastMonthStart, 'yyyy-MM-dd');
+        endStr   = format(lastMonthEnd,   'yyyy-MM-dd');
+        break;
+      }
+
+      default:
+        startStr = todayET;
+        endStr   = todayET;
+    }
+  }
+
+  return { startStr, endStr };
+}
+
 /** Format a date for display in Eastern Time */
 export function formatEasternDate(date: Date): string {
   return formatInTimeZone(date, EASTERN_TIMEZONE, 'yyyy-MM-dd');
