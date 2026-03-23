@@ -348,19 +348,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             )}
 
             <div className="flex justify-between items-center pt-3 border-t border-border">
-              <div className="flex items-center gap-1.5">
-                <span className="text-card-foreground font-semibold">True Revenue</span>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-[280px] text-xs">
-                      <p className="font-semibold">True Revenue = Gross Payments - Event Deposit Redemptions - Refunds/Returns - GC Redemptions</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
+              <span className="text-card-foreground font-semibold">True Revenue</span>
               <span className="text-card-foreground font-semibold">{formatCurrency(trueRevenue)}</span>
             </div>
 
