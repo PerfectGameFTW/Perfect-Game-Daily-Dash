@@ -121,7 +121,7 @@ export default function GiftCardActivity({
     <div className="bg-card backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl overflow-hidden">
       <div className="text-center">
         <h2 className="text-xl font-bold text-card-foreground">
-          Total Gift Card Activity
+          True Gift Card Activity
         </h2>
       </div>
       
@@ -174,8 +174,8 @@ export default function GiftCardActivity({
                   <DollarSign className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-muted-foreground">Avg. Card Value</div>
-                  <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.averageValue || 0)}</div>
+                  <div className="text-sm font-medium text-muted-foreground">Outstanding Value</div>
+                  <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency((data?.soldAmount || 0) - (data?.redeemedAmount || 0))}</div>
                 </div>
               </div>
             </div>
