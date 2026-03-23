@@ -48,5 +48,3 @@ timeoutMs = 20000
 [userenv]
 
 [userenv.shared]
-INTERCARD_HOST = "https://development.intercardinc.com"
-INTERCARD_MAC_ID = "PROXYTRIPERF"

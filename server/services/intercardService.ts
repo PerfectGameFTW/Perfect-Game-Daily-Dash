@@ -70,17 +70,22 @@ export class IntercardService {
     }
   }
 
-  async fetchRevenueReport(startDate: Date, endDate: Date): Promise<IntercardRevenueRow[]> {
+  async fetchRevenueReportByDateStr(startDateStr: string, endDateStr?: string): Promise<IntercardRevenueRow[]> {
+    const dateForOffset = new Date(startDateStr + 'T12:00:00');
+    const utcOffset = String(getEasternUtcOffset(dateForOffset));
+    return this.fetchRevenueReportRaw(startDateStr, endDateStr || startDateStr, utcOffset);
+  }
+
+  private async fetchRevenueReportRaw(startDateStr: string, endDateStr: string, utcOffset: string): Promise<IntercardRevenueRow[]> {
     if (!INTERCARD_MAC_ID) {
       console.warn('[Intercard] INTERCARD_MAC_ID not set — skipping fetch');
       return [];
     }
 
-    const utcOffset = String(getEasternUtcOffset(startDate));
     const params = new URLSearchParams({
       macId: INTERCARD_MAC_ID,
-      startdate: formatDateET(startDate),
-      enddate: formatDateET(endDate),
+      startdate: startDateStr,
+      enddate: endDateStr,
       utcOffset,
       isBusinessDay: 'true',
     });
@@ -132,10 +137,7 @@ export class IntercardService {
   }> {
     const result = { fetched: 0, upserted: 0, failed: 0 };
 
-    const dayStart = new Date(dateStr + 'T00:00:00');
-    const dayEnd = new Date(dateStr + 'T23:59:59');
-
-    const rows = await this.fetchRevenueReport(dayStart, dayEnd);
+    const rows = await this.fetchRevenueReportByDateStr(dateStr);
     result.fetched = rows.length;
 
     if (rows.length === 0) return result;
@@ -198,7 +200,7 @@ export class IntercardService {
 
     if (currentDate < backfillStart) currentDate = new Date(backfillStart);
 
-    console.log(`[Intercard] Starting historical backfill from ${formatDate(currentDate)} to ${formatDate(backfillEnd)}`);
+    console.log(`[Intercard] Starting historical backfill from ${formatDateET(currentDate)} to ${formatDateET(backfillEnd)}`);
 
     if (existingState.length === 0) {
       await db.insert(syncState).values({
