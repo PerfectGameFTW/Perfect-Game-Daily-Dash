@@ -892,7 +892,6 @@ export class SyncService {
             processed++;
           } catch (err) {
             failed++;
-            console.error(`[GiftCardSync] Failed card ${squareCard.id}:`, err);
           }
         }
 
