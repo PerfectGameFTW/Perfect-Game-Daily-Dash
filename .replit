@@ -48,3 +48,6 @@ timeoutMs = 20000
 [userenv]
 
 [userenv.shared]
+INTERCARD_HOST = "https://perfectgame.icardinc.net"
+INTERCARD_MAC_ID = "TRPEFEGME123"
+INTERCARD_CORP_ID = "6844"
