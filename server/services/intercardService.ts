@@ -3,7 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { intercardRevenue, syncState, type DateRange } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
 
-const INTERCARD_HOST = process.env.INTERCARD_HOST || 'https://development.intercardinc.com';
+const INTERCARD_HOST = (process.env.INTERCARD_HOST || 'https://development.intercardinc.com').replace(/\/+$/, '');
 const INTERCARD_MAC_ID = process.env.INTERCARD_MAC_ID || '';
 const INTERCARD_CORP_ID = process.env.INTERCARD_CORP_ID || '';
 const INTERCARD_BASE_PATH = '/WS_RevenueExtract_REST/Revenue';
