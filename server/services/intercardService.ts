@@ -44,6 +44,19 @@ function getEasternUtcOffset(d: Date): number {
   return Math.round((eastern.getTime() - utc.getTime()) / 60000);
 }
 
+function addOneDayToDateStr(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const next = new Date(y, m - 1, d + 1);
+  const ny = next.getFullYear();
+  const nm = String(next.getMonth() + 1).padStart(2, '0');
+  const nd = String(next.getDate()).padStart(2, '0');
+  return `${ny}-${nm}-${nd}`;
+}
+
+function todayDateStrET(): string {
+  return formatDateET(new Date());
+}
+
 function isIntercardConfigured(): boolean {
   return Boolean(INTERCARD_MAC_ID && INTERCARD_CORP_ID && INTERCARD_HOST);
 }
@@ -224,16 +237,16 @@ export class IntercardService {
         ? rawCheckpoint as BackfillCheckpoint
         : null;
 
-    const backfillStart = new Date('2025-01-01');
-    const backfillEnd = new Date();
+    const BACKFILL_START = '2025-01-01';
+    const backfillEndStr = todayDateStrET();
 
-    let currentDate = checkpoint?.lastDate
-      ? new Date(checkpoint.lastDate)
-      : new Date(backfillStart);
+    let currentDateStr = checkpoint?.lastDate
+      ? addOneDayToDateStr(checkpoint.lastDate)
+      : BACKFILL_START;
 
-    if (currentDate < backfillStart) currentDate = new Date(backfillStart);
+    if (currentDateStr < BACKFILL_START) currentDateStr = BACKFILL_START;
 
-    console.log(`[Intercard] Starting historical backfill from ${formatDateET(currentDate)} to ${formatDateET(backfillEnd)}`);
+    console.log(`[Intercard] Starting historical backfill from ${currentDateStr} to ${backfillEndStr}`);
 
     if (existingState.length === 0) {
       await db.insert(syncState).values({
@@ -254,11 +267,9 @@ export class IntercardService {
     let failedDays = checkpoint?.failedDays || 0;
     let consecutiveFailures = 0;
 
-    while (currentDate <= backfillEnd) {
-      const dateStr = formatDateET(currentDate);
-
+    while (currentDateStr <= backfillEndStr) {
       try {
-        const dayResult = await this.syncSingleDay(dateStr);
+        const dayResult = await this.syncSingleDay(currentDateStr);
 
         if (dayResult.ok) {
           daysProcessed++;
@@ -269,17 +280,17 @@ export class IntercardService {
         }
 
         if (daysProcessed % 30 === 0 && daysProcessed > 0) {
-          console.log(`[Intercard] Backfill progress: ${daysProcessed} days synced, ${failedDays} failed, date=${dateStr}`);
+          console.log(`[Intercard] Backfill progress: ${daysProcessed} days synced, ${failedDays} failed, date=${currentDateStr}`);
         }
 
         if (consecutiveFailures >= 10) {
-          console.error(`[Intercard] Backfill paused: ${consecutiveFailures} consecutive failures at ${dateStr}`);
+          console.error(`[Intercard] Backfill paused: ${consecutiveFailures} consecutive failures at ${currentDateStr}`);
           await db.update(syncState)
             .set({
               status: 'paused',
               lastSyncedAt: new Date(),
               processedCount: daysProcessed,
-              lastCheckpoint: { lastDate: dateStr, daysProcessed, failedDays } satisfies BackfillCheckpoint,
+              lastCheckpoint: { lastDate: currentDateStr, daysProcessed, failedDays } satisfies BackfillCheckpoint,
               errorMessage: `Paused after ${consecutiveFailures} consecutive failures`,
             })
             .where(eq(syncState.syncType, syncType));
@@ -290,15 +301,15 @@ export class IntercardService {
           .set({
             lastSyncedAt: new Date(),
             processedCount: daysProcessed,
-            lastCheckpoint: { lastDate: dateStr, daysProcessed, failedDays } satisfies BackfillCheckpoint,
+            lastCheckpoint: { lastDate: currentDateStr, daysProcessed, failedDays } satisfies BackfillCheckpoint,
           })
           .where(eq(syncState.syncType, syncType));
       } catch (err) {
-        console.error(`[Intercard] Backfill error for ${dateStr}:`, err);
+        console.error(`[Intercard] Backfill error for ${currentDateStr}:`, err);
         failedDays++;
       }
 
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDateStr = addOneDayToDateStr(currentDateStr);
 
       await new Promise(resolve => setTimeout(resolve, 200));
     }
