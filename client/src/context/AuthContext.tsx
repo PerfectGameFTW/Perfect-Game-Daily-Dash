@@ -72,8 +72,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (response.ok && responseData.success && responseData.user) {
         setUser(responseData.user);
         setIsAuthenticated(true);
-        await checkAuth();
-        await new Promise(resolve => setTimeout(resolve, 100));
         return true;
       } else {
         return false;

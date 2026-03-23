@@ -50,14 +50,7 @@ export function createAuthRouter(): Router {
         return res.json(null);
       }
       
-      console.log('GET /api/auth/me - Session found', {
-        cookies: req.headers.cookie,
-        sessionId: req.session.id,
-        sessionKeys: Object.keys(req.session),
-        userId: req.session.userId,
-        username: req.session.username,
-        role: req.session.role
-      });
+      console.log('GET /api/auth/me - Session found, userId:', req.session.userId);
       
       if (!req.session.userId) {
         console.log('GET /api/auth/me - No userId in session');
@@ -120,13 +113,7 @@ export function createAuthRouter(): Router {
       req.session.username = user.username;
       req.session.role = user.role;
       
-      console.log(`User authenticated successfully: ${username} (ID: ${user.id}, Role: ${user.role})`, {
-        sessionData: {
-          userId: req.session.userId,
-          username: req.session.username,
-          role: req.session.role
-        }
-      });
+      console.log(`User authenticated successfully: ${username} (ID: ${user.id}, Role: ${user.role})`);
       
       // Save session explicitly to ensure it's stored before response
       await new Promise<void>((resolve, reject) => {

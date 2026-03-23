@@ -110,19 +110,6 @@ export default function Login() {
             {isLoggingIn ? 'Signing in...' : 'Sign in'}
           </button>
           
-          <div className="mt-4 text-center text-sm">
-            <span className="text-gray-600">Don't have an account? </span>
-            <a 
-              href="/register" 
-              className="font-medium text-blue-600 hover:text-blue-500"
-              onClick={(e) => {
-                e.preventDefault();
-                navigate('/register');
-              }}
-            >
-              Register
-            </a>
-          </div>
         </form>
       </div>
     </div>
