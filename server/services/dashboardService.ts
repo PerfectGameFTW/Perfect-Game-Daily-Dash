@@ -217,6 +217,7 @@ export class DashboardService {
     };
     depositClearings: number;
     processingFees: ProcessingFeeBreakdown;
+    intercardRevenue: number;
     totalTransactions: number;
   }> {
     // Get payments for the specified date range
