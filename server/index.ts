@@ -22,6 +22,7 @@ process.on('uncaughtException', (err) => {
 validateEnv();
 
 const app = express();
+app.set('trust proxy', 1);
 app.disable('etag');
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
