@@ -362,7 +362,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs">
-                      Gross Payments minus Event Deposit Redemptions minus Refunds + Returns minus Gift Card Redemptions.
+                      Gross Payments minus Event Deposit Redemptions minus Refunds + Returns minus Gift Card Redemptions + Intercard Revenue.
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

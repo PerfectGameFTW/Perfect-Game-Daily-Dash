@@ -47,7 +47,8 @@ export class DashboardService {
 
     // Get current period data with full revenue breakdown
     const revenueBreakdown = await paymentService.getRevenueBreakdown(dateRange, startDate, endDate);
-    const totalRevenue = revenueBreakdown.trueRevenue;
+    const intercardCurrent = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
+    const totalRevenue = revenueBreakdown.trueRevenue + intercardCurrent;
     const totalOrders = await orderService.getTotalOrders(dateRange, startDate, endDate);
     const giftCardSales = await giftCardService.getGiftCardSales(dateRange, startDate, endDate);
     
@@ -63,7 +64,9 @@ export class DashboardService {
 }`);
     
     // Get previous period data for comparison (also uses true revenue)
-    const previousRevenue = await paymentService.getTotalRevenue('custom', previousStart, previousEnd);
+    const previousSquareRevenue = await paymentService.getTotalRevenue('custom', previousStart, previousEnd);
+    const previousIntercardRevenue = await intercardService.getRevenueForDateRange('custom', previousStart, previousEnd);
+    const previousRevenue = previousSquareRevenue + previousIntercardRevenue;
     const previousOrders = await orderService.getTotalOrders('custom', previousStart, previousEnd);
     const previousGiftCardSales = await giftCardService.getGiftCardSales('custom', previousStart, previousEnd);
     
