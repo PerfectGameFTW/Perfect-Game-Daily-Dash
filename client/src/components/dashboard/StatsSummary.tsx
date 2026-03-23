@@ -55,13 +55,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   
   if (isLoading || isDetailedLoading) {
     return (
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Skeleton className="h-36 w-full rounded-xl" />
         <Skeleton className="h-36 w-full rounded-xl" />
         <Skeleton className="h-36 w-full rounded-xl" />
-        <Skeleton className="h-36 w-full rounded-xl md:col-span-2" />
         <Skeleton className="h-36 w-full rounded-xl" />
-        <Skeleton className="h-80 w-full rounded-xl md:col-span-3" />
+        <Skeleton className="h-80 w-full rounded-xl md:col-span-2 lg:col-span-4" />
       </div>
     );
   }
@@ -99,7 +98,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   return (
     <div className="mt-4 space-y-6">
       {/* Revenue Highlights - Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* True Revenue Card */}
         <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
@@ -237,11 +236,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </span>
           </div>
         </div>
-        
-      </div>
 
-      {/* Web Res Redemptions Card */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Web Res Redemptions Card */}
         <div className="bg-card/80 backdrop-blur-sm p-6 rounded-xl border border-border shadow-xl transition-all hover:border-primary/20 hover:shadow-primary/5">
           <div className="flex justify-between">
             <div>
