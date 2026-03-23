@@ -80,7 +80,7 @@ export class IntercardService {
       const response = await fetch(url, {
         headers: {
           'Accept': 'application/json',
-          'Authorization': INTERCARD_AUTH_KEY,
+          'Authorization': `Bearer ${INTERCARD_AUTH_KEY}`,
         },
       });
       if (!response.ok) {
