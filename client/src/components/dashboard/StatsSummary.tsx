@@ -161,15 +161,8 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                     <TooltipTrigger asChild>
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">Net Revenue = True Revenue − Tips − Service Charges − Auto Gratuity − Taxes − Discounts & Comps</p>
-                      <p className="text-muted-foreground/80 text-[10px]">True Revenue already excludes event deposit redemptions, refunds, returns, and gift card redemptions</p>
-                      {tips > 0 && <p>Tips: −{formatCurrency(tips)}</p>}
-                      {serviceCharges > 0 && <p>Service Charges: −{formatCurrency(serviceCharges)}</p>}
-                      {autoGratuity > 0 && <p>Auto Gratuity: −{formatCurrency(autoGratuity)}</p>}
-                      {taxes > 0 && <p>Taxes: −{formatCurrency(taxes)}</p>}
-                      {discounts > 0 && <p>Discounts & Comps: −{formatCurrency(discounts)}</p>}
-                      {discounts === 0 && depositClearings === 0 && tips === 0 && serviceCharges === 0 && autoGratuity === 0 && taxes === 0 && <p>No deductions in this period.</p>}
+                    <TooltipContent side="bottom" className="max-w-[280px] text-xs">
+                      <p className="font-semibold">Net Revenue = True Revenue - Tips - Service Charges - Auto Gratuity - Taxes - Discounts & Comps</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
