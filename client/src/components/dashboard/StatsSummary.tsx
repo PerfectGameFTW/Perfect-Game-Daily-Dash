@@ -169,13 +169,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">True Revenue = Gross Payments − Event Deposit Redemptions − Refunds + Returns − GC Redemptions + Intercard Revenue</p>
-                      {grossPayments > 0 && <p>Gross Payments: {formatCurrency(grossPayments)}</p>}
+                      <p className="font-semibold mb-1">True Revenue = Gross Payments − Event Deposit Redemptions − Refunds + Returns − GC Redemptions</p>
+                      {grossPayments > 0 && <p>Gross Payments: {formatCurrency(grossPayments)}{intercardRev > 0 ? ` (includes Intercard: ${formatCurrency(intercardRev)})` : ''}</p>}
                       {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
                       {refundsAndReturns > 0 && <p>Refunds + Returns: −{formatCurrency(refundsAndReturns)}</p>}
                       {giftCardRedemptionsAmount > 0 && <p>GC Redemptions: −{formatCurrency(giftCardRedemptionsAmount)}</p>}
-                      {intercardRev > 0 && <p>Intercard Revenue: +{formatCurrency(intercardRev)} (Cash: {formatCurrency(intercardCash)}, Credit: {formatCurrency(intercardCredit)})</p>}
-                      <p className="text-muted-foreground/80 text-[10px] pt-1">Gift card redemptions are subtracted to avoid double-counting deposits and gift card sales.</p>
+                      <p className="text-muted-foreground/80 text-[10px] pt-1">Gross Payments includes Square payments and Intercard revenue. Gift card redemptions are subtracted to avoid double-counting.</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -369,7 +368,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs">
-                      Gross Payments minus Event Deposit Redemptions minus Refunds + Returns minus Gift Card Redemptions + Intercard Revenue.
+                      Gross Payments (including Intercard) minus Event Deposit Redemptions minus Refunds + Returns minus Gift Card Redemptions.
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
