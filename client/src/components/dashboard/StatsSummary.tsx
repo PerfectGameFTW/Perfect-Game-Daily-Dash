@@ -93,7 +93,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
   const intercardRev = toNum(detailedTransactions?.intercardRevenue);
   const refundsAndReturns = refunds + returns;
-  const trueRevenue = totalRevenue - depositClearings + intercardRev;
+  const trueRevenue = totalRevenue - depositClearings;
   const calculatedNetRevenue = trueRevenue - discounts - tips - serviceCharges - autoGratuity - taxes;
 
   return (
