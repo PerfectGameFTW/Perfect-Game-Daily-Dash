@@ -81,6 +81,16 @@ Square's cost-plus pricing model charges the full processing fee per transaction
 - **UI**: StatsSummary shows CC Processing Fees section with breakdown and "Net Revenue After Fees"
 - **Timing caveat**: Cost-plus reimbursements may lag 1-2 business days; monthly totals more accurate than daily
 
+## Intercard Revenue Integration (Task #18)
+Intercard is the arcade game card system. Revenue data is fetched from the Intercard Revenue Extract REST API and displayed as a separate line item in the dashboard.
+- **Service**: `server/services/intercardService.ts` — API client with JWT auth, daily sync, historical backfill from Jan 1, 2025
+- **DB table**: `intercard_revenue` — stores per-device daily revenue rows (date, locationId, deviceType, revenue, etc.)
+- **Auth**: JWT token obtained from `/WS_RevenueExtract_REST/api/Tokens/corp/:corpId/GetJwt`, cached for 50 minutes
+- **Env vars**: `INTERCARD_HOST`, `INTERCARD_MAC_ID`, `INTERCARD_CORP_ID`
+- **Scheduler**: syncToday() runs every 60 seconds + nightly; historical backfill runs on startup
+- **Dashboard**: Intercard revenue included in True Revenue KPI, shown as line item below Tripleseat Deposits in StatsSummary
+- **Date handling**: Uses Eastern Time for date formatting and DST-aware UTC offset for API calls
+
 ## API Endpoints
 - `GET /api/summary` — daily summary (revenue, gift card sales, order count)
 - `GET /api/gift-card-summary` — gift card sold/redeemed totals for a date range
@@ -97,6 +107,7 @@ Square's cost-plus pricing model charges the full processing fee per transaction
 - `server/services/giftCardService.ts` — gift card DB queries, summary logic
 - `server/services/enhancedGiftCardFix.ts` — activation amount backfill
 - `server/services/payoutService.ts` — CC processing fee sync from Square Payouts API
+- `server/services/intercardService.ts` — Intercard arcade revenue API client and sync
 - `server/dateUtils.ts` — Eastern Time boundary calculations
 - `shared/schema.ts` — Drizzle ORM schema (single source of truth for types)
 - `client/src/pages/Admin.tsx` — admin panel with user management and sync controls

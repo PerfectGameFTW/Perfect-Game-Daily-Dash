@@ -21,6 +21,7 @@ import { syncService } from './syncService';
 import { backfillGiftCardActivationAmounts } from './enhancedGiftCardFix';
 import { giftCardService } from './giftCardService';
 import { payoutService } from './payoutService';
+import { intercardService } from './intercardService';
 import { broadcast } from '../ws';
 
 let schedulerStarted = false;
@@ -110,6 +111,16 @@ export function startScheduler(): void {
       console.log(`[Scheduler] Payout fees synced: ${result.payoutsProcessed} payouts, ${result.entriesCreated} entries`);
     } catch (err) {
       console.error('[Scheduler] Payout fee sync error:', err);
+    }
+  })();
+
+  // On startup: run Intercard historical backfill if not yet complete (non-blocking)
+  (async () => {
+    try {
+      console.log('[Scheduler] Starting Intercard historical backfill in background...');
+      await intercardService.runHistoricalBackfill();
+    } catch (err) {
+      console.error('[Scheduler] Intercard backfill error:', err);
     }
   })();
 }
@@ -236,6 +247,12 @@ export async function runFrequentSync(): Promise<void> {
     console.error(`${label} Refunds sync failed:`, err);
   }
 
+  try {
+    await intercardService.syncToday();
+  } catch (err) {
+    console.error(`${label} Intercard sync failed:`, err);
+  }
+
   broadcast('data-updated', { syncType: 'frequent' });
 }
 
@@ -338,6 +355,14 @@ export async function runNightlySync(): Promise<void> {
     console.log(`${label} Payout fees: ${r.payoutsProcessed} payouts, ${r.entriesCreated} entries`);
   } catch (err) {
     console.error(`${label} Payout fee sync failed (non-fatal):`, err);
+  }
+
+  try {
+    console.log(`${label} Intercard revenue sync`);
+    await intercardService.syncToday();
+    console.log(`${label} Intercard revenue synced`);
+  } catch (err) {
+    console.error(`${label} Intercard sync failed (non-fatal):`, err);
   }
 
   console.log(`${label} Nightly deep sync complete.`);

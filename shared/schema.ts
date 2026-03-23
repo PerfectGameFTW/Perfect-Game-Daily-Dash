@@ -245,6 +245,30 @@ export const insertPayoutFeeEntrySchema = createInsertSchema(payoutFeeEntries).o
 export type InsertPayoutFeeEntry = z.infer<typeof insertPayoutFeeEntrySchema>;
 export type PayoutFeeEntry = typeof payoutFeeEntries.$inferSelect;
 
+// Intercard revenue records — stores synced revenue data from Intercard API
+export const intercardRevenue = pgTable("intercard_revenue", {
+  id: serial("id").primaryKey(),
+  date: text("date").notNull(),
+  locationId: text("location_id").notNull(),
+  deviceType: text("device_type").notNull(),
+  deviceName: text("device_name").notNull(),
+  cashRevenue: real("cash_revenue").notNull().default(0),
+  creditCardRevenue: real("credit_card_revenue").notNull().default(0),
+  cashRefunds: real("cash_refunds").notNull().default(0),
+  creditRefunds: real("credit_refunds").notNull().default(0),
+  otherPayment: real("other_payment").notNull().default(0),
+  customerCardUse: real("customer_card_use").notNull().default(0),
+  revenue: real("revenue").notNull().default(0),
+  syncedAt: timestamp("synced_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertIntercardRevenueSchema = createInsertSchema(intercardRevenue).omit({
+  id: true,
+});
+
+export type InsertIntercardRevenue = z.infer<typeof insertIntercardRevenueSchema>;
+export type IntercardRevenue = typeof intercardRevenue.$inferSelect;
+
 // Keep the users table for authentication
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -365,5 +389,6 @@ export interface DetailedTransactionBreakdown {
   giftCardRedemptions: number;
   gcRedemptionBreakdown: GcRedemptionBreakdown;
   processingFees: ProcessingFeeBreakdown;
+  intercardRevenue: number;
   totalTransactions: number;
 }

@@ -9,6 +9,7 @@ import { orderService } from './orderService';
 import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
 import { payoutService } from './payoutService';
+import { intercardService } from './intercardService';
 import { 
   type DateRange,
   type DailySummary,
@@ -373,6 +374,13 @@ export class DashboardService {
       console.error('Error fetching processing fees:', err);
     }
 
+    let intercardTotal = 0;
+    try {
+      intercardTotal = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
+    } catch (err) {
+      console.error('Error fetching Intercard revenue:', err);
+    }
+
     return {
       partywirks,
       tripleseat,
@@ -394,6 +402,7 @@ export class DashboardService {
       },
       depositClearings,
       processingFees,
+      intercardRevenue: intercardTotal,
       totalTransactions: payments.length
     };
   }

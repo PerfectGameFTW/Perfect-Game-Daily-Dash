@@ -91,8 +91,9 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const laserTagDepositRedemptions = toNum(gcBreakdown?.laserTagDepositRedemptions);
   const pureGcRedemptions = toNum(gcBreakdown?.giftCardRedemptions);
 
+  const intercardRev = toNum(detailedTransactions?.intercardRevenue);
   const refundsAndReturns = refunds + returns;
-  const trueRevenue = totalRevenue - depositClearings;
+  const trueRevenue = totalRevenue - depositClearings + intercardRev;
   const calculatedNetRevenue = trueRevenue - discounts - tips - serviceCharges - autoGratuity - taxes;
 
   return (
@@ -111,11 +112,12 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
-                      <p className="font-semibold mb-1">True Revenue = Gross Payments − Event Deposit Redemptions − Refunds + Returns − GC Redemptions</p>
+                      <p className="font-semibold mb-1">True Revenue = Gross Payments − Event Deposit Redemptions − Refunds + Returns − GC Redemptions + Intercard Revenue</p>
                       {grossPayments > 0 && <p>Gross Payments: {formatCurrency(grossPayments)}</p>}
                       {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
                       {refundsAndReturns > 0 && <p>Refunds + Returns: −{formatCurrency(refundsAndReturns)}</p>}
                       {giftCardRedemptionsAmount > 0 && <p>GC Redemptions: −{formatCurrency(giftCardRedemptionsAmount)}</p>}
+                      {intercardRev > 0 && <p>Intercard Revenue: +{formatCurrency(intercardRev)}</p>}
                       <p className="text-muted-foreground/80 text-[10px] pt-1">Gift card redemptions are subtracted to avoid double-counting deposits and gift card sales.</p>
                     </TooltipContent>
                   </Tooltip>
@@ -478,6 +480,11 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Tripleseat Deposits</span>
               <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.tripleseat || 0)}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Intercard Revenue</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.intercardRevenue || 0)}</span>
             </div>
           </div>
         </div>
