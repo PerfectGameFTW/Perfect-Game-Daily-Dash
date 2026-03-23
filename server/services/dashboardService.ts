@@ -19,8 +19,7 @@ import {
   type ProcessingFeeBreakdown,
   refunds,
   transactions,
-  orders as ordersTable,
-  orderLineItems
+  orders as ordersTable
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
 import { db } from '../db';
@@ -389,15 +388,7 @@ export class DashboardService {
 
     let squareIntercardKioskCash = 0;
     try {
-      const kioskCashRows = await db.execute<{ total: number }>(sql`
-        SELECT COALESCE(SUM(li.total_money), 0) as total
-        FROM ${orderLineItems} li
-        JOIN ${ordersTable} o ON o.id = li.order_id
-        WHERE LOWER(li.name) = 'intercard kiosk cash'
-          AND o.status = 'COMPLETED'
-          AND COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
-      `);
-      squareIntercardKioskCash = Number(kioskCashRows.rows[0]?.total || 0);
+      squareIntercardKioskCash = await paymentService.getIntercardKioskCashTotal(dateRange, startDate, endDate);
     } catch (err) {
       console.error('Error fetching Square Intercard Kiosk Cash:', err);
     }
