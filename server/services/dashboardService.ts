@@ -19,7 +19,8 @@ import {
   type ProcessingFeeBreakdown,
   refunds,
   transactions,
-  orders as ordersTable
+  orders as ordersTable,
+  orderLineItems
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
 import { db } from '../db';
@@ -45,10 +46,9 @@ export class DashboardService {
   endUTC: '${endDate?.toISOString() || 'undefined'}'
 }`);
 
-    // Get current period data with full revenue breakdown
     const revenueBreakdown = await paymentService.getRevenueBreakdown(dateRange, startDate, endDate);
     const intercardCurrent = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
-    const totalRevenue = revenueBreakdown.trueRevenue + intercardCurrent;
+    const totalRevenue = revenueBreakdown.trueRevenue + intercardCurrent.total;
     const totalOrders = await orderService.getTotalOrders(dateRange, startDate, endDate);
     const giftCardSales = await giftCardService.getGiftCardSales(dateRange, startDate, endDate);
     
@@ -63,10 +63,9 @@ export class DashboardService {
   previousEndUTC: '${previousEnd.toISOString()}'
 }`);
     
-    // Get previous period data for comparison (also uses true revenue)
     const previousSquareRevenue = await paymentService.getTotalRevenue('custom', previousStart, previousEnd);
-    const previousIntercardRevenue = await intercardService.getRevenueForDateRange('custom', previousStart, previousEnd);
-    const previousRevenue = previousSquareRevenue + previousIntercardRevenue;
+    const previousIntercard = await intercardService.getRevenueForDateRange('custom', previousStart, previousEnd);
+    const previousRevenue = previousSquareRevenue + previousIntercard.total;
     const previousOrders = await orderService.getTotalOrders('custom', previousStart, previousEnd);
     const previousGiftCardSales = await giftCardService.getGiftCardSales('custom', previousStart, previousEnd);
     
@@ -221,6 +220,9 @@ export class DashboardService {
     depositClearings: number;
     processingFees: ProcessingFeeBreakdown;
     intercardRevenue: number;
+    intercardCashRevenue: number;
+    intercardCreditRevenue: number;
+    squareIntercardKioskCash: number;
     totalTransactions: number;
   }> {
     // Get payments for the specified date range
@@ -378,11 +380,26 @@ export class DashboardService {
       console.error('Error fetching processing fees:', err);
     }
 
-    let intercardTotal = 0;
+    let intercardBreakdown = { cash: 0, credit: 0, total: 0 };
     try {
-      intercardTotal = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
+      intercardBreakdown = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
     } catch (err) {
       console.error('Error fetching Intercard revenue:', err);
+    }
+
+    let squareIntercardKioskCash = 0;
+    try {
+      const kioskCashRows = await db.execute<{ total: number }>(sql`
+        SELECT COALESCE(SUM(li.total_money), 0) as total
+        FROM ${orderLineItems} li
+        JOIN ${ordersTable} o ON o.id = li.order_id
+        WHERE LOWER(li.name) = 'intercard kiosk cash'
+          AND o.status = 'COMPLETED'
+          AND COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
+      `);
+      squareIntercardKioskCash = Number(kioskCashRows.rows[0]?.total || 0);
+    } catch (err) {
+      console.error('Error fetching Square Intercard Kiosk Cash:', err);
     }
 
     return {
@@ -406,7 +423,10 @@ export class DashboardService {
       },
       depositClearings,
       processingFees,
-      intercardRevenue: intercardTotal,
+      intercardRevenue: intercardBreakdown.total,
+      intercardCashRevenue: intercardBreakdown.cash,
+      intercardCreditRevenue: intercardBreakdown.credit,
+      squareIntercardKioskCash,
       totalTransactions: payments.length
     };
   }

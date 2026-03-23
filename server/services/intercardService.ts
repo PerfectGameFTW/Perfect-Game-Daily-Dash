@@ -349,16 +349,23 @@ export class IntercardService {
     dateRange: DateRange,
     startDate?: Date,
     endDate?: Date,
-  ): Promise<number> {
+  ): Promise<{ cash: number; credit: number; total: number }> {
     const { startStr, endStr } = getEasternBusinessDateStrings(dateRange, startDate, endDate);
 
-    const result = await db.execute<{ total: number }>(sql`
-      SELECT COALESCE(SUM(revenue), 0) as total
+    const result = await db.execute<{ total: number; cash: number; credit: number }>(sql`
+      SELECT
+        COALESCE(SUM(revenue), 0) as total,
+        COALESCE(SUM(cash_revenue), 0) as cash,
+        COALESCE(SUM(credit_card_revenue), 0) as credit
       FROM intercard_revenue
       WHERE date >= ${startStr} AND date <= ${endStr}
     `);
 
-    return Number(result.rows[0]?.total || 0);
+    return {
+      cash: Number(result.rows[0]?.cash || 0),
+      credit: Number(result.rows[0]?.credit || 0),
+      total: Number(result.rows[0]?.total || 0),
+    };
   }
 }
 

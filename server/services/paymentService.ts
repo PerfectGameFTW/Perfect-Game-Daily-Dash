@@ -11,6 +11,7 @@ import {
   transactions,
   refunds,
   orders as ordersTable,
+  orderLineItems,
   type Transaction, 
   type InsertTransaction,
   type DateRange,
@@ -283,10 +284,22 @@ export class PaymentService {
         AND COALESCE(${ordersTable.closedAt}, ${ordersTable.createdAt}) BETWEEN ${start} AND ${end}
     `);
 
-    const grossPayments = result[0]?.totalRevenue || 0;
+    const rawGrossPayments = result[0]?.totalRevenue || 0;
     const refundsAmount = Number(refundResult.rows[0]?.total || 0);
     const returnsAmount = Number(returnResult.rows[0]?.total || 0) - Number(returnResult.rows[0]?.return_tax || 0);
     const gcRedemptions = Number(redemptionResult.rows[0]?.total || 0);
+
+    const kioskCashResult = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM(li.total_money), 0) as total
+      FROM ${orderLineItems} li
+      JOIN ${ordersTable} o ON o.id = li.order_id
+      WHERE LOWER(li.name) = 'intercard kiosk cash'
+        AND o.status = 'COMPLETED'
+        AND COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
+    `);
+    const kioskCashExclusion = Number(kioskCashResult.rows[0]?.total || 0);
+
+    const grossPayments = rawGrossPayments - kioskCashExclusion;
     
     return {
       grossPayments,

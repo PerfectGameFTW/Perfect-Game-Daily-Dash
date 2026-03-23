@@ -390,5 +390,8 @@ export interface DetailedTransactionBreakdown {
   gcRedemptionBreakdown: GcRedemptionBreakdown;
   processingFees: ProcessingFeeBreakdown;
   intercardRevenue: number;
+  intercardCashRevenue: number;
+  intercardCreditRevenue: number;
+  squareIntercardKioskCash: number;
   totalTransactions: number;
 }

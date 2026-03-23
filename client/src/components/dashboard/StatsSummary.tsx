@@ -18,7 +18,9 @@ import {
   Percent,
   Award,
   Wallet,
-  Info
+  Info,
+  Check,
+  X
 } from "lucide-react";
 import {
   Tooltip,
@@ -92,6 +94,10 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const pureGcRedemptions = toNum(gcBreakdown?.giftCardRedemptions);
 
   const intercardRev = toNum(detailedTransactions?.intercardRevenue);
+  const intercardCash = toNum(detailedTransactions?.intercardCashRevenue);
+  const intercardCredit = toNum(detailedTransactions?.intercardCreditRevenue);
+  const squareKioskCash = toNum(detailedTransactions?.squareIntercardKioskCash);
+  const kioskCashMatches = Math.abs(squareKioskCash - intercardCash) < 0.01;
   const refundsAndReturns = refunds + returns;
   const trueRevenue = totalRevenue - depositClearings;
   const calculatedNetRevenue = trueRevenue - discounts - tips - serviceCharges - autoGratuity - taxes;
@@ -167,7 +173,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                       {depositClearings > 0 && <p>Event Deposit Redemptions: −{formatCurrency(depositClearings)}</p>}
                       {refundsAndReturns > 0 && <p>Refunds + Returns: −{formatCurrency(refundsAndReturns)}</p>}
                       {giftCardRedemptionsAmount > 0 && <p>GC Redemptions: −{formatCurrency(giftCardRedemptionsAmount)}</p>}
-                      {intercardRev > 0 && <p>Intercard Revenue: +{formatCurrency(intercardRev)}</p>}
+                      {intercardRev > 0 && <p>Intercard Revenue: +{formatCurrency(intercardRev)} (Cash: {formatCurrency(intercardCash)}, Credit: {formatCurrency(intercardCredit)})</p>}
                       <p className="text-muted-foreground/80 text-[10px] pt-1">Gift card redemptions are subtracted to avoid double-counting deposits and gift card sales.</p>
                     </TooltipContent>
                   </Tooltip>
@@ -483,8 +489,34 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
             </div>
 
             <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Intercard Revenue</span>
-              <span className="text-card-foreground font-medium">{formatCurrency(detailedTransactions?.intercardRevenue || 0)}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">Intercard Cash Revenue</span>
+                {(intercardCash > 0 || squareKioskCash > 0) && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        {kioskCashMatches ? (
+                          <Check className="h-3.5 w-3.5 text-green-400 shrink-0" />
+                        ) : (
+                          <X className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                        )}
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-[280px] text-xs space-y-1">
+                        <p className="font-semibold mb-1">{kioskCashMatches ? "Amounts match" : "Amounts do not match"}</p>
+                        <p>Square Kiosk Cash: {formatCurrency(squareKioskCash)}</p>
+                        <p>Intercard API Cash: {formatCurrency(intercardCash)}</p>
+                        <p className="text-muted-foreground/80 text-[10px] pt-1">Square "Intercard Kiosk Cash" items are excluded from gross payments to prevent double-counting.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </div>
+              <span className="text-card-foreground font-medium">{formatCurrency(intercardCash)}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Intercard Credit Card Revenue</span>
+              <span className="text-card-foreground font-medium">{formatCurrency(intercardCredit)}</span>
             </div>
           </div>
         </div>

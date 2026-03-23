@@ -124,6 +124,9 @@ export const fetchDetailedTransactions = async (
       gcRedemptionBreakdown: parseGcBreakdown(d.gcRedemptionBreakdown),
       processingFees: parseFees(d.processingFees),
       intercardRevenue: toFloat(d.intercardRevenue),
+      intercardCashRevenue: toFloat(d.intercardCashRevenue),
+      intercardCreditRevenue: toFloat(d.intercardCreditRevenue),
+      squareIntercardKioskCash: toFloat(d.squareIntercardKioskCash),
       totalTransactions: toInt(d.totalTransactions)
     });
 
