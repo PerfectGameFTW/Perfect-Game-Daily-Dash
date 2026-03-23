@@ -6,6 +6,7 @@ import { getEasternBusinessDateStrings } from '../dateUtils';
 const INTERCARD_HOST = (process.env.INTERCARD_HOST || '').replace(/\/+$/, '');
 const INTERCARD_MAC_ID = process.env.INTERCARD_MAC_ID || '';
 const INTERCARD_CORP_ID = process.env.INTERCARD_CORP_ID || '';
+const INTERCARD_AUTH_KEY = process.env.INTERCARD_AUTH_KEY || '';
 const INTERCARD_BASE_PATH = '/WS_RevenueExtract_REST/Revenue';
 const INTERCARD_TOKEN_PATH = '/WS_RevenueExtract_REST/api/Tokens/corp';
 
@@ -66,7 +67,7 @@ export class IntercardService {
   private tokenExpiresAt: number = 0;
 
   private async getAuthToken(): Promise<string | null> {
-    if (!INTERCARD_CORP_ID) {
+    if (!INTERCARD_CORP_ID || !INTERCARD_AUTH_KEY) {
       return null;
     }
 
@@ -77,7 +78,10 @@ export class IntercardService {
     const url = `${INTERCARD_HOST}${INTERCARD_TOKEN_PATH}/${INTERCARD_CORP_ID}/GetJwt`;
     try {
       const response = await fetch(url, {
-        headers: { 'Accept': 'application/json' },
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': INTERCARD_AUTH_KEY,
+        },
       });
       if (!response.ok) {
         console.error(`[Intercard] Auth token error ${response.status}: ${await response.text()}`);
