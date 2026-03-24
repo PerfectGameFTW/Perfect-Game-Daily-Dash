@@ -365,6 +365,10 @@ export class DashboardService {
           }
 
           pureGcRedemptions = Math.max(0, giftCardRedemptionsTotal - bowlingRedemptions - laserTagRedemptions);
+          const classifiedSum = bowlingRedemptions + laserTagRedemptions + pureGcRedemptions;
+          if (Math.abs(classifiedSum - giftCardRedemptionsTotal) > 0.01) {
+            console.warn(`[DashboardService] GC redemption reconciliation mismatch: DB total=$${giftCardRedemptionsTotal}, classified sum=$${classifiedSum} (bowling=$${bowlingRedemptions}, laserTag=$${laserTagRedemptions}, pureGC=$${pureGcRedemptions})`);
+          }
         }
       } catch (error) {
         console.error('[DashboardService] Error fetching REDEEM activities, falling back to total:', error);
