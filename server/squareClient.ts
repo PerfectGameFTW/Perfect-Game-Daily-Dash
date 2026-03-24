@@ -972,6 +972,87 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
   return results;
 }
 
+export async function fetchGiftCardRedeemActivities(
+  beginTime: string,
+  endTime: string
+): Promise<Array<{
+  giftCardId: string;
+  amountDollars: number;
+  createdAt: string;
+}>> {
+  const results: Array<{ giftCardId: string; amountDollars: number; createdAt: string }> = [];
+
+  if (!process.env.SQUARE_LOCATION_ID) {
+    console.error('[RedeemActivities] Square location ID is not configured');
+    return results;
+  }
+
+  let pageCount = 0;
+  const MAX_PAGES = 100;
+
+  let activitiesPage = await squareClient.giftCards.activities.list({
+    type: 'REDEEM',
+    locationId: process.env.SQUARE_LOCATION_ID,
+    beginTime,
+    endTime,
+    limit: 50,
+    sortOrder: 'DESC',
+  });
+
+  while (pageCount < MAX_PAGES) {
+    pageCount++;
+    const activities = activitiesPage.data ?? [];
+
+    for (const activity of activities) {
+      const giftCardId = activity.giftCardId;
+      if (!giftCardId) continue;
+      const amountCents = activity.redeemActivityDetails?.amountMoney?.amount;
+      if (amountCents == null) continue;
+      results.push({
+        giftCardId,
+        amountDollars: Math.abs(Number(amountCents)) / 100,
+        createdAt: activity.createdAt ?? '',
+      });
+    }
+
+    if (!activitiesPage.hasNextPage() || activities.length === 0) break;
+    try {
+      activitiesPage = await activitiesPage.getNextPage();
+    } catch (error) {
+      console.error(`[RedeemActivities] Error on page ${pageCount}:`, error);
+      break;
+    }
+  }
+
+  console.log(`[RedeemActivities] Found ${results.length} REDEEM events between ${beginTime} and ${endTime}`);
+  return results;
+}
+
+export async function fetchGiftCardActivateActivity(
+  giftCardId: string
+): Promise<{ squareOrderId?: string } | null> {
+  if (!process.env.SQUARE_LOCATION_ID) return null;
+
+  try {
+    const page = await squareClient.giftCards.activities.list({
+      giftCardId,
+      type: 'ACTIVATE',
+      locationId: process.env.SQUARE_LOCATION_ID,
+      limit: 1,
+    });
+
+    const activity = page.data?.[0];
+    if (!activity) return null;
+
+    return {
+      squareOrderId: activity.activateActivityDetails?.orderId ?? undefined,
+    };
+  } catch (error) {
+    console.error(`[ActivateActivity] Error fetching for ${giftCardId}:`, error);
+    return null;
+  }
+}
+
 /**
  * Fetch a single gift card from Square by its Square ID.
  * Used during incremental sync to retrieve the full card object for new activations.

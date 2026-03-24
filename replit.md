@@ -91,6 +91,34 @@ Intercard is the arcade game card system. Revenue data is fetched from the Inter
 - **Dashboard**: Intercard revenue included in True Revenue KPI, shown as line item below Tripleseat Deposits in StatsSummary
 - **Date handling**: Uses Eastern Time for date formatting and DST-aware UTC offset for API calls
 
+## Gift Card Sales & Redemption Classification (Task #20 / #21)
+Gift card-related transactions are split into three buckets for both **sales** (activations) and **redemptions** (usage):
+
+### Source Buckets
+| Order Source | Dashboard Category |
+|---|---|
+| `Web Reservation` | Bowling Web Res Deposits |
+| `Web Reservation-Attraction` | Laser Tag Web Res Deposits |
+| Everything else (incl. NULL, `Terminal`, `unknown`, etc.) | True Gift Card Sales/Redemptions |
+
+### Sales Side (`giftCardService.ts → getGiftCardBreakdown`)
+- Joins `gift_cards` → `orders` via `activation_square_order_id` to get the order source
+- Uses `gc.purchase_date` for date filtering, `gc.activation_amount` for amounts
+- Fully DB-based, no API calls
+
+### Redemption Side (`dashboardService.ts → getDetailedTransactionBreakdown`)
+- **Total** from DB: sums `SQUARE_GIFT_CARD` tender amounts from `orders.square_data`
+- **Classification** via Square API: fetches `REDEEM` activities from Gift Card Activities API (`fetchGiftCardRedeemActivities`), which returns exact `giftCardId` for each redemption
+- Looks up each redeemed card's activation order source in DB (`gift_cards.activation_square_order_id → orders.source`)
+- For cards not in DB, falls back to Square's `ACTIVATE` activity API (`fetchGiftCardActivateActivity`) to find the activation order ID, then checks order source in DB
+- Graceful degradation: if API call fails, entire total goes to pure GC redemptions
+
+### Key Functions
+- `squareClient.ts → fetchGiftCardRedeemActivities(beginTime, endTime)` — REDEEM activities for date range
+- `squareClient.ts → fetchGiftCardActivateActivity(giftCardId)` — single card's ACTIVATE activity (fallback)
+- `giftCardService.ts → getGiftCardBreakdown()` — sales-side breakdown
+- `dashboardService.ts → getDetailedTransactionBreakdown()` — redemption-side breakdown
+
 ## API Endpoints
 - `GET /api/summary` — daily summary (revenue, gift card sales, order count)
 - `GET /api/gift-card-summary` — gift card sold/redeemed totals for a date range

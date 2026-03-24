@@ -10,6 +10,7 @@ import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
 import { payoutService } from './payoutService';
 import { intercardService } from './intercardService';
+import { fetchGiftCardRedeemActivities, fetchGiftCardActivateActivity } from '../squareClient';
 import { 
   type DateRange,
   type DailySummary,
@@ -293,40 +294,83 @@ export class DashboardService {
     // Get gift card breakdown: bowling deposits, laser tag deposits, actual gift card sales
     const giftCardBreakdown = await giftCardService.getGiftCardBreakdown(dateRange, startDate, endDate);
 
-    const gcRedemptionRows = await db.execute<{
-      total: number;
-      bowling_redemptions: number;
-      laser_tag_redemptions: number;
-      gc_redemptions: number;
-    }>(sql`
-      SELECT
-        COALESCE(SUM(tender_amount), 0) as total,
-        COALESCE(SUM(CASE WHEN activation_source = 'Web Reservation' THEN tender_amount ELSE 0 END), 0) as bowling_redemptions,
-        COALESCE(SUM(CASE WHEN activation_source = 'Web Reservation-Attraction' THEN tender_amount ELSE 0 END), 0) as laser_tag_redemptions,
-        COALESCE(SUM(CASE WHEN activation_source IS NULL
-                           OR activation_source NOT IN ('Web Reservation', 'Web Reservation-Attraction')
-                      THEN tender_amount ELSE 0 END), 0) as gc_redemptions
-      FROM (
-        SELECT DISTINCT ON (o.square_id, tender->>'id')
-          (tender->'amountMoney'->>'amount')::numeric / 100 as tender_amount,
-          activation_order.source as activation_source
-        FROM ${ordersTable} o
-        CROSS JOIN LATERAL jsonb_array_elements(o.square_data->'tenders') as tender
-        LEFT JOIN gift_cards gc ON RIGHT(gc.gan, 4) = tender->'cardDetails'->'card'->>'last4'
-          AND gc.gan IS NOT NULL
-        LEFT JOIN ${ordersTable} activation_order ON activation_order.square_id = gc.activation_square_order_id
-        WHERE tender->>'type' = 'SQUARE_GIFT_CARD'
-          AND o.status = 'COMPLETED'
-          AND COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
-        ORDER BY o.square_id, tender->>'id',
-          gc.activation_square_order_id IS NOT NULL DESC,
-          gc.id DESC
-      ) sub
+    const gcRedemptionTotalRows = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM((tender->'amountMoney'->>'amount')::numeric / 100), 0) as total
+      FROM ${ordersTable} o
+      CROSS JOIN LATERAL jsonb_array_elements(o.square_data->'tenders') as tender
+      WHERE tender->>'type' = 'SQUARE_GIFT_CARD'
+        AND o.status = 'COMPLETED'
+        AND COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
     `);
-    const giftCardRedemptionsTotal = Number(gcRedemptionRows.rows[0]?.total || 0);
-    const bowlingRedemptions = Number(gcRedemptionRows.rows[0]?.bowling_redemptions || 0);
-    const laserTagRedemptions = Number(gcRedemptionRows.rows[0]?.laser_tag_redemptions || 0);
-    const pureGcRedemptions = Number(gcRedemptionRows.rows[0]?.gc_redemptions || 0);
+    const giftCardRedemptionsTotal = Number(gcRedemptionTotalRows.rows[0]?.total || 0);
+
+    let bowlingRedemptions = 0;
+    let laserTagRedemptions = 0;
+    let pureGcRedemptions = giftCardRedemptionsTotal;
+
+    if (giftCardRedemptionsTotal > 0) {
+      try {
+        const redeemActivities = await fetchGiftCardRedeemActivities(
+          start.toISOString(),
+          end.toISOString()
+        );
+
+        if (redeemActivities.length > 0) {
+          const uniqueGcIds = [...new Set(redeemActivities.map(a => a.giftCardId))];
+          const activationSourceRows = await db.execute<{
+            square_id: string;
+            source: string | null;
+          }>(sql`
+            SELECT gc.square_id, o.source
+            FROM gift_cards gc
+            LEFT JOIN ${ordersTable} o ON o.square_id = gc.activation_square_order_id
+            WHERE gc.square_id IN ${sql`(${sql.join(uniqueGcIds.map(id => sql`${id}`), sql`, `)})`}
+          `);
+
+          const sourceMap = new Map<string, string | null>();
+          for (const row of activationSourceRows.rows) {
+            sourceMap.set(row.square_id, row.source);
+          }
+
+          const needsApiLookup = uniqueGcIds.filter(id =>
+            !sourceMap.has(id) || sourceMap.get(id) === null
+          );
+          if (needsApiLookup.length > 0) {
+            const lookups = await Promise.allSettled(
+              needsApiLookup.map(async (gcId) => {
+                const activateInfo = await fetchGiftCardActivateActivity(gcId);
+                if (activateInfo?.squareOrderId) {
+                  const orderRows = await db.execute<{ source: string | null }>(sql`
+                    SELECT source FROM ${ordersTable} WHERE square_id = ${activateInfo.squareOrderId} LIMIT 1
+                  `);
+                  return { gcId, source: orderRows.rows[0]?.source ?? null };
+                }
+                return { gcId, source: null };
+              })
+            );
+            for (const result of lookups) {
+              if (result.status === 'fulfilled' && result.value.source !== null) {
+                sourceMap.set(result.value.gcId, result.value.source);
+              }
+            }
+          }
+
+          for (const activity of redeemActivities) {
+            const source = sourceMap.get(activity.giftCardId) ?? null;
+            if (source === 'Web Reservation') {
+              bowlingRedemptions += activity.amountDollars;
+            } else if (source === 'Web Reservation-Attraction') {
+              laserTagRedemptions += activity.amountDollars;
+            }
+          }
+
+          pureGcRedemptions = Math.max(0, giftCardRedemptionsTotal - bowlingRedemptions - laserTagRedemptions);
+        }
+      } catch (error) {
+        console.error('[DashboardService] Error fetching REDEEM activities, falling back to total:', error);
+        pureGcRedemptions = giftCardRedemptionsTotal;
+      }
+    }
     
     // Calculate taxes from ALL orders (COMPLETED + OPEN) in the date range.
     // Square's Sales Summary includes tax from every order for the business day,
