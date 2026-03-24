@@ -251,19 +251,12 @@ export class GiftCardService {
       WHERE timestamp BETWEEN ${start} AND ${end}
     `);
 
-    const allTimeActivationsResult = await db.execute(sql`
-      SELECT COALESCE(SUM(gc.activation_amount), 0) as total_activated
+    const outstandingResult = await db.execute(sql`
+      SELECT COALESCE(SUM(gc.amount), 0) as outstanding_balance
       FROM gift_cards gc
       LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
-      WHERE gc.purchase_date <= ${end}
-        AND gc.activation_amount > 0
+      WHERE gc.amount > 0
         AND (o.source IS NULL OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction'))
-    `);
-
-    const allTimeRedemptionsResult = await db.execute(sql`
-      SELECT COALESCE(SUM(amount), 0) as total_redeemed
-      FROM gift_card_redemptions
-      WHERE timestamp <= ${end}
     `);
 
     const soldCount = parseInt(String(activationsResult.rows?.[0]?.sold_count || '0'), 10) || 0;
@@ -271,9 +264,7 @@ export class GiftCardService {
     const redeemedCount = parseInt(String(redemptionsResult.rows?.[0]?.redeemed_count || '0'), 10) || 0;
     const redeemedAmount = parseFloat(String(redemptionsResult.rows?.[0]?.redeemed_amount || '0')) || 0;
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
-    const totalActivated = parseFloat(String(allTimeActivationsResult.rows?.[0]?.total_activated || '0')) || 0;
-    const totalRedeemed = parseFloat(String(allTimeRedemptionsResult.rows?.[0]?.total_redeemed || '0')) || 0;
-    const outstandingBalance = totalActivated - totalRedeemed;
+    const outstandingBalance = parseFloat(String(outstandingResult.rows?.[0]?.outstanding_balance || '0')) || 0;
 
     return {
       soldCount,
@@ -701,6 +692,53 @@ export class GiftCardService {
       console.error('Error processing gift card redemption from Square payment:', error);
       return null;
     }
+  }
+
+  async refreshAllGiftCardBalances(): Promise<{ updated: number; total: number }> {
+    const { fetchGiftCards } = await import('../squareClient');
+
+    console.log('[GiftCardBalanceRefresh] Fetching all gift cards from Square...');
+    const allSquareCards = await fetchGiftCards();
+    console.log(`[GiftCardBalanceRefresh] Fetched ${allSquareCards.length} cards from Square`);
+
+    const values: { squareId: string; balance: number; isActive: boolean }[] = [];
+    for (const card of allSquareCards) {
+      const squareId = card.id || card.squareId;
+      if (!squareId) continue;
+
+      let balance = 0;
+      if (card.balanceMoney?.amount) {
+        balance = Number(card.balanceMoney.amount) / 100;
+      } else if (card.balance_money?.amount) {
+        balance = Number(card.balance_money.amount) / 100;
+      }
+
+      const state = card.state || card.status || 'ACTIVE';
+      values.push({ squareId, balance, isActive: state === 'ACTIVE' });
+    }
+
+    let updated = 0;
+    const BATCH = 500;
+    for (let i = 0; i < values.length; i += BATCH) {
+      const batch = values.slice(i, i + BATCH);
+      const valuesClause = batch.map(v =>
+        `('${v.squareId}', ${v.balance}, ${v.isActive})`
+      ).join(',');
+
+      const result = await db.execute(sql.raw(`
+        UPDATE gift_cards gc SET
+          amount = v.balance,
+          is_active = v.is_active,
+          updated_at = NOW()
+        FROM (VALUES ${valuesClause}) AS v(square_id, balance, is_active)
+        WHERE gc.square_id = v.square_id::text
+      `));
+      updated += result.rowCount ?? 0;
+      console.log(`[GiftCardBalanceRefresh] Progress: ${Math.min(i + BATCH, values.length)}/${values.length}`);
+    }
+
+    console.log(`[GiftCardBalanceRefresh] Done — updated ${updated} of ${allSquareCards.length} cards`);
+    return { updated, total: allSquareCards.length };
   }
 }
 

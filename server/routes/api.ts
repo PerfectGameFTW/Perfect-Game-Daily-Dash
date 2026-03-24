@@ -521,6 +521,16 @@ export function createApiRouter(): Router {
   router.post('/sync/gift-cards/full', requireAdmin, syncLimiter, handleGiftCardFullSync);
   router.post('/sync/gift-cards-backfill', requireAdmin, syncLimiter, handleGiftCardFullSync);
 
+  router.post('/sync/gift-cards/refresh-balances', requireAdmin, syncLimiter, async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await giftCardService.refreshAllGiftCardBalances();
+      res.json({ success: true, ...result });
+    } catch (error) {
+      console.error('[API] Gift card balance refresh error:', error);
+      next(error);
+    }
+  });
+
   router.post('/sync/quick', requireAdmin, syncLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const { runFrequentSync } = await import('../services/schedulerService');
