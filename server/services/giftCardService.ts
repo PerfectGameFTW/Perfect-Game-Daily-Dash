@@ -293,6 +293,20 @@ export class GiftCardService {
     return breakdown.giftCardSales;
   }
 
+  /**
+   * Return gift card activations split into three buckets for the business day:
+   *  - bowlingWebResDeposits: gift cards whose activation_square_order_id links to a
+   *    'Web Reservation' order
+   *  - laserTagWebResDeposits: gift cards whose activation_square_order_id links to a
+   *    'Web Reservation-Attraction' order
+   *  - giftCardSales: all other activations — NULL activation_square_order_id or order
+   *    with a different source (genuine gift card purchases)
+   *
+   * activation_square_order_id is populated by:
+   *   1. squareClient ACTIVATE event capture (when Square returns orderId in API response)
+   *   2. backfillActivationSquareOrderIds() — a one-time startup routine that matches
+   *      gift cards to Web Reservation orders by activation_amount + time proximity
+   */
   async getGiftCardBreakdown(
     dateRange: DateRange,
     startDate?: Date,
@@ -300,32 +314,24 @@ export class GiftCardService {
   ): Promise<{ bowlingWebResDeposits: number; laserTagWebResDeposits: number; giftCardSales: number }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
 
-    const webResResult = await db.execute(sql`
+    const result = await db.execute(sql`
       SELECT
-        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation'            THEN t.amount ELSE 0 END), 0) AS bowling_web_res,
-        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation-Attraction' THEN t.amount ELSE 0 END), 0) AS laser_tag_web_res
-      FROM transactions t
-      INNER JOIN orders o ON o.square_id = (t.square_data->>'orderId')
-      WHERE t.timestamp BETWEEN ${start} AND ${end}
-        AND t.status = 'completed'
-        AND o.source IN ('Web Reservation', 'Web Reservation-Attraction')
-    `);
-
-    const gcResult = await db.execute(sql`
-      SELECT COALESCE(SUM(gc.activation_amount), 0) AS gift_card_sales
+        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation'             THEN gc.activation_amount ELSE 0 END), 0) AS bowling_web_res,
+        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation-Attraction'  THEN gc.activation_amount ELSE 0 END), 0) AS laser_tag_web_res,
+        COALESCE(SUM(CASE WHEN o.source IS NULL
+                           OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction')
+                                              THEN gc.activation_amount ELSE 0 END), 0) AS gift_card_sales
       FROM gift_cards gc
       LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
       WHERE gc.purchase_date BETWEEN ${start} AND ${end}
         AND gc.activation_amount > 0
-        AND (o.source IS NULL OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction'))
     `);
 
-    const webRow = webResResult.rows?.[0] ?? {};
-    const gcRow = gcResult.rows?.[0] ?? {};
+    const row = result.rows?.[0] ?? {};
     return {
-      bowlingWebResDeposits: parseFloat(String(webRow.bowling_web_res  || '0')) || 0,
-      laserTagWebResDeposits: parseFloat(String(webRow.laser_tag_web_res || '0')) || 0,
-      giftCardSales:          parseFloat(String(gcRow.gift_card_sales  || '0')) || 0,
+      bowlingWebResDeposits: parseFloat(String(row.bowling_web_res  || '0')) || 0,
+      laserTagWebResDeposits: parseFloat(String(row.laser_tag_web_res || '0')) || 0,
+      giftCardSales:          parseFloat(String(row.gift_card_sales  || '0')) || 0,
     };
   }
 
