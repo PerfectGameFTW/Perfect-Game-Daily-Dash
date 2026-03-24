@@ -316,7 +316,7 @@ export class DashboardService {
         );
 
         if (redeemActivities.length > 0) {
-          const uniqueGcIds = [...new Set(redeemActivities.map(a => a.giftCardId))];
+          const uniqueGcIds = Array.from(new Set(redeemActivities.map(a => a.giftCardId)));
           const activationSourceRows = await db.execute<{
             square_id: string;
             source: string | null;
