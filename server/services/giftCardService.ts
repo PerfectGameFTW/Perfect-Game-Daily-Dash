@@ -331,10 +331,23 @@ export class GiftCardService {
     const bowlingWebResDeposits = parseFloat(String(row.bowling_web_res || '0')) || 0;
     const laserTagWebResDeposits = parseFloat(String(row.laser_tag_web_res || '0')) || 0;
 
+    const gcSalesResult = await db.execute<{ gc_sales: string }>(sql`
+      SELECT COALESCE(SUM(gc.activation_amount), 0) AS gc_sales
+      FROM ${giftCards} gc
+      LEFT JOIN ${orders} o ON o.square_id = gc.activation_square_order_id
+      WHERE gc.purchase_date BETWEEN ${start} AND ${end}
+        AND gc.activation_amount > 0
+        AND (
+          o.source IS NULL
+          OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
+        )
+    `);
+    const giftCardSales = parseFloat(String(gcSalesResult.rows?.[0]?.gc_sales || '0')) || 0;
+
     return {
       bowlingWebResDeposits,
       laserTagWebResDeposits,
-      giftCardSales: 0,
+      giftCardSales,
     };
   }
 
