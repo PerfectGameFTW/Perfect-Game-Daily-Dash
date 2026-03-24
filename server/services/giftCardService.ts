@@ -320,8 +320,8 @@ export class GiftCardService {
       laser_tag_web_res: string;
     }>(sql`
       SELECT
-        COALESCE(SUM(CASE WHEN o.source IN ('Web Reservation', 'Multi Attractions Reservation') THEN o.total_money ELSE 0 END), 0) AS bowling_web_res,
-        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation-Attraction' THEN o.total_money ELSE 0 END), 0) AS laser_tag_web_res
+        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation' THEN o.total_money ELSE 0 END), 0) AS bowling_web_res,
+        COALESCE(SUM(CASE WHEN o.source IN ('Web Reservation-Attraction', 'Multi Attractions Reservation') THEN o.total_money ELSE 0 END), 0) AS laser_tag_web_res
       FROM ${orders} o
       WHERE COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
         AND o.source IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')

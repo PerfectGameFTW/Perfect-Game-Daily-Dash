@@ -97,7 +97,7 @@ Intercard is the arcade game card system. Revenue data is fetched from the Inter
 Web reservations are booked through **Qubica** (QubicaAMF channel), not Partywirks.
 - **Bowling web reservations**: Booked via Qubica, order source = `Web Reservation`
 - **Laser tag web reservations**: Booked via Qubica, order source = `Web Reservation-Attraction`
-- **Combo packages**: Booked via Qubica, order source = `Multi Attractions Reservation` (classified as bowling)
+- **Multi Attractions Reservation**: Booked via Qubica, order source = `Multi Attractions Reservation` (classified as laser tag)
 - **Partywirks**: Separate birthday booking software, charges $100 deposit increments — unrelated to web reservations
 
 When a customer books online, two things happen simultaneously in Square:
@@ -111,7 +111,7 @@ All web reservation deposit gift cards are electronic. True gift card sales (bou
 | Order Source | Dashboard Category |
 |---|---|
 | `Web Reservation` | Bowling Web Res Deposits |
-| `Multi Attractions Reservation` | Bowling Web Res Deposits |
+| `Multi Attractions Reservation` | Laser Tag Web Res Deposits |
 | `Web Reservation-Attraction` | Laser Tag Web Res Deposits |
 | Everything else (incl. NULL, `Terminal`, `unknown`, etc.) | True Gift Card Sales/Redemptions |
 

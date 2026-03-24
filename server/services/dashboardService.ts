@@ -450,9 +450,9 @@ export class DashboardService {
 
           for (const activity of redeemActivities) {
             const source = sourceMap.get(activity.giftCardId) ?? null;
-            if (source === 'Web Reservation' || source === 'Multi Attractions Reservation') {
+            if (source === 'Web Reservation') {
               bowlingRedemptions += activity.amountDollars;
-            } else if (source === 'Web Reservation-Attraction') {
+            } else if (source === 'Web Reservation-Attraction' || source === 'Multi Attractions Reservation') {
               laserTagRedemptions += activity.amountDollars;
             }
           }
