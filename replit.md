@@ -103,9 +103,9 @@ Gift card-related transactions are split into three buckets for both **sales** (
 | Everything else (incl. NULL, `Terminal`, `unknown`, etc.) | True Gift Card Sales/Redemptions |
 
 ### Sales/Deposits Side (`giftCardService.ts → getGiftCardBreakdown`)
-- Queries `orders` table directly by `source` — sums `total_money` for web reservation sources
+- Queries `orders` table directly by `source` with deposit line item filter (`EXISTS order_line_items.name = 'Deposit'`)
 - No join through gift_cards table; eliminates dependency on gift card linkage
-- `giftCardSales` always returns 0 from this function (true GC sales tracked separately if needed)
+- `giftCardSales` = total SQUARE_GIFT_CARD tender amounts (from orders.square_data JSON) minus bowling deposits minus laser tag deposits
 
 ### Redemption Side (`dashboardService.ts → getDetailedTransactionBreakdown`)
 - **Total** from DB: sums `SQUARE_GIFT_CARD` tender amounts from `orders.square_data`

@@ -336,18 +336,18 @@ export class GiftCardService {
     const bowlingWebResDeposits = parseFloat(String(row.bowling_web_res || '0')) || 0;
     const laserTagWebResDeposits = parseFloat(String(row.laser_tag_web_res || '0')) || 0;
 
-    const gcSalesResult = await db.execute<{ gc_sales: string }>(sql`
-      SELECT COALESCE(SUM(gc.activation_amount), 0) AS gc_sales
-      FROM ${giftCards} gc
-      LEFT JOIN ${orders} o ON o.square_id = gc.activation_square_order_id
-      WHERE gc.purchase_date BETWEEN ${start} AND ${end}
-        AND gc.activation_amount > 0
-        AND (
-          o.source IS NULL
-          OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
-        )
+    const gcTenderResult = await db.execute<{ total_gc_tender: string }>(sql`
+      SELECT COALESCE(SUM(
+        ((tender->>'amountMoney')::jsonb->>'amount')::numeric
+      ) / 100, 0) AS total_gc_tender
+      FROM ${orders} o,
+        jsonb_array_elements(o.square_data->'tenders') AS tender
+      WHERE COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
+        AND o.status IN ('COMPLETED', 'OPEN')
+        AND tender->>'type' = 'SQUARE_GIFT_CARD'
     `);
-    const giftCardSales = parseFloat(String(gcSalesResult.rows?.[0]?.gc_sales || '0')) || 0;
+    const totalGcTenderSales = parseFloat(String(gcTenderResult.rows?.[0]?.total_gc_tender || '0')) || 0;
+    const giftCardSales = Math.max(0, totalGcTenderSales - bowlingWebResDeposits - laserTagWebResDeposits);
 
     return {
       bowlingWebResDeposits,
