@@ -331,26 +331,60 @@ export class DashboardService {
           for (const row of activationSourceRows.rows) {
             sourceMap.set(row.square_id, row.source);
           }
+          const dbResolved = activationSourceRows.rows.filter(r => r.source !== null).length;
 
           const needsApiLookup = uniqueGcIds.filter(id =>
             !sourceMap.has(id) || sourceMap.get(id) === null
           );
+          let fallbackSuccesses = 0;
+          let fallbackFailures = 0;
           if (needsApiLookup.length > 0) {
-            const lookups = await Promise.allSettled(
-              needsApiLookup.map(async (gcId) => {
-                const activateInfo = await fetchGiftCardActivateActivity(gcId);
-                if (activateInfo?.squareOrderId) {
-                  const orderRows = await db.execute<{ source: string | null }>(sql`
-                    SELECT source FROM ${ordersTable} WHERE square_id = ${activateInfo.squareOrderId} LIMIT 1
-                  `);
-                  return { gcId, source: orderRows.rows[0]?.source ?? null };
+            const CONCURRENCY = 5;
+            const activateResults: Array<{ gcId: string; squareOrderId?: string }> = [];
+
+            for (let i = 0; i < needsApiLookup.length; i += CONCURRENCY) {
+              const batch = needsApiLookup.slice(i, i + CONCURRENCY);
+              const batchResults = await Promise.allSettled(
+                batch.map(async (gcId) => {
+                  const info = await fetchGiftCardActivateActivity(gcId);
+                  return { gcId, squareOrderId: info?.squareOrderId };
+                })
+              );
+              for (const r of batchResults) {
+                if (r.status === 'fulfilled') {
+                  activateResults.push(r.value);
+                } else {
+                  fallbackFailures++;
                 }
-                return { gcId, source: null };
-              })
-            );
-            for (const result of lookups) {
-              if (result.status === 'fulfilled' && result.value.source !== null) {
-                sourceMap.set(result.value.gcId, result.value.source);
+              }
+            }
+
+            const orderIdsToResolve = activateResults
+              .filter(r => r.squareOrderId)
+              .map(r => r.squareOrderId!);
+
+            if (orderIdsToResolve.length > 0) {
+              const orderSourceRows = await db.execute<{
+                square_id: string;
+                source: string | null;
+              }>(sql`
+                SELECT square_id, source FROM ${ordersTable}
+                WHERE square_id IN ${sql`(${sql.join(orderIdsToResolve.map(id => sql`${id}`), sql`, `)})`}
+              `);
+
+              const orderSourceMap = new Map<string, string | null>();
+              for (const row of orderSourceRows.rows) {
+                orderSourceMap.set(row.square_id, row.source);
+              }
+
+              for (const ar of activateResults) {
+                if (ar.squareOrderId) {
+                  const resolvedSource = orderSourceMap.get(ar.squareOrderId) ?? null;
+                  if (resolvedSource !== null) {
+                    sourceMap.set(ar.gcId, resolvedSource);
+                    fallbackSuccesses++;
+                  }
+                }
               }
             }
           }
@@ -366,12 +400,14 @@ export class DashboardService {
 
           pureGcRedemptions = Math.max(0, giftCardRedemptionsTotal - bowlingRedemptions - laserTagRedemptions);
           const classifiedSum = bowlingRedemptions + laserTagRedemptions + pureGcRedemptions;
-          if (Math.abs(classifiedSum - giftCardRedemptionsTotal) > 0.01) {
-            console.warn(`[DashboardService] GC redemption reconciliation mismatch: DB total=$${giftCardRedemptionsTotal}, classified sum=$${classifiedSum} (bowling=$${bowlingRedemptions}, laserTag=$${laserTagRedemptions}, pureGC=$${pureGcRedemptions})`);
+          const hasMismatch = Math.abs(classifiedSum - giftCardRedemptionsTotal) > 0.01;
+          if (hasMismatch) {
+            console.warn(`[GC-Redemption] Reconciliation mismatch: DB total=$${giftCardRedemptionsTotal}, classified=$${classifiedSum}`);
           }
+          console.log(`[GC-Redemption] total=$${giftCardRedemptionsTotal} | redeemEvents=${redeemActivities.length} uniqueCards=${uniqueGcIds.length} dbResolved=${dbResolved} fallbackAttempted=${needsApiLookup.length} fallbackOK=${fallbackSuccesses} fallbackFail=${fallbackFailures} | bowling=$${bowlingRedemptions} laserTag=$${laserTagRedemptions} pureGC=$${pureGcRedemptions}${hasMismatch ? ' MISMATCH' : ''}`);
         }
       } catch (error) {
-        console.error('[DashboardService] Error fetching REDEEM activities, falling back to total:', error);
+        console.error('[GC-Redemption] REDEEM fetch failed, falling back to total:', error);
         pureGcRedemptions = giftCardRedemptionsTotal;
       }
     }
