@@ -314,24 +314,27 @@ export class GiftCardService {
   ): Promise<{ bowlingWebResDeposits: number; laserTagWebResDeposits: number; giftCardSales: number }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
 
-    const result = await db.execute(sql`
+    const result = await db.execute<{
+      bowling_web_res: string;
+      laser_tag_web_res: string;
+    }>(sql`
       SELECT
-        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation'             THEN gc.activation_amount ELSE 0 END), 0) AS bowling_web_res,
-        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation-Attraction'  THEN gc.activation_amount ELSE 0 END), 0) AS laser_tag_web_res,
-        COALESCE(SUM(CASE WHEN o.source IS NULL
-                           OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction')
-                                              THEN gc.activation_amount ELSE 0 END), 0) AS gift_card_sales
-      FROM gift_cards gc
-      LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
-      WHERE gc.purchase_date BETWEEN ${start} AND ${end}
-        AND gc.activation_amount > 0
+        COALESCE(SUM(CASE WHEN source IN ('Web Reservation', 'Multi Attractions Reservation') THEN total_money ELSE 0 END), 0) AS bowling_web_res,
+        COALESCE(SUM(CASE WHEN source = 'Web Reservation-Attraction' THEN total_money ELSE 0 END), 0) AS laser_tag_web_res
+      FROM ${orders}
+      WHERE COALESCE(${orders.closedAt}, ${orders.createdAt}) BETWEEN ${start} AND ${end}
+        AND ${orders.source} IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
+        AND ${orders.status} IN ('COMPLETED', 'OPEN')
     `);
 
-    const row = result.rows?.[0] ?? {};
+    const row = result.rows?.[0] ?? { bowling_web_res: '0', laser_tag_web_res: '0' };
+    const bowlingWebResDeposits = parseFloat(String(row.bowling_web_res || '0')) || 0;
+    const laserTagWebResDeposits = parseFloat(String(row.laser_tag_web_res || '0')) || 0;
+
     return {
-      bowlingWebResDeposits: parseFloat(String(row.bowling_web_res  || '0')) || 0,
-      laserTagWebResDeposits: parseFloat(String(row.laser_tag_web_res || '0')) || 0,
-      giftCardSales:          parseFloat(String(row.gift_card_sales  || '0')) || 0,
+      bowlingWebResDeposits,
+      laserTagWebResDeposits,
+      giftCardSales: 0,
     };
   }
 

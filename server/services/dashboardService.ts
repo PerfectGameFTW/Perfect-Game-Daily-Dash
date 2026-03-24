@@ -10,7 +10,7 @@ import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
 import { payoutService } from './payoutService';
 import { intercardService } from './intercardService';
-import { fetchGiftCardRedeemActivities, fetchGiftCardActivateActivity } from '../squareClient';
+import { fetchGiftCardRedeemActivities, fetchGiftCardActivateActivity, fetchOrdersByIds } from '../squareClient';
 import { 
   type DateRange,
   type DailySummary,
@@ -384,6 +384,21 @@ export class DashboardService {
                 orderSourceMap.set(row.square_id, row.source);
               }
 
+              const missingOrderIds = orderIdsToResolve.filter(id => !orderSourceMap.has(id));
+              if (missingOrderIds.length > 0) {
+                try {
+                  const fetched = await fetchOrdersByIds(missingOrderIds);
+                  for (const fo of fetched) {
+                    if (fo.squareId && fo.source) {
+                      orderSourceMap.set(fo.squareId, fo.source);
+                    }
+                  }
+                  console.log(`[GC-Redemption] Fetched ${fetched.length} missing orders from Square API for ${missingOrderIds.length} unresolved IDs`);
+                } catch (err) {
+                  console.error('[GC-Redemption] Error fetching missing orders from Square:', err);
+                }
+              }
+
               for (const ar of activateResults) {
                 if (ar.squareOrderId) {
                   const resolvedSource = orderSourceMap.get(ar.squareOrderId) ?? null;
@@ -398,9 +413,44 @@ export class DashboardService {
             }
           }
 
+          const unresolvedGcIds = uniqueGcIds.filter(id =>
+            !sourceMap.has(id) || sourceMap.get(id) === null
+          );
+          if (unresolvedGcIds.length > 0) {
+            const heuristicRows = await db.execute<{
+              gc_square_id: string;
+              order_source: string;
+              diff_hours: string;
+            }>(sql`
+              SELECT DISTINCT ON (gc.square_id)
+                gc.square_id AS gc_square_id,
+                o.source AS order_source,
+                ROUND(ABS(EXTRACT(EPOCH FROM (o.created_at - gc.purchase_date))) / 3600, 1) AS diff_hours
+              FROM gift_cards gc
+              CROSS JOIN LATERAL (
+                SELECT source, created_at
+                FROM ${ordersTable}
+                WHERE total_money = gc.activation_amount
+                  AND source IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
+                ORDER BY ABS(EXTRACT(EPOCH FROM (created_at - gc.purchase_date)))
+                LIMIT 1
+              ) o
+              WHERE gc.square_id IN ${sql`(${sql.join(unresolvedGcIds.map(id => sql`${id}`), sql`, `)})`}
+              ORDER BY gc.square_id
+            `);
+            for (const row of heuristicRows.rows) {
+              sourceMap.set(row.gc_square_id, row.order_source);
+            }
+            if (heuristicRows.rows.length > 0) {
+              const wideCnt = heuristicRows.rows.filter(r => parseFloat(r.diff_hours) > 24).length;
+              console.log(`[GC-Redemption] Heuristic closest-match resolved ${heuristicRows.rows.length} of ${unresolvedGcIds.length} unresolved cards` +
+                (wideCnt > 0 ? ` (${wideCnt} matched >24h gap)` : ''));
+            }
+          }
+
           for (const activity of redeemActivities) {
             const source = sourceMap.get(activity.giftCardId) ?? null;
-            if (source === 'Web Reservation') {
+            if (source === 'Web Reservation' || source === 'Multi Attractions Reservation') {
               bowlingRedemptions += activity.amountDollars;
             } else if (source === 'Web Reservation-Attraction') {
               laserTagRedemptions += activity.amountDollars;

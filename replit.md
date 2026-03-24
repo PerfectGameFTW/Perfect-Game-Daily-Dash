@@ -98,19 +98,22 @@ Gift card-related transactions are split into three buckets for both **sales** (
 | Order Source | Dashboard Category |
 |---|---|
 | `Web Reservation` | Bowling Web Res Deposits |
+| `Multi Attractions Reservation` | Bowling Web Res Deposits |
 | `Web Reservation-Attraction` | Laser Tag Web Res Deposits |
 | Everything else (incl. NULL, `Terminal`, `unknown`, etc.) | True Gift Card Sales/Redemptions |
 
-### Sales Side (`giftCardService.ts → getGiftCardBreakdown`)
-- Joins `gift_cards` → `orders` via `activation_square_order_id` to get the order source
-- Uses `gc.purchase_date` for date filtering, `gc.activation_amount` for amounts
-- Fully DB-based, no API calls
+### Sales/Deposits Side (`giftCardService.ts → getGiftCardBreakdown`)
+- Queries `orders` table directly by `source` — sums `total_money` for web reservation sources
+- No join through gift_cards table; eliminates dependency on gift card linkage
+- `giftCardSales` always returns 0 from this function (true GC sales tracked separately if needed)
 
 ### Redemption Side (`dashboardService.ts → getDetailedTransactionBreakdown`)
 - **Total** from DB: sums `SQUARE_GIFT_CARD` tender amounts from `orders.square_data`
 - **Classification** via Square API: fetches `REDEEM` activities from Gift Card Activities API (`fetchGiftCardRedeemActivities`), which returns exact `giftCardId` for each redemption
-- Looks up each redeemed card's activation order source in DB (`gift_cards.activation_square_order_id → orders.source`)
-- For cards not in DB, falls back to Square's `ACTIVATE` activity API (`fetchGiftCardActivateActivity`) to find the activation order ID, then checks order source in DB
+- **Resolution pipeline** (3 tiers):
+  1. DB lookup: `gift_cards.activation_square_order_id → orders.source`
+  2. Square ACTIVATE API fallback: `fetchGiftCardActivateActivity(giftCardId)` → fetch missing orders via `fetchOrdersByIds` → check source
+  3. Heuristic closest-match: for cards with no activation link and no API data, matches `gift_cards.activation_amount` to closest `orders.total_money` by time proximity (CROSS JOIN LATERAL, no time limit, logs >24h gaps)
 - Graceful degradation: if API call fails, entire total goes to pure GC redemptions
 
 ### Key Functions
