@@ -314,17 +314,22 @@ export class GiftCardService {
   ): Promise<{ bowlingWebResDeposits: number; laserTagWebResDeposits: number; giftCardSales: number }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
 
+    const orderLineItems = sql.identifier('order_line_items');
     const result = await db.execute<{
       bowling_web_res: string;
       laser_tag_web_res: string;
     }>(sql`
       SELECT
-        COALESCE(SUM(CASE WHEN source IN ('Web Reservation', 'Multi Attractions Reservation') THEN total_money ELSE 0 END), 0) AS bowling_web_res,
-        COALESCE(SUM(CASE WHEN source = 'Web Reservation-Attraction' THEN total_money ELSE 0 END), 0) AS laser_tag_web_res
-      FROM ${orders}
-      WHERE COALESCE(${orders.closedAt}, ${orders.createdAt}) BETWEEN ${start} AND ${end}
-        AND ${orders.source} IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
-        AND ${orders.status} IN ('COMPLETED', 'OPEN')
+        COALESCE(SUM(CASE WHEN o.source IN ('Web Reservation', 'Multi Attractions Reservation') THEN o.total_money ELSE 0 END), 0) AS bowling_web_res,
+        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation-Attraction' THEN o.total_money ELSE 0 END), 0) AS laser_tag_web_res
+      FROM ${orders} o
+      WHERE COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
+        AND o.source IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
+        AND o.status IN ('COMPLETED', 'OPEN')
+        AND EXISTS (
+          SELECT 1 FROM ${orderLineItems} oli
+          WHERE oli.order_id = o.id AND oli.name = 'Deposit'
+        )
     `);
 
     const row = result.rows?.[0] ?? { bowling_web_res: '0', laser_tag_web_res: '0' };
