@@ -315,6 +315,11 @@ export class DashboardService {
           end.toISOString()
         );
 
+        let dbResolved = 0;
+        let fallbackAttempted = 0;
+        let fallbackSuccesses = 0;
+        let fallbackFailures = 0;
+
         if (redeemActivities.length > 0) {
           const uniqueGcIds = Array.from(new Set(redeemActivities.map(a => a.giftCardId)));
           const activationSourceRows = await db.execute<{
@@ -331,13 +336,12 @@ export class DashboardService {
           for (const row of activationSourceRows.rows) {
             sourceMap.set(row.square_id, row.source);
           }
-          const dbResolved = activationSourceRows.rows.filter(r => r.source !== null).length;
+          dbResolved = activationSourceRows.rows.filter(r => r.source !== null).length;
 
           const needsApiLookup = uniqueGcIds.filter(id =>
             !sourceMap.has(id) || sourceMap.get(id) === null
           );
-          let fallbackSuccesses = 0;
-          let fallbackFailures = 0;
+          fallbackAttempted = needsApiLookup.length;
           if (needsApiLookup.length > 0) {
             const CONCURRENCY = 5;
             const activateResults: Array<{ gcId: string; squareOrderId?: string }> = [];
@@ -353,6 +357,9 @@ export class DashboardService {
               for (const r of batchResults) {
                 if (r.status === 'fulfilled') {
                   activateResults.push(r.value);
+                  if (!r.value.squareOrderId) {
+                    fallbackFailures++;
+                  }
                 } else {
                   fallbackFailures++;
                 }
@@ -383,6 +390,8 @@ export class DashboardService {
                   if (resolvedSource !== null) {
                     sourceMap.set(ar.gcId, resolvedSource);
                     fallbackSuccesses++;
+                  } else {
+                    fallbackFailures++;
                   }
                 }
               }
@@ -399,15 +408,17 @@ export class DashboardService {
           }
 
           pureGcRedemptions = Math.max(0, giftCardRedemptionsTotal - bowlingRedemptions - laserTagRedemptions);
-          const classifiedSum = bowlingRedemptions + laserTagRedemptions + pureGcRedemptions;
-          const hasMismatch = Math.abs(classifiedSum - giftCardRedemptionsTotal) > 0.01;
-          if (hasMismatch) {
-            console.warn(`[GC-Redemption] Reconciliation mismatch: DB total=$${giftCardRedemptionsTotal}, classified=$${classifiedSum}`);
-          }
-          console.log(`[GC-Redemption] total=$${giftCardRedemptionsTotal} | redeemEvents=${redeemActivities.length} uniqueCards=${uniqueGcIds.length} dbResolved=${dbResolved} fallbackAttempted=${needsApiLookup.length} fallbackOK=${fallbackSuccesses} fallbackFail=${fallbackFailures} | bowling=$${bowlingRedemptions} laserTag=$${laserTagRedemptions} pureGC=$${pureGcRedemptions}${hasMismatch ? ' MISMATCH' : ''}`);
         }
+
+        const classifiedSum = bowlingRedemptions + laserTagRedemptions + pureGcRedemptions;
+        const hasMismatch = Math.abs(classifiedSum - giftCardRedemptionsTotal) > 0.01;
+        if (hasMismatch) {
+          console.warn(`[GC-Redemption] Reconciliation mismatch: DB total=$${giftCardRedemptionsTotal}, classified=$${classifiedSum}`);
+        }
+        console.log(`[GC-Redemption] redeemFetch=OK total=$${giftCardRedemptionsTotal} | redeemEvents=${redeemActivities.length} dbResolved=${dbResolved} fallbackAttempted=${fallbackAttempted} fallbackOK=${fallbackSuccesses} fallbackFail=${fallbackFailures} | bowling=$${bowlingRedemptions} laserTag=$${laserTagRedemptions} pureGC=$${pureGcRedemptions}${hasMismatch ? ' MISMATCH' : ''}`);
       } catch (error) {
         console.error('[GC-Redemption] REDEEM fetch failed, falling back to total:', error);
+        console.log(`[GC-Redemption] redeemFetch=FAIL total=$${giftCardRedemptionsTotal} | bowling=$0 laserTag=$0 pureGC=$${giftCardRedemptionsTotal} (fallback)`);
         pureGcRedemptions = giftCardRedemptionsTotal;
       }
     }
