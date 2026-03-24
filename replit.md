@@ -91,8 +91,21 @@ Intercard is the arcade game card system. Revenue data is fetched from the Inter
 - **Dashboard**: Intercard revenue included in True Revenue KPI, shown as line item below Tripleseat Deposits in StatsSummary
 - **Date handling**: Uses Eastern Time for date formatting and DST-aware UTC offset for API calls
 
-## Gift Card Sales & Redemption Classification (Task #20 / #21)
-Gift card-related transactions are split into three buckets for both **sales** (activations) and **redemptions** (usage):
+## Gift Card Sales & Redemption Classification (Task #20 / #21 / #23)
+
+### Business Context
+Web reservations are booked through **Qubica** (QubicaAMF channel), not Partywirks.
+- **Bowling web reservations**: Booked via Qubica, order source = `Web Reservation`
+- **Laser tag web reservations**: Booked via Qubica, order source = `Web Reservation-Attraction`
+- **Combo packages**: Booked via Qubica, order source = `Multi Attractions Reservation` (classified as bowling)
+- **Partywirks**: Separate birthday booking software, charges $100 deposit increments — unrelated to web reservations
+
+When a customer books online, two things happen simultaneously in Square:
+1. A Web Reservation order is created with the deposit amount
+2. An electronic gift card is activated for that same amount, linked to the order
+
+When the customer arrives, staff redeems the gift card to clear the deposit.
+All web reservation deposit gift cards are electronic. True gift card sales (bought as gifts) are rare and also electronic.
 
 ### Source Buckets
 | Order Source | Dashboard Category |
@@ -102,25 +115,32 @@ Gift card-related transactions are split into three buckets for both **sales** (
 | `Web Reservation-Attraction` | Laser Tag Web Res Deposits |
 | Everything else (incl. NULL, `Terminal`, `unknown`, etc.) | True Gift Card Sales/Redemptions |
 
-### Sales/Deposits Side (`giftCardService.ts → getGiftCardBreakdown`)
-- Queries `orders` table directly by `source` with deposit line item filter (`EXISTS order_line_items.name = 'Deposit'`)
-- No join through gift_cards table; eliminates dependency on gift card linkage
-- `giftCardSales` = total SQUARE_GIFT_CARD tender amounts (from orders.square_data JSON) minus bowling deposits minus laser tag deposits
+### Deposits Side (`giftCardService.ts → getGiftCardBreakdown`)
+- Queries `orders` table directly by `source`, confirmed with deposit line item filter (`EXISTS order_line_items.name = 'Deposit'`)
+- No dependency on `gift_cards` table linkage
+- `giftCardSales` = total SQUARE_GIFT_CARD tender amounts (from `orders.square_data` JSON) minus bowling deposits minus laser tag deposits
 
 ### Redemption Side (`dashboardService.ts → getDetailedTransactionBreakdown`)
 - **Total** from DB: sums `SQUARE_GIFT_CARD` tender amounts from `orders.square_data`
-- **Classification** via Square API: fetches `REDEEM` activities from Gift Card Activities API (`fetchGiftCardRedeemActivities`), which returns exact `giftCardId` for each redemption
+- **Classification**: fetches `REDEEM` activities from Square Gift Card Activities API, which returns the exact `giftCardId` for each redemption, then resolves back to the original activation order to determine the source
 - **Resolution pipeline** (3 tiers):
-  1. DB lookup: `gift_cards.activation_square_order_id → orders.source`
-  2. Square ACTIVATE API fallback: `fetchGiftCardActivateActivity(giftCardId)` → fetch missing orders via `fetchOrdersByIds` → check source
-  3. Heuristic closest-match: for cards with no activation link and no API data, matches `gift_cards.activation_amount` to closest `orders.total_money` by time proximity (CROSS JOIN LATERAL, no time limit, logs >24h gaps)
-- Graceful degradation: if API call fails, entire total goes to pure GC redemptions
+  1. **DB link (primary)**: `gift_cards.activation_square_order_id → orders.source` — direct link from the gift card to its activation order. Post-April 2025 cards have ~100% linkage, making this the only tier needed for new cards.
+  2. **ACTIVATE API fallback**: For cards missing a DB link, queries Square's ACTIVATE activity API for the card's activation order ID, fetches missing orders via batch retrieve if needed, then checks the order source.
+  3. **Heuristic closest-match**: For pre-April 2025 cards where the ACTIVATE API also returns no data, matches `gift_cards.activation_amount` to the closest `orders.total_money` for web reservation sources by time proximity (CROSS JOIN LATERAL). Logs matches with >24h gaps for transparency. This tier handles legacy data only.
+- Graceful degradation: if API calls fail, the entire redemption total falls back to pure GC redemptions
+
+### Linkage Health
+- Pre-March 2025: 100% of cards missing links (historical debt, ~2,659 cards)
+- March 2025: ~60% missing (transition month when backfill system was built)
+- April 2025 onward: ~0% missing — linkage is reliable for all new cards
+- The owner is clearing pre-April 2025 card balances in Square; once complete, the heuristic tier will rarely be needed
 
 ### Key Functions
 - `squareClient.ts → fetchGiftCardRedeemActivities(beginTime, endTime)` — REDEEM activities for date range
 - `squareClient.ts → fetchGiftCardActivateActivity(giftCardId)` — single card's ACTIVATE activity (fallback)
-- `giftCardService.ts → getGiftCardBreakdown()` — sales-side breakdown
-- `dashboardService.ts → getDetailedTransactionBreakdown()` — redemption-side breakdown
+- `squareClient.ts → fetchOrdersByIds(orderIds)` — batch retrieve orders from Square API
+- `giftCardService.ts → getGiftCardBreakdown()` — deposits-side breakdown
+- `dashboardService.ts → getDetailedTransactionBreakdown()` — redemption-side classification
 
 ## API Endpoints
 - `GET /api/summary` — daily summary (revenue, gift card sales, order count)
