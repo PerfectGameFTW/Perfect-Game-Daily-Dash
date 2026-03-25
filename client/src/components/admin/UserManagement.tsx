@@ -88,7 +88,7 @@ export default function UserManagement() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/auth/users');
+      const response = await fetch('/api/auth/users');
       if (response.ok) {
         const data = await response.json();
         setUsers(data);
@@ -119,7 +119,7 @@ export default function UserManagement() {
   // Handle user creation
   const handleCreateUser = async (data: UserFormValues) => {
     try {
-      const response = await fetch('/auth/register', {
+      const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -175,7 +175,7 @@ export default function UserManagement() {
 
     try {
       setLoading(true);
-      const response = await fetch(`/auth/users/${userToDelete.id}`, {
+      const response = await fetch(`/api/auth/users/${userToDelete.id}`, {
         method: 'DELETE',
       });
 
