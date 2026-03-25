@@ -25,6 +25,14 @@ interface RollbackOptions {
   force?: boolean;
 }
 
+// Validates that a table name contains only safe identifier characters,
+// preventing SQL injection when names are interpolated into queries.
+function assertSafeIdentifier(name: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`Unsafe table identifier rejected: "${name}"`);
+  }
+}
+
 interface RollbackResult {
   success: boolean;
   restoredTables: string[];
@@ -163,6 +171,7 @@ export async function rollback(
           // Execute the SQL
           try {
             // First drop the existing table
+            assertSafeIdentifier(table);
             await pool.query(`DROP TABLE IF EXISTS "${table}" CASCADE`);
             
             // Then restore from backup
