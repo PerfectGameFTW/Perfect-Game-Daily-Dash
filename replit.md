@@ -168,10 +168,13 @@ All web reservation deposit gift cards are electronic. True gift card sales (bou
 - `client/src/components/ErrorBoundary.tsx` — React error boundary
 
 ## MCP Server (Claude Integration)
-- **File**: `server/mcp.ts` — standalone MCP server using stdio transport
-- **Run command**: `npx tsx server/mcp.ts`
-- **Protocol**: Model Context Protocol (MCP) via `@modelcontextprotocol/sdk`
+- **File**: `server/mcp.ts` — standalone MCP server using Streamable HTTP transport
+- **Run command**: `npx tsx server/mcp.ts` (runs on port 3001)
+- **Workflow**: "MCP Server" — runs alongside the main app
+- **Protocol**: Model Context Protocol (MCP) via `@modelcontextprotocol/sdk` (StreamableHTTPServerTransport)
+- **Endpoint**: `https://<replit-domain>:3001/mcp` (Streamable HTTP)
 - **Purpose**: Lets Claude Desktop / Claude cowork query the sales database directly
+- **Architecture**: Each MCP session gets its own McpServer instance + StreamableHTTP transport; sessions are tracked by UUID
 - **Tools exposed** (15 total):
   - `get_daily_summary` — KPI overview (revenue, orders, avg order, period changes)
   - `get_detailed_breakdown` — full revenue category breakdown (tips, taxes, refunds, gift cards, Intercard, etc.)

@@ -1,5 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { randomUUID } from "crypto";
+import express from "express";
 import { z } from "zod";
 import { dashboardService } from "./services/dashboardService";
 import { giftCardService } from "./services/giftCardService";
@@ -19,11 +21,6 @@ import {
   type DateRange,
 } from "../shared/schema";
 import { getEasternDateRange, getEasternBusinessDateStrings } from "./dateUtils";
-
-const server = new McpServer({
-  name: "perfect-game-sales",
-  version: "1.0.0",
-});
 
 const dateRangeValues = [
   "today",
@@ -96,6 +93,12 @@ async function safeTool<T>(fn: () => Promise<T>): Promise<T | ReturnType<typeof 
     return errorResponse(err);
   }
 }
+
+function createMcpServer(): McpServer {
+  const server = new McpServer({
+    name: "perfect-game-sales",
+    version: "1.0.0",
+  });
 
 server.tool(
   "get_daily_summary",
@@ -378,10 +381,134 @@ server.tool(
   })
 );
 
+  return server;
+}
+
+const MCP_PORT = 3001;
+
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("Perfect Game MCP server running on stdio");
+  const app = express();
+  app.use(express.json());
+
+  const transports = new Map<string, StreamableHTTPServerTransport>();
+  const SESSION_TTL_MS = 30 * 60 * 1000;
+  const MAX_SESSIONS = 50;
+  const sessionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  function touchSession(sid: string) {
+    if (sessionTimers.has(sid)) clearTimeout(sessionTimers.get(sid)!);
+    sessionTimers.set(sid, setTimeout(() => {
+      const t = transports.get(sid);
+      if (t) {
+        t.close();
+        transports.delete(sid);
+      }
+      sessionTimers.delete(sid);
+    }, SESSION_TTL_MS));
+  }
+
+  function cleanupSession(sid: string) {
+    transports.delete(sid);
+    if (sessionTimers.has(sid)) {
+      clearTimeout(sessionTimers.get(sid)!);
+      sessionTimers.delete(sid);
+    }
+  }
+
+  app.post("/mcp", async (req, res) => {
+    try {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      let transport: StreamableHTTPServerTransport;
+
+      if (sessionId && transports.has(sessionId)) {
+        transport = transports.get(sessionId)!;
+        touchSession(sessionId);
+      } else if (!sessionId && isInitializeRequest(req.body)) {
+        if (transports.size >= MAX_SESSIONS) {
+          res.status(503).json({ error: "Too many active sessions" });
+          return;
+        }
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+        });
+        transport.onclose = () => {
+          if (transport.sessionId) cleanupSession(transport.sessionId);
+        };
+        const mcpServer = createMcpServer();
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+        if (transport.sessionId) {
+          transports.set(transport.sessionId, transport);
+          touchSession(transport.sessionId);
+        }
+        return;
+      } else {
+        res.status(400).json({ error: "Bad request: no valid session" });
+        return;
+      }
+      await transport.handleRequest(req, res, req.body);
+    } catch (err) {
+      console.error("MCP POST error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/mcp", async (req, res) => {
+    try {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      if (!sessionId || !transports.has(sessionId)) {
+        res.status(400).json({ error: "Bad request: no valid session" });
+        return;
+      }
+      touchSession(sessionId);
+      await transports.get(sessionId)!.handleRequest(req, res);
+    } catch (err) {
+      console.error("MCP GET error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/mcp", async (req, res) => {
+    try {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      if (!sessionId || !transports.has(sessionId)) {
+        res.status(400).json({ error: "Bad request: no valid session" });
+        return;
+      }
+      const transport = transports.get(sessionId)!;
+      await transport.handleRequest(req, res);
+      cleanupSession(sessionId);
+    } catch (err) {
+      console.error("MCP DELETE error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/health", (_req, res) => {
+    res.json({ status: "ok", server: "perfect-game-mcp", sessions: transports.size });
+  });
+
+  const httpServer = app.listen(MCP_PORT, "0.0.0.0", () => {
+    console.log(`Perfect Game MCP server listening on http://0.0.0.0:${MCP_PORT}/mcp`);
+  });
+
+  function shutdown() {
+    console.log("Shutting down MCP server...");
+    for (const [sid, transport] of transports) {
+      transport.close();
+      cleanupSession(sid);
+    }
+    httpServer.close();
+  }
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}
+
+function isInitializeRequest(body: unknown): boolean {
+  if (Array.isArray(body)) {
+    return body.some((msg) => msg?.method === "initialize");
+  }
+  return typeof body === "object" && body !== null && (body as any).method === "initialize";
 }
 
 main().catch((err) => {
