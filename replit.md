@@ -167,6 +167,29 @@ All web reservation deposit gift cards are electronic. True gift card sales (bou
 - `server/validateEnv.ts` — startup environment variable validation
 - `client/src/components/ErrorBoundary.tsx` — React error boundary
 
+## MCP Server (Claude Integration)
+- **File**: `server/mcp.ts` — standalone MCP server using stdio transport
+- **Run command**: `npx tsx server/mcp.ts`
+- **Protocol**: Model Context Protocol (MCP) via `@modelcontextprotocol/sdk`
+- **Purpose**: Lets Claude Desktop / Claude cowork query the sales database directly
+- **Tools exposed** (15 total):
+  - `get_daily_summary` — KPI overview (revenue, orders, avg order, period changes)
+  - `get_detailed_breakdown` — full revenue category breakdown (tips, taxes, refunds, gift cards, Intercard, etc.)
+  - `get_hourly_revenue` — revenue by hour of day (Eastern Time)
+  - `get_category_revenue` — revenue by product category
+  - `get_gift_card_summary` — gift card sold/redeemed/outstanding
+  - `get_gift_card_breakdown` — bowling vs laser tag deposits vs true gift card sales
+  - `get_top_selling_items` — top menu items by quantity sold
+  - `get_intercard_revenue` — arcade kiosk cash/credit revenue
+  - `get_processing_fees` — CC processing fee breakdown
+  - `get_refunds_list` — individual refund records
+  - `get_sync_status` — data sync timestamps and status
+  - `get_database_stats` — record counts per table
+  - `query_orders` — flexible order search with filters
+  - `compare_periods` — side-by-side period comparison with % changes
+  - `get_daily_revenue_trend` — daily revenue time series for trend analysis
+- **All tools** share the same date range parameters: dateRange (today/yesterday/last7days/last30days/thisMonth/lastMonth/custom) + optional startDate/endDate for custom ranges
+
 ## Security Hardening
 - **Rate limiting**: All `/api` routes limited to 100 req/min; login limited to 10 attempts per 15 min; sync endpoints limited to 5 req/min
 - **Auth on API routes**: All data-fetching routes require authenticated session (except `/api/health` and `/api/sync/status`)
