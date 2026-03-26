@@ -30,10 +30,6 @@ author = "agent"
 task = "workflow.run"
 args = "Start application"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "MCP Server"
-
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -48,18 +44,6 @@ task = "packager.installForAll"
 task = "shell.exec"
 args = "npm run dev"
 waitForPort = 5000
-
-[[workflows.workflow]]
-name = "MCP Server"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npx tsx server/mcp.ts"
-waitForPort = 3001
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [postMerge]
 path = "scripts/post-merge.sh"

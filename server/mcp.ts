@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { randomUUID } from "crypto";
-import express from "express";
+import type { Express } from "express";
 import { z } from "zod";
 import { dashboardService } from "./services/dashboardService";
 import { giftCardService } from "./services/giftCardService";
@@ -384,12 +384,14 @@ server.tool(
   return server;
 }
 
-const MCP_PORT = 3001;
+function isInitializeRequest(body: unknown): boolean {
+  if (Array.isArray(body)) {
+    return body.some((msg) => msg?.method === "initialize");
+  }
+  return typeof body === "object" && body !== null && (body as any).method === "initialize";
+}
 
-async function main() {
-  const app = express();
-  app.use(express.json());
-
+export function registerMcpRoutes(app: Express) {
   const transports = new Map<string, StreamableHTTPServerTransport>();
   const SESSION_TTL_MS = 30 * 60 * 1000;
   const MAX_SESSIONS = 50;
@@ -484,34 +486,9 @@ async function main() {
     }
   });
 
-  app.get("/health", (_req, res) => {
+  app.get("/mcp/health", (_req, res) => {
     res.json({ status: "ok", server: "perfect-game-mcp", sessions: transports.size });
   });
 
-  const httpServer = app.listen(MCP_PORT, "0.0.0.0", () => {
-    console.log(`Perfect Game MCP server listening on http://0.0.0.0:${MCP_PORT}/mcp`);
-  });
-
-  function shutdown() {
-    console.log("Shutting down MCP server...");
-    for (const [sid, transport] of transports) {
-      transport.close();
-      cleanupSession(sid);
-    }
-    httpServer.close();
-  }
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  console.log("MCP routes registered at /mcp");
 }
-
-function isInitializeRequest(body: unknown): boolean {
-  if (Array.isArray(body)) {
-    return body.some((msg) => msg?.method === "initialize");
-  }
-  return typeof body === "object" && body !== null && (body as any).method === "initialize";
-}
-
-main().catch((err) => {
-  console.error("Failed to start MCP server:", err);
-  process.exit(1);
-});

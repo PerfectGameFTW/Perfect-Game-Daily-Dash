@@ -8,6 +8,7 @@ import { authService } from "./services/authService";
 import { startScheduler } from "./services/schedulerService";
 import { validateEnv } from "./validateEnv";
 import { apiLimiter } from "./middleware/rateLimiter";
+import { registerMcpRoutes } from "./mcp";
 
 // Prevent unhandled async errors from crashing the process.
 // Node.js 15+ exits by default on unhandledRejection — this keeps the server alive.
@@ -28,6 +29,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 app.use('/api', apiLimiter);
+
+registerMcpRoutes(app);
 
 // Configure session middleware
 const PgSession = connectPgSimple(session);
