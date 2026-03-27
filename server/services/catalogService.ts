@@ -185,9 +185,11 @@ export async function syncCatalog(): Promise<{
         if (itemData.variations && Array.isArray(itemData.variations)) {
           for (const variation of itemData.variations) {
             if (!variation.id) continue;
-            const varData = (variation as Record<string, any>).itemVariationData;
-            const varName = varData?.name
-              ? `${itemName} - ${varData.name}`
+            const varName = 'itemVariationData' in variation && variation.itemVariationData
+              && typeof variation.itemVariationData === 'object'
+              && 'name' in variation.itemVariationData
+              && typeof variation.itemVariationData.name === 'string'
+              ? `${itemName} - ${variation.itemVariationData.name}`
               : itemName;
 
             await db
@@ -279,7 +281,7 @@ export async function backfillCategories(): Promise<{
     const txResult = await db.execute<{
       id: number;
       category_id: string;
-      square_data: any;
+      square_data: Record<string, unknown> | null;
     }>(sql`
       SELECT id, category_id, square_data
       FROM transactions
