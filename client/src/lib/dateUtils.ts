@@ -1,5 +1,5 @@
 import { DateRange } from "@shared/schema";
-import { format, subDays, addDays, startOfMonth, endOfMonth, subMonths, isSameDay } from "date-fns";
+import { format, subDays, addDays, startOfMonth, endOfMonth, subMonths, addMonths, isSameDay, getDate } from "date-fns";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 
 export const EASTERN_TIMEZONE = 'America/New_York';
@@ -73,6 +73,13 @@ export function getFormattedDate(dateRange: DateRange, customStartDate?: Date, c
       }
       if (formatInTimeZone(customStartDate, EASTERN_TIMEZONE, 'yyyy-MM-dd') === formatInTimeZone(customEndDate, EASTERN_TIMEZONE, 'yyyy-MM-dd')) {
         return formatInTimeZone(customStartDate, EASTERN_TIMEZONE, 'MMMM d, yyyy');
+      }
+      {
+        const startLocal = localDateFrom(formatInTimeZone(customStartDate, EASTERN_TIMEZONE, 'yyyy-MM-dd'));
+        const endLocal = localDateFrom(formatInTimeZone(customEndDate, EASTERN_TIMEZONE, 'yyyy-MM-dd'));
+        if (getDate(startLocal) === 1 && isSameDay(endLocal, endOfMonth(startLocal))) {
+          return format(startLocal, 'MMMM yyyy');
+        }
       }
       return `${formatInTimeZone(customStartDate, EASTERN_TIMEZONE, 'MMM d')} - ${formatInTimeZone(customEndDate, EASTERN_TIMEZONE, 'MMM d, yyyy')}`;
     default:
@@ -231,6 +238,27 @@ export function navigateDate(
               return { dateRange: 'today', startDate: undefined, endDate: undefined };
             }
             return { dateRange: 'custom', startDate: new Date(nextDay), endDate: new Date(nextDay) };
+          }
+        }
+
+        const isFullMonth = getDate(normalizedStartDate) === 1
+          && isSameDay(normalizedEndDate, endOfMonth(normalizedStartDate));
+
+        if (isFullMonth) {
+          if (direction === 'prev') {
+            const prevMonthStart = startOfMonth(subMonths(normalizedStartDate, 1));
+            const prevMonthEnd = endOfMonth(prevMonthStart);
+            return { dateRange: 'custom', startDate: new Date(prevMonthStart), endDate: new Date(prevMonthEnd) };
+          } else {
+            const nextMonthStart = startOfMonth(addMonths(normalizedStartDate, 1));
+            if (nextMonthStart > today) {
+              return { dateRange: 'thisMonth', startDate: undefined, endDate: undefined };
+            }
+            const nextMonthEnd = endOfMonth(nextMonthStart);
+            if (nextMonthEnd >= today) {
+              return { dateRange: 'thisMonth', startDate: undefined, endDate: undefined };
+            }
+            return { dateRange: 'custom', startDate: new Date(nextMonthStart), endDate: new Date(nextMonthEnd) };
           }
         }
 
