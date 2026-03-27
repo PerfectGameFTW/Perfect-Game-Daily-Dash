@@ -25,23 +25,46 @@ Two sync paths co-exist (legacy and service-based):
 Sync types:
 - `payments` — Square payment transactions
 - `orders` — Square orders (line items, totals)
-- `giftCards` — All active Square gift cards; activation amounts from Activities API
-- `giftCardRedemptions` — Gift card usage linked to transactions
+- `giftCards_incremental` — New gift card activations (every 60 seconds)
+- `giftCards_historical` — One-time full backfill of all ACTIVATE events (completed)
+- `giftCardRedemptions` — Gift card usage linked to transactions (every 60 seconds)
 - `refunds` — Square refunds via the dedicated Refunds API (separate from payments)
 
 ### Scheduled Sync
-`server/services/schedulerService.ts` runs every 5 minutes + nightly at 3 AM ET:
-1. Gift card full sync (all active cards)
-2. Payments sync (last 3 days nightly / last 15 min frequent)
-3. Orders sync (last 3 days nightly / last 15 min frequent)
-4. Refunds sync (last 3 days nightly / last 15 min frequent)
-5. Activation amount backfill via Gift Card Activities API
+`server/services/schedulerService.ts`:
+- **Every 60 seconds**: Payments, orders, refunds (last 15 min window), gift card incremental sync, gift card redemption sync, Intercard today sync
+- **Nightly at 3 AM ET**: Deep sync with 3-day lookback for payments/orders/refunds, catalog sync + backfill, payout fee sync
+- **On startup**: Historical backfill loops (gift cards, orders/payments, Intercard) run once in background if not already complete
+
+### Gift Card Sync (Current Architecture)
+The old `syncGiftCards()` method (which used `listGiftCards` API) has been **removed** — it was deprecated and prone to getting stuck because Square's listGiftCards has no date filter and lost pagination progress on server restart.
+
+Two sync methods now handle all gift card data:
+
+1. **Historical Backfill** (`syncGiftCardsHistoricalBackfill`):
+   - One-time full scan of ALL Square ACTIVATE events (oldest-first via Activities API)
+   - Resumable: saves cursor checkpoint after every page; restarts resume mid-scan
+   - Processes up to 20 pages (1,000 events) per call; `runBackfillUntilComplete()` loops until done
+   - Completed: 32,279 events processed (sync_state `giftCards_historical`, `is_complete=true`)
+   - Has a 3-minute stale lock timeout — if stuck `in_progress` for >3 min, auto-resets
+
+2. **Incremental Sync** (`syncIncrementalGiftCards`):
+   - Runs every 60 seconds via scheduler
+   - Fetches only ACTIVATE events newer than the last watermark (with 2-minute overlap buffer)
+   - For each new activation: looks up or creates the gift card record, links the activation order ID
+   - **Stale lock safeguard**: If the sync has been stuck `in_progress` for >10 minutes, it force-resets with a warning log (`⚠️ STALE LOCK DETECTED`) and allows the next cycle to proceed
+   - **Deleted card fallback**: If Square returns 404 for a card (fully redeemed and removed), creates a basic record from the ACTIVATE event data (squareId, activation amount, order ID) instead of skipping — ensures short-lived web reservation deposit cards are still tracked
+
+### Stale Lock Safeguard (applies to all sync types with concurrency guards)
+- **Problem**: If the server crashes or restarts while a sync is `in_progress`, the concurrency guard blocks all future runs indefinitely
+- **Fix**: Both `syncIncrementalGiftCards` (10-min timeout) and `syncGiftCardsHistoricalBackfill` (3-min timeout) check elapsed time since `lastSyncedAt` and force-reset if the lock is stale
+- **Alert**: When a stale lock is detected, a `console.warn` is emitted with the duration, making it visible in server logs
 
 ### Historical Catch-up
 `POST /api/sync/historical` — starts a background process that chunks through monthly date ranges from a given start date through today, syncing orders, payments, and refunds for each chunk, then runs a full gift card sync and activation backfill.
 
-### Gift Card Historical Backfill (Task #4 fix)
-`POST /api/sync/gift-cards-backfill` — resumable backfill that pages through ALL Square ACTIVATE events oldest-first via the Activities API. Saves a cursor checkpoint after every page so restarts resume mid-scan. Each call processes up to 20 pages (1,000 events). Call repeatedly until `finished: true` is returned. This fixes the March 9-20 gap where 228 cards were missed because `listGiftCards` has no date filter and lost pagination progress on server restart.
+### Gift Card Historical Backfill Endpoint (Task #4 fix)
+`POST /api/sync/gift-cards-backfill` — triggers the Activities-API-based historical backfill described above. Call repeatedly until `finished: true` is returned. This fixed the March 9-20 gap where 228 cards were missed.
 
 ## Gift Card Activation Amounts
 Fixed in Task #1. Root cause was that `activation_amount` was being set from current balance (wrong for spent cards). Now uses Square Gift Card Activities API (`ACTIVATE` events) as the authoritative source.
@@ -51,10 +74,16 @@ Key function: `server/squareClient.ts → fetchGiftCardActivitiesMap()` — retu
 Repair/backfill: `server/services/enhancedGiftCardFix.ts → backfillGiftCardActivationAmounts()`.
 
 ## Bugs Fixed in Task #4 (March 9-20 gift card data gap)
-1. **Bug 1 (PRIMARY)**: `syncGiftCards()` used `listGiftCards` API with no cursor checkpoint — server restarts lost pagination progress, leaving March 9-20 cards unreachable. Fixed by adding `syncGiftCardsHistoricalBackfill()` using Activities API with saved cursor.
+1. **Bug 1 (PRIMARY)**: `syncGiftCards()` used `listGiftCards` API with no cursor checkpoint — server restarts lost pagination progress, leaving March 9-20 cards unreachable. Fixed by adding `syncGiftCardsHistoricalBackfill()` using Activities API with saved cursor. The old `syncGiftCards()` has since been fully removed.
 2. **Bug 2 (field name)**: `syncService.ts` was setting `currentBalance` instead of `amount` in nightly full sync updates (silent no-op since `currentBalance` doesn't exist in schema). Fixed to use `amount`.
 3. **Bug 3 (timezone)**: `convertSquareGiftCardToGiftCard()` called `toZonedTime()` which stored Eastern local time with UTC label (off by 4-5 hours). Fixed to store raw UTC directly from Square's `createdAt`. Historical backfill re-writes existing records with correct UTC timestamps.
 4. **Bug 4 (schema drift)**: `activation_payment_id` column existed in DB but not in Drizzle schema. Added `activationPaymentId: integer("activation_payment_id")` to `shared/schema.ts`.
+
+## Bugs Fixed: Gift Card Sync Stuck Locks (March 2026)
+1. **Incremental sync frozen**: `giftCards_incremental` was stuck `in_progress` since March 23 due to a server crash mid-sync. The concurrency guard had no timeout, blocking all future runs indefinitely. Fixed by adding a 10-minute stale lock timeout with `console.warn` alert.
+2. **Gift card redemption misclassification**: 8 of 9 redemptions were showing as "Gift Card Redemptions" instead of "Bowling Deposit Redemptions" because the incremental sync was frozen and those cards were never synced to the DB. The classification pipeline's DB lookup (tier 1) couldn't find them, so it fell back to the ACTIVATE API (tier 2) which correctly classified them — but the root cause was the missing DB records.
+3. **Deleted card gap**: When Square deletes a fully-redeemed gift card, `fetchGiftCardById` returns 404 and the incremental sync silently skipped it, leaving no DB record. Fixed to create a basic record from the ACTIVATE event data (squareId, activation amount, order ID) so classification still works.
+4. **Deprecated syncGiftCards removed**: The old `syncGiftCards()` method (~150 lines) and its stuck DB record (`giftCards` sync_state, frozen at 2400/8032 since March 21) were fully removed. All gift card sync now flows through `syncGiftCardsHistoricalBackfill` (completed) and `syncIncrementalGiftCards` (60-second cycle).
 
 ## Refund & Return Tracking (Task #10)
 Root cause: Dashboard showed $0.00 refunds because it checked for negative payment amounts, but Square stores refunds as separate API objects (not negative payments). Fixed by:
