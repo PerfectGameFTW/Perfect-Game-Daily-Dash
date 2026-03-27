@@ -345,7 +345,7 @@ export class DashboardService {
               for (const row of orderRows.rows) {
                 orderSourceMap.set(row.square_id, row.source);
               }
-              for (const [gcId, orderId] of gcToOrderId) {
+              for (const [gcId, orderId] of Array.from(gcToOrderId.entries())) {
                 const source = orderSourceMap.get(orderId) ?? null;
                 if (source) {
                   sourceMap.set(gcId, source);

@@ -78,27 +78,34 @@ export async function syncCatalog(): Promise<{
     const categoryMap = new Map<string, string>();
 
     try {
-      for await (const obj of squareClient.catalog.list({ types: 'CATEGORY' })) {
-        if (obj.type !== 'CATEGORY' || !obj.categoryData) continue;
-        const catId = obj.id;
-        const catName = obj.categoryData.name || 'Unnamed Category';
-        categoryMap.set(catId, catName);
+      let catPage = await squareClient.catalog.list({ types: 'CATEGORY' });
+      while (true) {
+        const objects = catPage.data ?? [];
+        for (const obj of objects) {
+          if (obj.type !== 'CATEGORY' || !obj.categoryData) continue;
+          const catId = obj.id as string;
+          if (!catId) continue;
+          const catName = obj.categoryData.name || 'Unnamed Category';
+          categoryMap.set(catId, catName);
 
-        await db
-          .insert(squareCategories)
-          .values({
-            squareCategoryId: catId,
-            name: catName,
-            updatedAt: new Date(),
-          } satisfies InsertSquareCategory)
-          .onConflictDoUpdate({
-            target: squareCategories.squareCategoryId,
-            set: {
+          await db
+            .insert(squareCategories)
+            .values({
+              squareCategoryId: catId,
               name: catName,
               updatedAt: new Date(),
-            },
-          });
-        categoryCount++;
+            } satisfies InsertSquareCategory)
+            .onConflictDoUpdate({
+              target: squareCategories.squareCategoryId,
+              set: {
+                name: catName,
+                updatedAt: new Date(),
+              },
+            });
+          categoryCount++;
+        }
+        if (!catPage.hasNextPage() || objects.length === 0) break;
+        catPage = await catPage.getNextPage();
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -109,7 +116,10 @@ export async function syncCatalog(): Promise<{
     console.log(`[CatalogSync] Synced ${categoryCount} categories`);
 
     try {
-      for await (const obj of squareClient.catalog.list({ types: 'ITEM' })) {
+      let itemPage = await squareClient.catalog.list({ types: 'ITEM' });
+      while (true) {
+        const itemObjects = itemPage.data ?? [];
+        for (const obj of itemObjects) {
         if (obj.type !== 'ITEM' || !obj.itemData) continue;
 
         const itemData = obj.itemData;
@@ -175,8 +185,9 @@ export async function syncCatalog(): Promise<{
         if (itemData.variations && Array.isArray(itemData.variations)) {
           for (const variation of itemData.variations) {
             if (!variation.id) continue;
-            const varName = variation.itemVariationData?.name
-              ? `${itemName} - ${variation.itemVariationData.name}`
+            const varData = (variation as Record<string, any>).itemVariationData;
+            const varName = varData?.name
+              ? `${itemName} - ${varData.name}`
               : itemName;
 
             await db
@@ -200,6 +211,9 @@ export async function syncCatalog(): Promise<{
             itemCount++;
           }
         }
+        }
+        if (!itemPage.hasNextPage() || itemObjects.length === 0) break;
+        itemPage = await itemPage.getNextPage();
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

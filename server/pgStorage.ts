@@ -268,7 +268,8 @@ class PgStorage implements IStorage {
       soldAmount,
       redeemedCount,
       redeemedAmount,
-      averageValue
+      averageValue,
+      outstandingBalance: soldAmount - redeemedAmount
     };
   }
 
