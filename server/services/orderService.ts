@@ -132,7 +132,28 @@ export class OrderService {
     
     return result[0];
   }
-  
+
+  async createOrderModifier(modifierData: InsertOrderModifier): Promise<OrderModifier> {
+    const result = await db.insert(orderModifiers).values(modifierData).returning();
+    if (!result.length) {
+      throw new OrderError('Failed to create order modifier', 'DB_ERROR');
+    }
+    return result[0];
+  }
+
+  async getOrderDiscounts(orderId: number): Promise<OrderDiscount[]> {
+    return await db.select().from(orderDiscounts)
+      .where(eq(orderDiscounts.orderId, orderId));
+  }
+
+  async createOrderDiscount(discountData: InsertOrderDiscount): Promise<OrderDiscount> {
+    const result = await db.insert(orderDiscounts).values(discountData).returning();
+    if (!result.length) {
+      throw new OrderError('Failed to create order discount', 'DB_ERROR');
+    }
+    return result[0];
+  }
+
   /**
    * Create a complete order with items, modifiers, and discounts
    * 

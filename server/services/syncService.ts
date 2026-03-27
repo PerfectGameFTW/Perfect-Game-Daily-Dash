@@ -400,6 +400,75 @@ export class SyncService {
               source: orderData.source,
               squareData: orderData.squareData,
             });
+
+            const existingOrderId = Number(existingOrder.id);
+            if (squareOrder.lineItems && squareOrder.lineItems.length > 0 && existingOrderId > 0) {
+              const existingLineItems = await orderService.getOrderItems(existingOrderId);
+              const existingUids = new Set(
+                existingLineItems
+                  .map((li: any) => li.squareData?.uid)
+                  .filter(Boolean)
+              );
+
+              let backfilledCount = 0;
+              for (const squareLineItem of squareOrder.lineItems) {
+                if (squareLineItem.uid && existingUids.has(squareLineItem.uid)) {
+                  continue;
+                }
+                try {
+                  const lineItemData = squareClient.convertSquareLineItemToOrderLineItem(
+                    squareLineItem,
+                    existingOrderId
+                  );
+                  const lineItem = await orderService.createOrderItem(lineItemData);
+                  backfilledCount++;
+
+                  if (squareLineItem.modifiers && squareLineItem.modifiers.length > 0) {
+                    for (const squareModifier of squareLineItem.modifiers) {
+                      try {
+                        const modifierData = squareClient.convertSquareModifierToOrderModifier(
+                          squareModifier,
+                          lineItem.id
+                        );
+                        await orderService.createOrderModifier(modifierData);
+                      } catch (modifierError) {
+                        console.error(`Error creating modifier for updated order ${orderData.squareId}:`, modifierError);
+                      }
+                    }
+                  }
+                } catch (lineItemError) {
+                  console.error(`Error creating line item for updated order ${orderData.squareId}:`, lineItemError);
+                }
+              }
+              if (backfilledCount > 0) {
+                console.log(`Backfilled ${backfilledCount} missing line item(s) for order ${orderData.squareId}`);
+              }
+            }
+
+            if (squareOrder.discounts && squareOrder.discounts.length > 0 && existingOrderId > 0) {
+              const existingDiscounts = await orderService.getOrderDiscounts(existingOrderId);
+              const existingDiscountUids = new Set(
+                existingDiscounts
+                  .map((d: any) => d.squareData?.uid)
+                  .filter(Boolean)
+              );
+
+              for (const squareDiscount of squareOrder.discounts) {
+                if (squareDiscount.uid && existingDiscountUids.has(squareDiscount.uid)) {
+                  continue;
+                }
+                try {
+                  const discountData = squareClient.convertSquareDiscountToOrderDiscount(
+                    squareDiscount,
+                    existingOrderId
+                  );
+                  await orderService.createOrderDiscount(discountData);
+                } catch (discountError) {
+                  console.error(`Error creating discount for updated order ${orderData.squareId}:`, discountError);
+                }
+              }
+            }
+
             updated++;
           } else {
             // Order doesn't exist, create it
