@@ -275,7 +275,8 @@ export function createApiRouter(): Router {
           console.log('Starting catalog sync');
           const { syncCatalog: runCatalogSync } = await import('../services/catalogService');
           result = await runCatalogSync();
-          console.log(`Catalog sync completed: ${(result as any).categories} categories, ${(result as any).items} items`);
+          const catalogResult = result as { categories: number; items: number; errors: string[] };
+          console.log(`Catalog sync completed: ${catalogResult.categories} categories, ${catalogResult.items} items`);
           break;
         case 'missing_payments':
           console.log('Starting payment reconciliation sync');
