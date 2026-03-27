@@ -127,15 +127,15 @@ export async function syncCatalog(): Promise<{
           }
         }
 
-        if (!categoryId && (itemData as any).reportingCategory?.id) {
-          categoryId = (itemData as any).reportingCategory.id;
+        if (!categoryId && itemData.reportingCategory?.id) {
+          categoryId = itemData.reportingCategory.id;
           if (categoryId && categoryMap.has(categoryId)) {
             categoryName = categoryMap.get(categoryId)!;
           }
         }
 
-        if (!categoryId && (itemData as any).categoryId) {
-          categoryId = (itemData as any).categoryId;
+        if (!categoryId && itemData.categoryId) {
+          categoryId = itemData.categoryId;
           if (categoryId && categoryMap.has(categoryId)) {
             categoryName = categoryMap.get(categoryId)!;
           }
@@ -274,9 +274,9 @@ export async function backfillCategories(): Promise<{
     for (const row of txResult.rows) {
       const squareData =
         typeof row.square_data === 'object' && row.square_data !== null
-          ? (row.square_data as any)
+          ? (row.square_data as Record<string, unknown>)
           : {};
-      const orderId = squareData.orderId;
+      const orderId = squareData.orderId as string | undefined;
       if (!orderId) continue;
 
       const orderLineItemsResult = await db.execute<{

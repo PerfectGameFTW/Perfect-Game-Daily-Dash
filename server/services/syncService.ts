@@ -592,8 +592,14 @@ export class SyncService {
       });
       
       try {
+        console.log('[SyncPayments] Syncing catalog before processing payments...');
+        const catalogResult = await syncCatalog();
+        console.log(`[SyncPayments] Catalog sync complete: ${catalogResult.categories} categories, ${catalogResult.items} items`);
         await preloadCatalogCache();
-      } catch (_) {}
+      } catch (catalogError) {
+        console.error('[SyncPayments] Catalog sync failed, continuing with fallback heuristics:', catalogError);
+        try { await preloadCatalogCache(); } catch (_) {}
+      }
 
       const squarePayments = await squareClient.fetchPayments(startDate, endDate);
       
@@ -611,7 +617,7 @@ export class SyncService {
             continue;
           }
           
-          if (paymentData.categoryId === 'retail' && squarePayment.orderId) {
+          if (squarePayment.orderId) {
             try {
               const lineItemRows = await db.execute<{ product_id: string | null }>(sql`
                 SELECT oli.product_id
@@ -621,10 +627,10 @@ export class SyncService {
                 AND oli.product_id IS NOT NULL
                 LIMIT 5
               `);
-              const { lookupCategorySync } = await import('./catalogService');
+              const { lookupCategorySync: lookupCatSync } = await import('./catalogService');
               for (const row of lineItemRows.rows) {
                 if (row.product_id) {
-                  const cat = lookupCategorySync(row.product_id);
+                  const cat = lookupCatSync(row.product_id);
                   if (cat) { paymentData.categoryId = cat; break; }
                 }
               }
