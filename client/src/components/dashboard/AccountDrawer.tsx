@@ -53,25 +53,7 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
                 onClick={() => handleNavigate('/admin')}
               >
                 <ShieldCheck className="h-5 w-5 text-primary" />
-                Admin Dashboard
-              </Button>
-            )}
-            <Button 
-              variant="outline" 
-              className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
-              onClick={() => handleNavigate('/')}
-            >
-              <User className="h-5 w-5 text-primary" />
-              Dashboard
-            </Button>
-            {user?.role === 'admin' && (
-              <Button 
-                variant="outline" 
-                className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
-                onClick={() => handleNavigate('/gift-card-test')}
-              >
-                <CreditCard className="h-5 w-5 text-primary" />
-                Gift Card Test
+                Users
               </Button>
             )}
             <Button 
