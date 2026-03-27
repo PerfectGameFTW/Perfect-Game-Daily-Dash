@@ -181,7 +181,7 @@ export default function TimeframeModal({
                 </div>
               </div>
               
-              <div className="bg-black/40 p-6 rounded-xl border border-white/10 shadow-lg">
+              <div className="bg-black/40 p-6 rounded-xl border border-white/10 shadow-lg [&_.rdp-caption_label]:text-white [&_.rdp-head_cell]:text-white/70 [&_.rdp-cell]:text-white [&_.rdp-day]:text-white [&_.rdp-day_disabled]:text-white/30 [&_.rdp-nav_button]:text-white [&_.rdp-nav_button]:border-white/20 [&_.rdp-day_selected]:bg-primary [&_.rdp-day_selected]:text-white [&_.rdp-day_range_middle]:bg-primary/20 [&_.rdp-day_today]:border-primary [&_.rdp-button]:hover:bg-white/10">
                 <CalendarComponent
                   mode="range"
                   selected={{
