@@ -77,7 +77,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const refunds = toNum(data?.refunds);
   const returns = toNum(data?.returns);
   const discounts = toNum(detailedTransactions?.discountsAndComps);
-  const depositClearings = toNum(data?.depositClearings) || toNum(detailedTransactions?.depositClearings);
+  const depositClearings = toNum(data?.depositClearings);
   const tips = toNum(detailedTransactions?.tips);
   const serviceCharges = toNum(detailedTransactions?.serviceCharges);
   const autoGratuity = toNum(detailedTransactions?.autoGratuity);
