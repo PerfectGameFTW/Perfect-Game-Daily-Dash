@@ -991,10 +991,15 @@ export class SyncService {
 
     let state = await this.getSyncState(SYNC_TYPE);
 
-    // Concurrency guard — skip if a previous run is still in progress
+    const STALE_LOCK_MS = 10 * 60 * 1000;
     if (state?.status === 'in_progress') {
-      console.log('[IncrementalGiftCardSync] Previous run still in progress — skipping this cycle');
-      return { processed: 0, created: 0, updated: 0, failed: 0, sinceDate: 'skipped' };
+      const elapsed = state.lastSyncedAt ? Date.now() - new Date(state.lastSyncedAt).getTime() : Infinity;
+      if (elapsed < STALE_LOCK_MS) {
+        console.log('[IncrementalGiftCardSync] Previous run still in progress — skipping this cycle');
+        return { processed: 0, created: 0, updated: 0, failed: 0, sinceDate: 'skipped' };
+      }
+      console.warn(`[IncrementalGiftCardSync] ⚠️ STALE LOCK DETECTED — sync has been stuck in_progress for ${Math.round(elapsed / 60000)} minutes. Force-resetting to allow next cycle.`);
+      await this.updateSyncState(state.id, { status: 'completed', isComplete: true });
     }
 
     // Determine the lookback cutoff (with overlap buffer)
@@ -1086,18 +1091,24 @@ export class SyncService {
             }
             updated++;
           } else {
-            // Brand-new card — fetch from Square and insert
             const squareCard = await squareClient.fetchGiftCardById(giftCardId);
-            if (!squareCard) {
-              console.warn(`[IncrementalGiftCardSync] Could not fetch card ${giftCardId} from Square — will retry next cycle`);
-              failed++;
-              continue;
+            if (squareCard) {
+              const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
+              if (squareOrderId) cardData.activationSquareOrderId = squareOrderId;
+              await giftCardService.createGiftCard(cardData);
+            } else {
+              console.warn(`[IncrementalGiftCardSync] Card ${giftCardId} no longer exists in Square (likely fully redeemed) — creating from ACTIVATE event data`);
+              await giftCardService.createGiftCard({
+                squareId: giftCardId,
+                gan: null,
+                amount: 0,
+                isActive: false,
+                activationAmount: activationAmountDollars || null,
+                purchaseDate: new Date(),
+                activationSquareOrderId: squareOrderId || null,
+              });
             }
-
-            const cardData = squareClient.convertSquareGiftCardToGiftCard(squareCard, activationAmountDollars);
-            if (squareOrderId) cardData.activationSquareOrderId = squareOrderId;
-            await giftCardService.createGiftCard(cardData);
-            existingSquareIds.add(giftCardId); // prevent double-insert in same run
+            existingSquareIds.add(giftCardId);
             created++;
           }
 
