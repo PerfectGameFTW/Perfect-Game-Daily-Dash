@@ -151,6 +151,9 @@ class PgStorage implements IStorage {
     } else if (dateRange === 'yesterday') {
       previousStart.setDate(previousStart.getDate() - 1);
       previousEnd.setDate(previousEnd.getDate() - 1);
+    } else if (dateRange === 'yearToDate') {
+      previousStart.setFullYear(previousStart.getFullYear() - 1);
+      previousEnd.setFullYear(previousEnd.getFullYear() - 1);
     } else if (dateRange === 'thisMonth' || dateRange === 'lastMonth') {
       previousStart.setMonth(previousStart.getMonth() - 1);
       previousEnd.setMonth(previousEnd.getMonth() - 1);

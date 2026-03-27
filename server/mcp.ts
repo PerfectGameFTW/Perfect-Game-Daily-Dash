@@ -29,6 +29,7 @@ const dateRangeValues = [
   "last30days",
   "thisMonth",
   "lastMonth",
+  "yearToDate",
   "custom",
 ] as const;
 

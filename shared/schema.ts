@@ -22,6 +22,7 @@ export const dateRangeSchema = z.enum([
   "last30days",
   "thisMonth",
   "lastMonth",
+  "yearToDate",
   "custom",
 ]);
 

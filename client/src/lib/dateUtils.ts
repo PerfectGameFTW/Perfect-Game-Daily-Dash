@@ -67,6 +67,8 @@ export function getFormattedDate(dateRange: DateRange, customStartDate?: Date, c
       return format(todayET, 'MMMM yyyy');
     case "lastMonth":
       return format(subMonths(todayET, 1), 'MMMM yyyy');
+    case "yearToDate":
+      return `Jan 1 - ${format(todayET, 'MMMM d, yyyy')}`;
     case "custom":
       if (!customStartDate || !customEndDate) {
         return format(todayET, 'MMMM d, yyyy');
@@ -216,6 +218,16 @@ export function navigateDate(
         return { dateRange: 'custom', startDate: twoMonthsAgoStart, endDate: twoMonthsAgoEnd };
       } else {
         return { dateRange: 'thisMonth', startDate: undefined, endDate: undefined };
+      }
+
+    case 'yearToDate':
+      if (direction === 'prev') {
+        const prevYear = today.getFullYear() - 1;
+        const prevYearStart = new Date(prevYear, 0, 1);
+        const prevYearEnd = new Date(prevYear, 11, 31);
+        return { dateRange: 'custom', startDate: prevYearStart, endDate: prevYearEnd };
+      } else {
+        return { dateRange: 'yearToDate', startDate: undefined, endDate: undefined };
       }
 
     case 'custom':

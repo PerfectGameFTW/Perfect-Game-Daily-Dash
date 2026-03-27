@@ -121,6 +121,13 @@ export function getEasternDateRange(
         break;
       }
 
+      case 'yearToDate': {
+        const [year] = todayET.split('-');
+        startStr = `${year}-01-01`;
+        endStr   = todayET;
+        break;
+      }
+
       default:
         startStr = todayET;
         endStr   = todayET;
@@ -194,6 +201,13 @@ export function getEasternBusinessDateStrings(
         const lastMonthEnd   = endOfMonth(lastMonthStart);
         startStr = format(lastMonthStart, 'yyyy-MM-dd');
         endStr   = format(lastMonthEnd,   'yyyy-MM-dd');
+        break;
+      }
+
+      case 'yearToDate': {
+        const [year] = todayET.split('-');
+        startStr = `${year}-01-01`;
+        endStr   = todayET;
         break;
       }
 

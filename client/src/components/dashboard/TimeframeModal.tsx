@@ -96,7 +96,7 @@ export default function TimeframeModal({
     { label: "Today", value: "today" },
     { label: "Weekly", value: "last7days" },
     { label: "Monthly", value: "thisMonth" },
-    { label: "Year to Date", value: "last30days" },
+    { label: "Year to Date", value: "yearToDate" },
     { label: "Custom date", value: "custom" },
   ];
 

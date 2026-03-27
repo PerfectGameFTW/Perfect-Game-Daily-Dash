@@ -93,10 +93,9 @@ export default function DateRangePicker({
         <SelectContent>
           <SelectItem value="today">Today</SelectItem>
           <SelectItem value="yesterday">Yesterday</SelectItem>
-          <SelectItem value="last7days">Last 7 days</SelectItem>
-          <SelectItem value="last30days">Last 30 days</SelectItem>
-          <SelectItem value="thisMonth">This Month</SelectItem>
-          <SelectItem value="lastMonth">Last Month</SelectItem>
+          <SelectItem value="last7days">Weekly</SelectItem>
+          <SelectItem value="thisMonth">Monthly</SelectItem>
+          <SelectItem value="yearToDate">Year to Date</SelectItem>
           <SelectItem value="custom">Custom Range</SelectItem>
         </SelectContent>
       </Select>

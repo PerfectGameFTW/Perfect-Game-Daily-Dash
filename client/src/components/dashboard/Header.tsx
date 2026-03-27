@@ -54,10 +54,12 @@ export default function Header({
           : dateRange === 'last7days'
             ? 'This Week'
             : dateRange === 'last30days'
-              ? 'This Year'
-              : dateRange === 'custom' && !customStartDate
-                ? 'Custom Range'
-                : format(today, 'MMM d, yyyy');
+              ? 'Last 30 Days'
+              : dateRange === 'yearToDate'
+                ? 'Year to Date'
+                : dateRange === 'custom' && !customStartDate
+                  ? 'Custom Range'
+                  : format(today, 'MMM d, yyyy');
   }
   
   const handlePrevDate = (e: React.MouseEvent) => {
@@ -95,7 +97,7 @@ export default function Header({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
-                      <p>Previous {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : 'period'}</p>
+                      <p>Previous {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : dateRange === 'yearToDate' ? 'year' : 'period'}</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -120,7 +122,7 @@ export default function Header({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
-                      <p>Next {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : 'period'}</p>
+                      <p>Next {dateRange === 'today' ? 'day' : dateRange === 'last7days' ? 'week' : dateRange === 'thisMonth' ? 'month' : dateRange === 'yearToDate' ? 'year' : 'period'}</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
