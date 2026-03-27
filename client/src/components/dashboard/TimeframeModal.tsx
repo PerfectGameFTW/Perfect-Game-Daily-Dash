@@ -128,7 +128,7 @@ export default function TimeframeModal({
             Select a timeframe for your dashboard data
           </div>
         </DrawerHeader>
-        <div className="px-6 py-4 overflow-y-auto">
+        <div className="px-6 py-4">
           {/* Predefined timeframes */}
           {!calendarOpen && (
             <>
