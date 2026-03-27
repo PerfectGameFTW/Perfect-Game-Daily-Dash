@@ -75,7 +75,7 @@ export default function Header({
   };
 
   return (
-    <header className="backdrop-blur-sm border-b border-border bg-card/80 px-4 py-4">
+    <header className="backdrop-blur-sm border-b border-border bg-card/80 px-4 py-4 pt-[calc(env(safe-area-inset-top,0px)+1rem)]">
       <div className="w-full max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center">
