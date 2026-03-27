@@ -628,10 +628,12 @@ export class SyncService {
                 LIMIT 5
               `);
               const { lookupCategorySync: lookupCatSync } = await import('./catalogService');
-              for (const row of lineItemRows.rows) {
-                if (row.product_id) {
-                  const cat = lookupCatSync(row.product_id);
-                  if (cat) { paymentData.categoryId = cat; break; }
+              if (paymentData.categoryId !== 'giftCard') {
+                for (const row of lineItemRows.rows) {
+                  if (row.product_id) {
+                    const cat = lookupCatSync(row.product_id);
+                    if (cat) { paymentData.categoryId = cat; break; }
+                  }
                 }
               }
             } catch (_) {}
