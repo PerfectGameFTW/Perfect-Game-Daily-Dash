@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { DateRange } from "@shared/schema";
-import { ChevronRight, Calendar, ArrowLeft, CheckCircle } from "lucide-react";
+import { Calendar, ArrowLeft, CheckCircle } from "lucide-react";
 import { format, addDays, isAfter, isBefore, isSameDay } from "date-fns";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -100,8 +100,6 @@ export default function TimeframeModal({
     { label: "Custom date", value: "custom" },
   ];
 
-  // Format reporting hours (just for display)
-  const reportingHours = "All day · 12:00 AM — 11:59 PM EST";
   
   // Custom date selection display
   const getDateRangePreview = () => {
@@ -153,22 +151,6 @@ export default function TimeframeModal({
                 ))}
               </div>
 
-              <div className="mt-6 border border-white/10 rounded-xl bg-black/30 overflow-hidden transition-all hover:border-primary/30">
-                <div className="p-4 flex items-center justify-between cursor-pointer">
-                  <div className="flex items-center">
-                    <div className="h-10 w-10 rounded-lg bg-red-600/10 flex items-center justify-center mr-3">
-                      <Calendar className="h-5 w-5 text-red-600" />
-                    </div>
-                    <span className="font-medium text-white">Reporting hours</span>
-                  </div>
-                  <div className="flex items-center">
-                    <span className="text-sm text-white/60 mr-2">
-                      {reportingHours}
-                    </span>
-                    <ChevronRight className="h-4 w-4 text-white/40" />
-                  </div>
-                </div>
-              </div>
             </>
           )}
 
