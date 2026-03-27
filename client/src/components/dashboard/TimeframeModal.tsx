@@ -173,19 +173,25 @@ export default function TimeframeModal({
                     ? "Tap a start date" 
                     : !endDate 
                       ? "Now tap an end date" 
-                      : ""}
+                      : "Tap a date card to change it"}
                 </p>
               </div>
 
               <div className="flex gap-3 mb-4">
-                <div className={`flex-1 p-3 rounded-lg border ${startDate ? 'border-primary bg-primary/10' : 'border-white/10 bg-white/5'}`}>
+                <button
+                  className={`flex-1 p-3 rounded-lg border text-left cursor-pointer transition-all ${startDate ? 'border-primary bg-primary/10 hover:bg-primary/20' : 'border-white/10 bg-white/5'}`}
+                  onClick={() => { setStartDate(undefined); setEndDate(undefined); }}
+                >
                   <p className="text-white/50 text-xs mb-1">Start</p>
                   <p className="text-white font-medium text-sm">{startDate ? format(startDate, "MMM d, yyyy") : "—"}</p>
-                </div>
-                <div className={`flex-1 p-3 rounded-lg border ${endDate ? 'border-primary bg-primary/10' : 'border-white/10 bg-white/5'}`}>
+                </button>
+                <button
+                  className={`flex-1 p-3 rounded-lg border text-left cursor-pointer transition-all ${endDate ? 'border-primary bg-primary/10 hover:bg-primary/20' : 'border-white/10 bg-white/5'}`}
+                  onClick={() => { if (endDate) setEndDate(undefined); }}
+                >
                   <p className="text-white/50 text-xs mb-1">End</p>
                   <p className="text-white font-medium text-sm">{endDate ? format(endDate, "MMM d, yyyy") : "—"}</p>
-                </div>
+                </button>
               </div>
               
               <div className="bg-black/40 p-6 rounded-xl border border-white/10 shadow-lg">
