@@ -348,6 +348,15 @@ export async function runFrequentSync(): Promise<void> {
     console.error(`${label} Intercard sync failed:`, err);
   }
 
+  try {
+    const result = await syncService.syncGiftCardRedemptions(startOfTodayET);
+    if (result.created > 0) {
+      console.log(`${label} Gift card redemptions: +${result.created} new`);
+    }
+  } catch (err) {
+    console.error(`${label} Gift card redemptions sync failed:`, err);
+  }
+
   broadcast('data-updated', { syncType: 'frequent' });
 }
 
