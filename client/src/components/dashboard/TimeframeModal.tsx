@@ -181,7 +181,7 @@ export default function TimeframeModal({
                 </div>
               </div>
               
-              <div className="bg-black/40 p-6 rounded-xl border border-white/10 shadow-lg [&_.rdp-caption_label]:text-white [&_.rdp-head_cell]:text-white/70 [&_.rdp-cell]:text-white [&_.rdp-day]:text-white [&_.rdp-day_disabled]:text-white/30 [&_.rdp-nav_button]:text-white [&_.rdp-nav_button]:border-white/20 [&_.rdp-day_selected]:bg-primary [&_.rdp-day_selected]:text-white [&_.rdp-day_range_middle]:bg-primary/20 [&_.rdp-day_today]:border-primary [&_.rdp-button]:hover:bg-white/10">
+              <div className="bg-black/40 p-6 rounded-xl border border-white/10 shadow-lg">
                 <CalendarComponent
                   mode="range"
                   selected={{
@@ -196,6 +196,17 @@ export default function TimeframeModal({
                     after: new Date()
                   }}
                   className="mx-auto"
+                  classNames={{
+                    caption_label: "text-sm font-medium text-white",
+                    head_cell: "text-white/70 rounded-md w-9 font-normal text-[0.8rem]",
+                    day: "h-9 w-9 p-0 font-normal text-white hover:bg-white/10 hover:text-white aria-selected:opacity-100 inline-flex items-center justify-center rounded-md text-sm ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    day_selected: "bg-primary text-white hover:bg-primary hover:text-white focus:bg-primary focus:text-white",
+                    day_today: "bg-white/10 text-white",
+                    day_outside: "day-outside text-white/30 opacity-50 aria-selected:bg-accent/50 aria-selected:text-white/50 aria-selected:opacity-30",
+                    day_disabled: "text-white/20 opacity-50",
+                    day_range_middle: "aria-selected:bg-primary/20 aria-selected:text-white",
+                    nav_button: "h-7 w-7 bg-transparent p-0 text-white opacity-70 hover:opacity-100 border border-white/20 rounded-md inline-flex items-center justify-center",
+                  }}
                 />
               </div>
               
