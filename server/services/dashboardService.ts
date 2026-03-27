@@ -10,7 +10,7 @@ import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
 import { payoutService } from './payoutService';
 import { intercardService } from './intercardService';
-import { fetchGiftCardRedeemActivities } from '../squareClient';
+import { fetchGiftCardRedeemActivities, fetchGiftCardActivateActivity } from '../squareClient';
 import { 
   type DateRange,
   type DailySummary,
@@ -326,37 +326,34 @@ export class DashboardService {
           );
           fallbackAttempted = unresolvedGcIds.length;
           if (unresolvedGcIds.length > 0) {
-            const heuristicRows = await db.execute<{
-              gc_square_id: string;
-              order_source: string;
-              diff_hours: string;
-            }>(sql`
-              SELECT DISTINCT ON (gc.square_id)
-                gc.square_id AS gc_square_id,
-                o.source AS order_source,
-                ROUND(ABS(EXTRACT(EPOCH FROM (o.created_at - gc.purchase_date))) / 3600, 1) AS diff_hours
-              FROM gift_cards gc
-              CROSS JOIN LATERAL (
-                SELECT source, created_at
-                FROM ${ordersTable}
-                WHERE total_money = gc.activation_amount
-                  AND source IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
-                ORDER BY ABS(EXTRACT(EPOCH FROM (created_at - gc.purchase_date)))
-                LIMIT 1
-              ) o
-              WHERE gc.square_id IN ${sql`(${sql.join(unresolvedGcIds.map(id => sql`${id}`), sql`, `)})`}
-              ORDER BY gc.square_id
-            `);
-            for (const row of heuristicRows.rows) {
-              sourceMap.set(row.gc_square_id, row.order_source);
-              fallbackSuccesses++;
+            const gcToOrderId = new Map<string, string>();
+            const activatePromises = unresolvedGcIds.map(async (gcId) => {
+              const activateResult = await fetchGiftCardActivateActivity(gcId);
+              if (activateResult?.squareOrderId) {
+                gcToOrderId.set(gcId, activateResult.squareOrderId);
+              }
+            });
+            await Promise.all(activatePromises);
+
+            if (gcToOrderId.size > 0) {
+              const orderIds = Array.from(gcToOrderId.values());
+              const orderRows = await db.execute<{ square_id: string; source: string }>(sql`
+                SELECT square_id, source FROM ${ordersTable}
+                WHERE square_id IN ${sql`(${sql.join(orderIds.map(id => sql`${id}`), sql`, `)})`}
+              `);
+              const orderSourceMap = new Map<string, string>();
+              for (const row of orderRows.rows) {
+                orderSourceMap.set(row.square_id, row.source);
+              }
+              for (const [gcId, orderId] of gcToOrderId) {
+                const source = orderSourceMap.get(orderId) ?? null;
+                if (source) {
+                  sourceMap.set(gcId, source);
+                  fallbackSuccesses++;
+                }
+              }
             }
-            fallbackFailures = unresolvedGcIds.length - heuristicRows.rows.length;
-            if (heuristicRows.rows.length > 0) {
-              const wideCnt = heuristicRows.rows.filter(r => parseFloat(r.diff_hours) > 24).length;
-              console.log(`[GC-Redemption] Heuristic closest-match resolved ${heuristicRows.rows.length} of ${unresolvedGcIds.length} unresolved cards` +
-                (wideCnt > 0 ? ` (${wideCnt} matched >24h gap)` : ''));
-            }
+            fallbackFailures = unresolvedGcIds.length - fallbackSuccesses;
           }
 
           for (const activity of redeemActivities) {
