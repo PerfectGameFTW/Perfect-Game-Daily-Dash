@@ -302,6 +302,13 @@ export class GiftCardService {
           SELECT 1 FROM ${orderLineItems} oli
           WHERE oli.order_id = o.id AND oli.name = 'Deposit'
         )
+        AND (
+          o.status = 'COMPLETED'
+          OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements(o.square_data->'tenders') t
+            WHERE COALESCE(t->'cardDetails'->>'status', t->>'type') != 'FAILED'
+          )
+        )
     `);
 
     const row = result.rows?.[0] ?? { bowling_web_res: '0', laser_tag_web_res: '0' };
