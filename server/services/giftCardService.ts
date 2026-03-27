@@ -66,22 +66,6 @@ export class GiftCardService {
   }
   
   /**
-   * Get a gift card by Square ID (GAN)
-   * 
-   * @param gan The gift card account number (GAN)
-   * @returns The gift card or throws if not found
-   */
-  async getGiftCardByGAN(gan: string): Promise<GiftCard> {
-    const result = await db.select().from(giftCards).where(eq(giftCards.gan, gan)).limit(1);
-    
-    if (!result.length) {
-      throw new GiftCardNotFoundError(gan);
-    }
-    
-    return result[0];
-  }
-  
-  /**
    * Create a new gift card with automatic order linking
    * 
    * This enhanced version not only creates a gift card but also:
@@ -203,18 +187,6 @@ export class GiftCardService {
       
       return updatedCard[0];
     });
-  }
-  
-  /**
-   * Get redemptions for a gift card
-   * 
-   * @param giftCardId The gift card ID
-   * @returns Array of redemptions
-   */
-  async getRedemptions(giftCardId: number): Promise<GiftCardRedemption[]> {
-    return await db.select().from(giftCardRedemptions)
-      .where(eq(giftCardRedemptions.giftCardId, giftCardId))
-      .orderBy(desc(giftCardRedemptions.timestamp));
   }
   
   /**
@@ -564,79 +536,6 @@ export class GiftCardService {
     return { inserted };
   }
   
-  /**
-   * Find gift cards with missing or incorrect activation amounts
-   * 
-   * @returns Array of gift cards with issues
-   */
-  async findGiftCardsWithMissingActivationAmount(): Promise<GiftCard[]> {
-    return await db.select().from(giftCards)
-      .where(
-        and(
-          isNull(giftCards.activationAmount),
-          eq(giftCards.isActive, true)
-        )
-      );
-  }
-  
-  /**
-   * Fix gift card activation amounts based on payment data
-   * 
-   * @deprecated Use the more comprehensive solution in giftCardActivationFix.ts instead,
-   * which properly links gift cards to orders and extracts accurate activation amounts
-   * using multiple matching strategies.
-   * 
-   * @returns Number of fixed gift cards
-   */
-  async fixGiftCardActivationAmounts(): Promise<number> {
-    console.log('Starting fixGiftCardActivationAmounts process');
-    
-    // First, let's count how many cards need fixing
-    const needFixing = await db.execute(sql`
-      SELECT COUNT(*) as count
-      FROM gift_cards
-      WHERE (activation_amount IS NULL OR activation_amount = 0)
-        AND is_active = TRUE
-    `);
-    
-    console.log(`Found ${needFixing.rows?.[0]?.count || 0} gift cards needing activation amount fixes`);
-    
-    // We need to use a raw query here to properly reference the related gift card
-    // Note: The transactions table doesn't have a direct giftCardId column in schema
-    // So we're using a subquery to extract gift card ID from the square_data JSON
-    const result = await db.execute(sql`
-      UPDATE gift_cards gc
-      SET 
-        activation_amount = GREATEST(
-          COALESCE(gc.amount, 0) + COALESCE(gc.redeemed_amount, 0),
-          COALESCE((
-            SELECT amount
-            FROM transactions
-            WHERE category_id = 'giftCard'
-              AND status = 'completed'
-              AND square_id = gc.square_id
-            ORDER BY timestamp
-            LIMIT 1
-          ), 0)
-          -- Removed default $50 value to avoid inaccurate data
-        )
-      WHERE 
-        (gc.activation_amount IS NULL OR gc.activation_amount = 0)
-        AND gc.is_active = TRUE
-      RETURNING id, gan, activation_amount
-    `);
-    
-    console.log(`Fixed ${result.rowCount || 0} gift cards with activation amounts`);
-    if (result.rows && result.rows.length > 0) {
-      console.log(`Sample fixed cards: ${JSON.stringify(result.rows.slice(0, 5))}`);
-    }
-    
-    // For better accuracy, recommend using the more comprehensive fix from giftCardActivationFix.ts
-    console.log('Note: For more accurate activation amounts, use POST /api/fix-gift-cards endpoint');
-    
-    return result.rowCount || 0;
-  }
-
   /**
    * Process a gift card redemption from a Square payment
    * 
