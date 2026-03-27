@@ -309,8 +309,7 @@ export class OrderService {
       ORDER BY sum_amount DESC
     `);
     
-    // Category colors mapping
-    const colorMap: Record<string, string> = {
+    const knownColors: Record<string, string> = {
       food: '#FF6B6B',
       beverage: '#4ECDC4',
       alcohol: '#7367F0',
@@ -319,21 +318,30 @@ export class OrderService {
       event: '#00C9A7',
       rental: '#F9F871',
       service: '#C4FCEF',
+      services: '#C4FCEF',
       tripleseat: '#FF9671',
       partywirks: '#D65DB1',
-      giftCard: '#19647E'
+      giftCard: '#19647E',
+      drinks: '#4ECDC4',
     };
-    
-    // Default color
-    const defaultColor = '#999999';
-    
-    // Map the results to include colors
-    // Since we're using raw SQL with execute, we need to access rows
-    return (result.rows || []).map(item => ({
-      category: item.category || 'other',
-      amount: item.sum_amount,
-      color: colorMap[item.category || 'other'] || defaultColor
-    }));
+
+    const dynamicPalette = [
+      '#FF6B6B', '#4ECDC4', '#7367F0', '#FFC75F', '#845EC2',
+      '#00C9A7', '#FF9671', '#D65DB1', '#19647E', '#F9F871',
+      '#FF8066', '#00B8A9', '#6C5CE7', '#FDCB6E', '#E17055',
+    ];
+    let dynamicIndex = 0;
+
+    return (result.rows || []).map(item => {
+      const cat = item.category || 'other';
+      const lowerCat = cat.toLowerCase();
+      let color = knownColors[cat] || knownColors[lowerCat];
+      if (!color) {
+        color = dynamicPalette[dynamicIndex % dynamicPalette.length];
+        dynamicIndex++;
+      }
+      return { category: cat, amount: item.sum_amount, color };
+    });
   }
   
   /**

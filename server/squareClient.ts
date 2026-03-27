@@ -47,9 +47,9 @@ import {
 } from '@shared/schema';
 import { formatInTimeZone } from 'date-fns-tz';
 import dotenv from 'dotenv';
-//import { db } from './db'; // Import db directly instead of pgStorage
 import { eq } from 'drizzle-orm';
-import { orders } from '@shared/schema'; // Update this import too
+import { orders } from '@shared/schema';
+import { lookupCategorySync } from './services/catalogService';
 
 
 // Define Eastern timezone constant
@@ -369,8 +369,9 @@ export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: num
     safeLineItem.giftCardAmount = basePrice || finalPrice;
   }
 
-  // Determine the category for the item
-  let category = mapSquareCategory(itemName, safeLineItem.itemType || '');
+  const catalogObjectId = safeLineItem.catalogObjectId || null;
+  const catalogCategory = lookupCategorySync(catalogObjectId);
+  let category = catalogCategory || mapSquareCategory(itemName, safeLineItem.itemType || '');
   
   return {
     orderId,
@@ -379,7 +380,7 @@ export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: num
     basePriceMoney: safeLineItem.basePriceMoney ? Number(safeLineItem.basePriceMoney.amount) / 100 : 0,
     totalMoney: safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0,
     category: category,
-    productId: safeLineItem.catalogObjectId || null,
+    productId: catalogObjectId,
     isGiftCard: isGiftCard,
     squareData: safeLineItem
   };
@@ -597,27 +598,42 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     (payment.sourceType && payment.sourceType === 'GIFT_CARD') ||
     (payment.cardDetails && payment.cardDetails.entryMethod === 'GIFT_CARD');
 
-  let category: Category = 'retail'; // Default category
+  let category: Category = 'retail';
+
+  let catalogCategory: string | null = null;
+  if (payment.orderId && payment.orderData) {
+    try {
+      const orderData = typeof payment.orderData === 'string'
+        ? JSON.parse(payment.orderData)
+        : payment.orderData;
+      if (orderData.lineItems && Array.isArray(orderData.lineItems)) {
+        for (const item of orderData.lineItems) {
+          if (item.catalogObjectId) {
+            const cat = lookupCategorySync(item.catalogObjectId);
+            if (cat) { catalogCategory = cat; break; }
+          }
+        }
+      }
+    } catch (_) {}
+  }
 
   if (paidWithGiftCard) {
-    // Log gift card payment details
     console.log(`Payment USING gift card detected:`, {
       paymentId: payment.id,
       amount: amount,
       sourceId: payment.sourceId || payment.cardDetails?.card?.id
     });
 
-    // For payments using gift cards, we want to categorize based on what was purchased
-    if (payment.orderId && payment.orderName) {
+    if (catalogCategory) {
+      category = catalogCategory;
+    } else if (payment.orderId && payment.orderName) {
       category = mapSquareCategory(payment.orderName);
     } else if (payment.note) {
       category = mapSquareCategory(payment.note);
     }
   } else {
-    // If not paid with gift card, check if it's a gift card purchase
     let isGiftCardPurchase = false;
 
-    // Check order data for gift card items
     if (payment.orderId && payment.orderData) {
       try {
         const orderData = typeof payment.orderData === 'string'
@@ -640,9 +656,10 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
       }
     }
 
-    // Set category based on our detection
     if (isGiftCardPurchase) {
       category = 'giftCard';
+    } else if (catalogCategory) {
+      category = catalogCategory;
     } else {
       category = payment.orderName ? mapSquareCategory(payment.orderName) : 'retail';
     }

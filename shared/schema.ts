@@ -37,14 +37,8 @@ export const transactionStatusSchema = z.enum([
 
 export type TransactionStatus = z.infer<typeof transactionStatusSchema>;
 
-// Transaction categories
-export const categorySchema = z.enum([
-  "food",
-  "drinks",
-  "retail",
-  "services",
-  "giftCard",
-]);
+// Transaction categories — now a free-form string so any Square catalog category is accepted
+export const categorySchema = z.string();
 
 export type Category = z.infer<typeof categorySchema>;
 
@@ -308,6 +302,38 @@ export const insertSyncStateSchema = createInsertSchema(syncState).omit({
 
 export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
 export type SyncState = typeof syncState.$inferSelect;
+
+// Square catalog categories cache — stores real category names from Square's Catalog API
+export const squareCategories = pgTable("square_categories", {
+  id: serial("id").primaryKey(),
+  squareCategoryId: text("square_category_id").notNull().unique(),
+  name: text("name").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertSquareCategorySchema = createInsertSchema(squareCategories).omit({
+  id: true,
+});
+
+export type InsertSquareCategory = z.infer<typeof insertSquareCategorySchema>;
+export type SquareCategory = typeof squareCategories.$inferSelect;
+
+// Square catalog items cache — maps catalog object IDs to their category
+export const squareCatalogItems = pgTable("square_catalog_items", {
+  id: serial("id").primaryKey(),
+  squareCatalogObjectId: text("square_catalog_object_id").notNull().unique(),
+  categoryId: text("category_id"),
+  categoryName: text("category_name"),
+  itemName: text("item_name"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertSquareCatalogItemSchema = createInsertSchema(squareCatalogItems).omit({
+  id: true,
+});
+
+export type InsertSquareCatalogItem = z.infer<typeof insertSquareCatalogItemSchema>;
+export type SquareCatalogItem = typeof squareCatalogItems.$inferSelect;
 
 // Add Order Summary type for dashboard
 export interface OrderSummary {

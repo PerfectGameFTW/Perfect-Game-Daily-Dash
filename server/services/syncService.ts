@@ -23,6 +23,7 @@ import * as squareClient from '../squareClient';
 import { orderService } from './orderService';
 import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
+import { syncCatalog, preloadCatalogCache } from './catalogService';
 
 export class SyncError extends Error {
   constructor(message: string, public readonly code: string, public readonly details?: any) {
@@ -343,6 +344,16 @@ export class SyncService {
         errorMessage: null
       });
       
+      try {
+        console.log('[SyncOrders] Syncing catalog before processing orders...');
+        const catalogResult = await syncCatalog();
+        console.log(`[SyncOrders] Catalog sync complete: ${catalogResult.categories} categories, ${catalogResult.items} items`);
+        await preloadCatalogCache();
+      } catch (catalogError) {
+        console.error('[SyncOrders] Catalog sync failed, continuing with fallback heuristics:', catalogError);
+        try { await preloadCatalogCache(); } catch (_) {}
+      }
+
       // Fetch orders from Square API with a timeout
       const fetchPromise = squareClient.fetchOrders(startDate, endDate);
       const timeoutPromise = new Promise((_, reject) => {
@@ -580,47 +591,61 @@ export class SyncService {
         errorMessage: null
       });
       
-      // Fetch payments from Square API
+      try {
+        await preloadCatalogCache();
+      } catch (_) {}
+
       const squarePayments = await squareClient.fetchPayments(startDate, endDate);
       
-      // Update state with total items
       await this.updateSyncState(state.id, {
         totalCount: squarePayments.length,
         status: `Found ${squarePayments.length} payments to sync`
       });
       
-      // Process each payment
       for (const squarePayment of squarePayments) {
         try {
-          // Convert Square payment to our data model
           const paymentData = squareClient.convertSquarePaymentToTransaction(squarePayment);
           
-          // Skip $0 payments — these are declined cards, $0 partial tenders, etc.
-          // They carry no revenue and cause validation failures; Square excludes them from totals.
           if (!paymentData.amount || paymentData.amount === 0) {
             processed++;
             continue;
           }
           
-          // Check if payment exists
+          if (paymentData.categoryId === 'retail' && squarePayment.orderId) {
+            try {
+              const lineItemRows = await db.execute<{ product_id: string | null }>(sql`
+                SELECT oli.product_id
+                FROM order_line_items oli
+                INNER JOIN orders o ON oli.order_id = o.id
+                WHERE o.square_id = ${squarePayment.orderId}
+                AND oli.product_id IS NOT NULL
+                LIMIT 5
+              `);
+              const { lookupCategorySync } = await import('./catalogService');
+              for (const row of lineItemRows.rows) {
+                if (row.product_id) {
+                  const cat = lookupCategorySync(row.product_id);
+                  if (cat) { paymentData.categoryId = cat; break; }
+                }
+              }
+            } catch (_) {}
+          }
+          
           let existingPayment;
           try {
             existingPayment = await paymentService.getPaymentBySquareId(paymentData.squareId);
           } catch (error) {
-            // Payment doesn't exist, which is fine
           }
           
           if (existingPayment) {
-            // Refresh key fields from Square so tip adjustments, status changes,
-            // and tax updates are always current.
             await paymentService.updatePayment(paymentData.squareId, {
               status: paymentData.status,
               amount: paymentData.amount,
+              categoryId: paymentData.categoryId,
               squareData: paymentData.squareData,
             });
             updated++;
           } else {
-            // Payment doesn't exist, create it
             await paymentService.createPayment(paymentData);
             created++;
           }

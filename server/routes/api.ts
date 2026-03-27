@@ -223,7 +223,7 @@ export function createApiRouter(): Router {
   router.post('/sync', requireAdmin, syncLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const syncSchema = z.object({
-        type: z.enum(['orders', 'payments', 'gift_cards', 'gift_card_redemptions', 'refunds', 'all', 'missing_payments']),
+        type: z.enum(['orders', 'payments', 'gift_cards', 'gift_card_redemptions', 'refunds', 'catalog', 'all', 'missing_payments']),
         startDate: z.string().optional()
           .refine(date => !date || !isNaN(new Date(date).getTime()), {
             message: "startDate must be a valid date string"
@@ -270,6 +270,12 @@ export function createApiRouter(): Router {
           console.log('Starting refund synchronization');
           result = await syncService.syncRefunds(startDate, endDate);
           console.log(`Refund sync completed: ${result.processed} processed, ${result.created} created, ${result.updated} updated, ${result.failed} failed`);
+          break;
+        case 'catalog':
+          console.log('Starting catalog sync');
+          const { syncCatalog: runCatalogSync } = await import('../services/catalogService');
+          result = await runCatalogSync();
+          console.log(`Catalog sync completed: ${(result as any).categories} categories, ${(result as any).items} items`);
           break;
         case 'missing_payments':
           console.log('Starting payment reconciliation sync');
@@ -537,6 +543,34 @@ export function createApiRouter(): Router {
       await runFrequentSync();
       res.json({ success: true, message: 'Quick sync completed' });
     } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/sync/catalog', requireAdmin, syncLimiter, async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { syncCatalog } = await import('../services/catalogService');
+      const result = await syncCatalog();
+      res.json({ success: true, ...result });
+    } catch (error) {
+      console.error('[API] Catalog sync error:', error);
+      next(error);
+    }
+  });
+
+  router.post('/sync/catalog/backfill', requireAdmin, syncLimiter, async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { syncCatalog, backfillCategories } = await import('../services/catalogService');
+      const catalogResult = await syncCatalog();
+      console.log(`Catalog synced: ${catalogResult.categories} categories, ${catalogResult.items} items`);
+      const backfillResult = await backfillCategories();
+      res.json({
+        success: true,
+        catalog: catalogResult,
+        backfill: backfillResult,
+      });
+    } catch (error) {
+      console.error('[API] Catalog backfill error:', error);
       next(error);
     }
   });

@@ -151,6 +151,16 @@ All web reservation deposit gift cards are electronic. True gift card sales (bou
 - `POST /api/fix-gift-cards` — re-run activation amount backfill
 - `GET /api/analyze-gift-cards` — gift card coverage statistics
 
+## Square Catalog Category Integration (Task #28)
+Item categories are now pulled directly from Square's Catalog API instead of being guessed from item names.
+- **DB tables**: `square_categories` (caches category ID→name), `square_catalog_items` (maps catalog object IDs and item variations to their category)
+- **Service**: `server/services/catalogService.ts` — `syncCatalog()` fetches all CATEGORY and ITEM objects from Square, `backfillCategories()` re-categorizes existing records, `lookupCategorySync()` provides synchronous in-memory lookups
+- **Sync integration**: Catalog is synced at the start of each order sync cycle; the in-memory cache is preloaded before payment syncs
+- **Category assignment**: `convertSquareLineItemToOrderLineItem` and `convertSquarePaymentToTransaction` now check the catalog cache first, falling back to the old heuristic (`mapSquareCategory`) only when no catalog match exists
+- **Category type**: `categorySchema` is now `z.string()` (was `z.enum`) so any Square category name is accepted
+- **API endpoints**: `POST /api/sync/catalog` (sync catalog only), `POST /api/sync/catalog/backfill` (sync + backfill existing records)
+- **Auto-update**: When items are moved between categories in Square, the next sync picks up the changes automatically
+
 ## Important Files
 - `server/squareClient.ts` — Square API client, all fetch functions
 - `server/services/syncService.ts` — orchestrates syncs, manages sync_state table
@@ -159,6 +169,7 @@ All web reservation deposit gift cards are electronic. True gift card sales (bou
 - `server/services/enhancedGiftCardFix.ts` — activation amount backfill
 - `server/services/payoutService.ts` — CC processing fee sync from Square Payouts API
 - `server/services/intercardService.ts` — Intercard arcade revenue API client and sync
+- `server/services/catalogService.ts` — Square Catalog API sync, category cache, and backfill
 - `server/dateUtils.ts` — Eastern Time boundary calculations
 - `shared/schema.ts` — Drizzle ORM schema (single source of truth for types)
 - `client/src/pages/Admin.tsx` — admin panel with user management and sync controls
