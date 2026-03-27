@@ -103,6 +103,12 @@ export function startScheduler(): void {
     console.error('[Scheduler] Orders/payments backfill resume error:', err);
   });
 
+  setTimeout(() => {
+    backfill2024OrdersIfNeeded().catch(err => {
+      console.error('[Scheduler] 2024 orders backfill error:', err);
+    });
+  }, 15000);
+
   // On startup: sync payout fee data (non-blocking)
   (async () => {
     try {
@@ -123,6 +129,95 @@ export function startScheduler(): void {
       console.error('[Scheduler] Intercard backfill error:', err);
     }
   })();
+}
+
+async function backfill2024OrdersIfNeeded(): Promise<void> {
+  const SYNC_KEY = 'orders_backfill_2024';
+  const state = await syncService.getSyncState(SYNC_KEY);
+  if (state?.isComplete && state.status === 'completed') {
+    console.log('[Scheduler] 2024 historical orders backfill already complete — skipping');
+    return;
+  }
+
+  const { pool } = await import('../db');
+  const countResult = await pool.query(
+    `SELECT COUNT(*) as cnt FROM orders WHERE created_at >= '2024-03-01' AND created_at < '2025-01-01'`
+  );
+  const orderCount = parseInt(countResult.rows[0]?.cnt || '0', 10);
+  if (orderCount > 10000) {
+    console.log(`[Scheduler] 2024 orders already present (${orderCount} orders) — marking complete and skipping`);
+    if (state) {
+      await syncService.updateSyncState(state.id, { isComplete: true, status: 'completed', lastSyncedAt: new Date() });
+    } else {
+      await syncService.createSyncState({ syncType: SYNC_KEY, lastSyncedAt: new Date(), isComplete: true, status: 'completed' });
+    }
+    return;
+  }
+
+  const primaryBackfill = await syncService.getSyncState('orders_payments_backfill');
+  if (primaryBackfill && !primaryBackfill.isComplete) {
+    console.log('[Scheduler] Primary backfill still running — deferring 2024 backfill to next restart');
+    return;
+  }
+
+  console.log('[Scheduler] Starting 2024 historical orders backfill (Mar 2024 – Dec 2024)...');
+
+  const startDate = new Date('2024-03-01T00:00:00Z');
+  const endDate = new Date('2025-01-01T00:00:00Z');
+
+  if (primaryBackfill) {
+    await syncService.updateSyncState(primaryBackfill.id, {
+      isComplete: false,
+      status: 'in_progress',
+      lastSyncedAt: new Date(0),
+      lastCheckpoint: {
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        chunkDays: 30,
+        totalChunks: 0,
+        nextChunkToProcess: 0,
+        chunksCompleted: 0,
+        lastCompletedDate: null,
+      },
+    });
+  }
+
+  try {
+    const result = await syncService.startHistoricalOrdersPaymentsBackfill(startDate, endDate, 30);
+    console.log(`[Scheduler] 2024 backfill: ${result.message}`);
+
+    if (!result.alreadyRunning) {
+      const checkComplete = async () => {
+        for (let i = 0; i < 600; i++) {
+          await new Promise(r => setTimeout(r, 10000));
+          const status = await syncService.getHistoricalBackfillStatus();
+          if (status.isComplete || status.status === 'completed') {
+            console.log('[Scheduler] 2024 backfill complete — marking sync key');
+            const existingKey = await syncService.getSyncState(SYNC_KEY);
+            if (existingKey) {
+              await syncService.updateSyncState(existingKey.id, {
+                isComplete: true,
+                status: 'completed',
+                lastSyncedAt: new Date(),
+              });
+            } else {
+              await syncService.createSyncState({
+                syncType: SYNC_KEY,
+                lastSyncedAt: new Date(),
+                isComplete: true,
+                status: 'completed',
+              });
+            }
+            return;
+          }
+        }
+        console.warn('[Scheduler] 2024 backfill timed out waiting for completion');
+      };
+      checkComplete().catch(err => console.error('[Scheduler] 2024 backfill monitor error:', err));
+    }
+  } catch (err) {
+    console.error('[Scheduler] 2024 backfill failed:', err);
+  }
 }
 
 /**

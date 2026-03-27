@@ -381,6 +381,267 @@ server.tool(
   })
 );
 
+server.tool(
+  "get_monthly_revenue_trend",
+  "Get monthly revenue totals from payment data. Returns month, gross payments, net revenue (minus refunds), payment count, and refund total. Fast SQL-only query — works efficiently for any date range including full-year analysis.",
+  {
+    startDate: z.string().describe("Start date (YYYY-MM-DD)"),
+    endDate: z.string().describe("End date (YYYY-MM-DD)"),
+  },
+  async (params) => safeTool(async () => {
+    const start = parseAndValidateDate(params.startDate);
+    const end = parseAndValidateDate(params.endDate);
+    if (start > end) throw new Error("startDate must be before endDate");
+    const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
+
+    const { pool } = await import("./db");
+    const result = await pool.query(`
+      WITH monthly_payments AS (
+        SELECT to_char(timestamp AT TIME ZONE 'America/New_York', 'YYYY-MM') AS month,
+               SUM(amount) AS gross_payments,
+               COUNT(*) AS payment_count
+        FROM transactions
+        WHERE timestamp BETWEEN $1 AND $2 AND status = 'completed'
+        GROUP BY 1
+      ),
+      monthly_refunds AS (
+        SELECT to_char(created_at AT TIME ZONE 'America/New_York', 'YYYY-MM') AS month,
+               SUM(amount) AS refund_total,
+               COUNT(*) AS refund_count
+        FROM refunds
+        WHERE created_at BETWEEN $1 AND $2
+        GROUP BY 1
+      )
+      SELECT p.month,
+             ROUND(p.gross_payments::numeric, 2) AS gross_payments,
+             ROUND((p.gross_payments - COALESCE(r.refund_total, 0))::numeric, 2) AS net_revenue,
+             p.payment_count::integer,
+             COALESCE(ROUND(r.refund_total::numeric, 2), 0) AS refund_total,
+             COALESCE(r.refund_count, 0)::integer AS refund_count
+      FROM monthly_payments p
+      LEFT JOIN monthly_refunds r ON r.month = p.month
+      ORDER BY p.month
+    `, [utcStart, utcEnd]);
+
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.rows, null, 2) }] };
+  })
+);
+
+server.tool(
+  "get_revenue_by_day_of_week",
+  "Get average and total revenue by day of week (Monday–Sunday) in Eastern Time. Useful for identifying peak days, staffing patterns, and weekly cycles. Fast SQL-only query.",
+  {
+    startDate: z.string().describe("Start date (YYYY-MM-DD)"),
+    endDate: z.string().describe("End date (YYYY-MM-DD)"),
+  },
+  async (params) => safeTool(async () => {
+    const start = parseAndValidateDate(params.startDate);
+    const end = parseAndValidateDate(params.endDate);
+    if (start > end) throw new Error("startDate must be before endDate");
+    const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
+
+    const { pool } = await import("./db");
+    const result = await pool.query(`
+      WITH daily AS (
+        SELECT (timestamp AT TIME ZONE 'America/New_York')::date AS day,
+               SUM(amount) AS revenue,
+               COUNT(*) AS txn_count
+        FROM transactions
+        WHERE timestamp BETWEEN $1 AND $2 AND status = 'completed'
+        GROUP BY 1
+      )
+      SELECT to_char(day, 'Day') AS day_of_week,
+             EXTRACT(ISODOW FROM day)::integer AS day_number,
+             COUNT(*)::integer AS weeks_counted,
+             ROUND(AVG(revenue)::numeric, 2) AS avg_daily_revenue,
+             ROUND(SUM(revenue)::numeric, 2) AS total_revenue,
+             ROUND(AVG(txn_count)::numeric, 0)::integer AS avg_daily_transactions
+      FROM daily
+      GROUP BY to_char(day, 'Day'), EXTRACT(ISODOW FROM day)
+      ORDER BY day_number
+    `, [utcStart, utcEnd]);
+
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.rows, null, 2) }] };
+  })
+);
+
+server.tool(
+  "get_revenue_by_source",
+  "Get revenue breakdown by order source (Terminal, Web Reservation, Partywirks, Tripleseat, Square Online, etc.). Shows order count, total revenue, average order value per source. Fast SQL-only query.",
+  {
+    ...dateRangeParam,
+    groupTerminals: z.boolean().default(true).describe("If true, consolidates all 'Terminal N' sources into a single 'In-Store (Terminal)' row"),
+  },
+  async (params) => safeTool(async () => {
+    const { dateRange, startDate, endDate } = parseDates(params);
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+
+    const { pool } = await import("./db");
+    const sourceExpr = params.groupTerminals
+      ? `CASE WHEN source LIKE 'Terminal%' THEN 'In-Store (Terminal)' ELSE source END`
+      : `source`;
+
+    const result = await pool.query(`
+      SELECT ${sourceExpr} AS source,
+             COUNT(*)::integer AS order_count,
+             ROUND(SUM(total_money)::numeric, 2) AS total_revenue,
+             ROUND(AVG(total_money)::numeric, 2) AS avg_order_value,
+             ROUND(SUM(total_tax)::numeric, 2) AS total_tax,
+             ROUND(SUM(total_discount)::numeric, 2) AS total_discount
+      FROM orders
+      WHERE created_at BETWEEN $1 AND $2 AND status = 'COMPLETED'
+      GROUP BY 1
+      ORDER BY total_revenue DESC
+    `, [start, end]);
+
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.rows, null, 2) }] };
+  })
+);
+
+server.tool(
+  "get_monthly_order_stats",
+  "Get monthly order statistics: order count, total revenue, average order value, total tax, total discounts. Broken down by month. Fast SQL-only query for long-range trend analysis.",
+  {
+    startDate: z.string().describe("Start date (YYYY-MM-DD)"),
+    endDate: z.string().describe("End date (YYYY-MM-DD)"),
+  },
+  async (params) => safeTool(async () => {
+    const start = parseAndValidateDate(params.startDate);
+    const end = parseAndValidateDate(params.endDate);
+    if (start > end) throw new Error("startDate must be before endDate");
+    const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
+
+    const { pool } = await import("./db");
+    const result = await pool.query(`
+      SELECT to_char(created_at AT TIME ZONE 'America/New_York', 'YYYY-MM') AS month,
+             COUNT(*)::integer AS order_count,
+             ROUND(SUM(total_money)::numeric, 2) AS total_revenue,
+             ROUND(AVG(total_money)::numeric, 2) AS avg_order_value,
+             ROUND(SUM(total_tax)::numeric, 2) AS total_tax,
+             ROUND(SUM(total_discount)::numeric, 2) AS total_discount
+      FROM orders
+      WHERE created_at BETWEEN $1 AND $2 AND status = 'COMPLETED'
+      GROUP BY 1
+      ORDER BY 1
+    `, [utcStart, utcEnd]);
+
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.rows, null, 2) }] };
+  })
+);
+
+server.tool(
+  "get_hourly_heatmap",
+  "Get a revenue heatmap by day-of-week and hour-of-day (Eastern Time). Returns rows with dayOfWeek, hour (0-23), total revenue, and transaction count. Perfect for identifying peak business hours across the week.",
+  {
+    startDate: z.string().describe("Start date (YYYY-MM-DD)"),
+    endDate: z.string().describe("End date (YYYY-MM-DD)"),
+  },
+  async (params) => safeTool(async () => {
+    const start = parseAndValidateDate(params.startDate);
+    const end = parseAndValidateDate(params.endDate);
+    if (start > end) throw new Error("startDate must be before endDate");
+    const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
+
+    const { pool } = await import("./db");
+    const result = await pool.query(`
+      SELECT to_char(timestamp AT TIME ZONE 'America/New_York', 'Day') AS day_of_week,
+             EXTRACT(ISODOW FROM timestamp AT TIME ZONE 'America/New_York')::integer AS day_number,
+             EXTRACT(HOUR FROM timestamp AT TIME ZONE 'America/New_York')::integer AS hour,
+             ROUND(SUM(amount)::numeric, 2) AS revenue,
+             COUNT(*)::integer AS transaction_count
+      FROM transactions
+      WHERE timestamp BETWEEN $1 AND $2 AND status = 'completed'
+      GROUP BY 1, 2, 3
+      ORDER BY day_number, hour
+    `, [utcStart, utcEnd]);
+
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.rows, null, 2) }] };
+  })
+);
+
+server.tool(
+  "get_top_items_by_month",
+  "Get top-selling items aggregated by month. Returns item name, month, quantity sold, and revenue. Useful for tracking seasonal product trends and menu performance over time.",
+  {
+    startDate: z.string().describe("Start date (YYYY-MM-DD)"),
+    endDate: z.string().describe("End date (YYYY-MM-DD)"),
+    limit: z.number().int().min(1).max(50).default(10).describe("Number of top items per month (default 10)"),
+  },
+  async (params) => safeTool(async () => {
+    const start = parseAndValidateDate(params.startDate);
+    const end = parseAndValidateDate(params.endDate);
+    if (start > end) throw new Error("startDate must be before endDate");
+    const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
+
+    const { pool } = await import("./db");
+    const result = await pool.query(`
+      WITH monthly_items AS (
+        SELECT to_char(o.created_at AT TIME ZONE 'America/New_York', 'YYYY-MM') AS month,
+               li.name,
+               SUM(li.quantity)::integer AS quantity_sold,
+               ROUND(SUM(li.total_money)::numeric, 2) AS revenue,
+               ROW_NUMBER() OVER (
+                 PARTITION BY to_char(o.created_at AT TIME ZONE 'America/New_York', 'YYYY-MM')
+                 ORDER BY SUM(li.quantity) DESC
+               ) AS rank
+        FROM order_line_items li
+        JOIN orders o ON o.id = li.order_id
+        WHERE o.created_at BETWEEN $1 AND $2 AND o.status = 'COMPLETED'
+        GROUP BY 1, 2
+      )
+      SELECT month, name, quantity_sold, revenue
+      FROM monthly_items
+      WHERE rank <= $3
+      ORDER BY month, rank
+    `, [utcStart, utcEnd, params.limit]);
+
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.rows, null, 2) }] };
+  })
+);
+
+server.tool(
+  "run_read_query",
+  "Execute a read-only SQL query against the database for flexible business intelligence analysis. The query runs inside a READ ONLY transaction so it cannot modify data. Available tables: orders (id, square_id, status, total_money, total_tax, total_discount, created_at, closed_at, source, square_data), order_line_items (id, order_id, name, quantity, base_price, total_money, variation_name, category, modifiers, item_type), transactions (id, square_id, amount, category_id, status, timestamp, square_data), gift_cards (id, square_gift_card_id, gan, state, balance, amount, card_type, activation_source_type, created_at, activation_square_order_id), refunds (id, square_id, square_payment_id, amount, status, reason, created_at), intercard_revenue (id, date, machine_name, cash_revenue, credit_revenue, total_revenue), payout_fee_entries (id, payout_id, type, amount, effective_at, fee_description). All timestamps are in UTC; use AT TIME ZONE 'America/New_York' for Eastern Time display. Business day runs ~6 AM to 2 AM Eastern.",
+  {
+    query: z.string().describe("SQL SELECT query to execute"),
+    maxRows: z.number().int().min(1).max(1000).default(100).describe("Maximum rows to return (1-1000, default 100)"),
+  },
+  async (params) => safeTool(async () => {
+    const trimmed = params.query.trim().replace(/;+$/, '');
+    const upper = trimmed.toUpperCase().replace(/\s+/g, ' ').trim();
+    if (!upper.startsWith('SELECT ') && !upper.startsWith('WITH ')) {
+      throw new Error('Only SELECT queries (or WITH/CTE queries) are allowed.');
+    }
+    const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'COPY', 'EXECUTE', 'CALL'];
+    for (const keyword of forbidden) {
+      if (upper.match(new RegExp(`\\b${keyword}\\b`))) {
+        throw new Error(`Write operations are not allowed. Found forbidden keyword: ${keyword}`);
+      }
+    }
+
+    const { pool } = await import("./db");
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN READ ONLY');
+      await client.query('SET LOCAL statement_timeout = 30000');
+      const wrappedQuery = `SELECT * FROM (${trimmed}) AS _q LIMIT ${params.maxRows}`;
+      const result = await client.query(wrappedQuery);
+      await client.query('COMMIT');
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({ rowCount: result.rowCount, rows: result.rows }, null, 2),
+        }],
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  })
+);
+
   return server;
 }
 

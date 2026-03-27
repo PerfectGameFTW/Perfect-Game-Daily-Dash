@@ -174,7 +174,7 @@ All web reservation deposit gift cards are electronic. True gift card sales (bou
 - **Protocol**: Model Context Protocol (MCP) via `@modelcontextprotocol/sdk` (StreamableHTTPServerTransport)
 - **Purpose**: Lets Claude Desktop / Claude cowork query the sales database directly
 - **Architecture**: `registerMcpRoutes(app)` called in `server/index.ts` before session middleware; each MCP session gets its own McpServer instance + transport; sessions tracked by UUID with 30-min idle TTL and max 50 concurrent
-- **Tools exposed** (15 total):
+- **Tools exposed** (22 total):
   - `get_daily_summary` — KPI overview (revenue, orders, avg order, period changes)
   - `get_detailed_breakdown` — full revenue category breakdown (tips, taxes, refunds, gift cards, Intercard, etc.)
   - `get_hourly_revenue` — revenue by hour of day (Eastern Time)
@@ -190,7 +190,15 @@ All web reservation deposit gift cards are electronic. True gift card sales (bou
   - `query_orders` — flexible order search with filters
   - `compare_periods` — side-by-side period comparison with % changes
   - `get_daily_revenue_trend` — daily revenue time series for trend analysis
+  - `get_monthly_revenue_trend` — monthly gross/net revenue with refund totals (SQL-only, fast for full-year queries)
+  - `get_revenue_by_day_of_week` — avg/total revenue by day of week for peak day analysis (SQL-only)
+  - `get_revenue_by_source` — revenue by order source (Terminal, Web Reservation, etc.) with optional terminal grouping (SQL-only)
+  - `get_monthly_order_stats` — monthly order count, avg order value, tax, discounts (SQL-only)
+  - `get_hourly_heatmap` — revenue heatmap by day-of-week × hour-of-day (SQL-only)
+  - `get_top_items_by_month` — top-selling items per month for seasonal trend tracking (SQL-only)
+  - `run_read_query` — arbitrary read-only SQL for flexible BI analysis (READ ONLY transaction, write operations blocked)
 - **All tools** share the same date range parameters: dateRange (today/yesterday/last7days/last30days/thisMonth/lastMonth/custom) + optional startDate/endDate for custom ranges
+- **SQL-only tools** (Task #26): 7 new tools added that query PostgreSQL directly without going through service layers. These are optimized for Claude's BI analysis across any date range without timeout risk. The `run_read_query` tool provides full flexibility with safety guards (READ ONLY transaction + keyword blocklist).
 
 ## Security Hardening
 - **Rate limiting**: All `/api` routes limited to 100 req/min; login limited to 10 attempts per 15 min; sync endpoints limited to 5 req/min

@@ -10,7 +10,7 @@ import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
 import { payoutService } from './payoutService';
 import { intercardService } from './intercardService';
-import { fetchGiftCardRedeemActivities, fetchGiftCardActivateActivity, fetchOrdersByIds } from '../squareClient';
+import { fetchGiftCardRedeemActivities } from '../squareClient';
 import { 
   type DateRange,
   type DailySummary,
@@ -321,84 +321,10 @@ export class DashboardService {
           }
           dbResolved = activationSourceRows.rows.filter(r => r.source !== null).length;
 
-          const needsApiLookup = uniqueGcIds.filter(id =>
-            !sourceMap.has(id) || sourceMap.get(id) === null
-          );
-          fallbackAttempted = needsApiLookup.length;
-          if (needsApiLookup.length > 0) {
-            const CONCURRENCY = 5;
-            const activateResults: Array<{ gcId: string; squareOrderId?: string }> = [];
-
-            for (let i = 0; i < needsApiLookup.length; i += CONCURRENCY) {
-              const batch = needsApiLookup.slice(i, i + CONCURRENCY);
-              const batchResults = await Promise.allSettled(
-                batch.map(async (gcId) => {
-                  const info = await fetchGiftCardActivateActivity(gcId);
-                  return { gcId, squareOrderId: info?.squareOrderId };
-                })
-              );
-              for (const r of batchResults) {
-                if (r.status === 'fulfilled') {
-                  activateResults.push(r.value);
-                  if (!r.value.squareOrderId) {
-                    fallbackFailures++;
-                  }
-                } else {
-                  fallbackFailures++;
-                }
-              }
-            }
-
-            const orderIdsToResolve = activateResults
-              .filter(r => r.squareOrderId)
-              .map(r => r.squareOrderId!);
-
-            if (orderIdsToResolve.length > 0) {
-              const orderSourceRows = await db.execute<{
-                square_id: string;
-                source: string | null;
-              }>(sql`
-                SELECT square_id, source FROM ${ordersTable}
-                WHERE square_id IN ${sql`(${sql.join(orderIdsToResolve.map(id => sql`${id}`), sql`, `)})`}
-              `);
-
-              const orderSourceMap = new Map<string, string | null>();
-              for (const row of orderSourceRows.rows) {
-                orderSourceMap.set(row.square_id, row.source);
-              }
-
-              const missingOrderIds = orderIdsToResolve.filter(id => !orderSourceMap.has(id));
-              if (missingOrderIds.length > 0) {
-                try {
-                  const fetched = await fetchOrdersByIds(missingOrderIds);
-                  for (const fo of fetched) {
-                    if (fo.squareId && fo.source) {
-                      orderSourceMap.set(fo.squareId, fo.source);
-                    }
-                  }
-                  console.log(`[GC-Redemption] Fetched ${fetched.length} missing orders from Square API for ${missingOrderIds.length} unresolved IDs`);
-                } catch (err) {
-                  console.error('[GC-Redemption] Error fetching missing orders from Square:', err);
-                }
-              }
-
-              for (const ar of activateResults) {
-                if (ar.squareOrderId) {
-                  const resolvedSource = orderSourceMap.get(ar.squareOrderId) ?? null;
-                  if (resolvedSource !== null) {
-                    sourceMap.set(ar.gcId, resolvedSource);
-                    fallbackSuccesses++;
-                  } else {
-                    fallbackFailures++;
-                  }
-                }
-              }
-            }
-          }
-
           const unresolvedGcIds = uniqueGcIds.filter(id =>
             !sourceMap.has(id) || sourceMap.get(id) === null
           );
+          fallbackAttempted = unresolvedGcIds.length;
           if (unresolvedGcIds.length > 0) {
             const heuristicRows = await db.execute<{
               gc_square_id: string;
@@ -423,7 +349,9 @@ export class DashboardService {
             `);
             for (const row of heuristicRows.rows) {
               sourceMap.set(row.gc_square_id, row.order_source);
+              fallbackSuccesses++;
             }
+            fallbackFailures = unresolvedGcIds.length - heuristicRows.rows.length;
             if (heuristicRows.rows.length > 0) {
               const wideCnt = heuristicRows.rows.filter(r => parseFloat(r.diff_hours) > 24).length;
               console.log(`[GC-Redemption] Heuristic closest-match resolved ${heuristicRows.rows.length} of ${unresolvedGcIds.length} unresolved cards` +
