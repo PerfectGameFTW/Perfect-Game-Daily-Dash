@@ -114,7 +114,7 @@ export default function TimeframeModal({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="bg-gradient-to-b from-gray-900 to-black border-t border-white/10 rounded-t-xl overflow-y-auto backdrop-blur-sm" aria-describedby="timeframe-description">
+      <DrawerContent className="bg-gradient-to-b from-gray-900 to-black border-t border-white/10 rounded-t-xl overflow-hidden backdrop-blur-sm" aria-describedby="timeframe-description">
         <DrawerHeader>
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <DrawerTitle className="text-xl font-semibold text-white">Select Timeframe</DrawerTitle>
