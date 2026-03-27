@@ -49,6 +49,7 @@ export class DashboardService {
     const revenueBreakdown = await paymentService.getRevenueBreakdown(dateRange, startDate, endDate);
     const intercardCurrent = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
     const totalRevenue = revenueBreakdown.trueRevenue + intercardCurrent.total;
+    const depositClearings = revenueBreakdown.depositClearings;
     const totalOrders = await orderService.getTotalOrders(dateRange, startDate, endDate);
     const giftCardSales = await giftCardService.getGiftCardSales(dateRange, startDate, endDate);
     
@@ -113,6 +114,7 @@ export class DashboardService {
       refunds: revenueBreakdown.refunds,
       returns: revenueBreakdown.returns,
       giftCardRedemptions: revenueBreakdown.giftCardRedemptions,
+      depositClearings,
       revenueChange,
       totalOrders,
       ordersChange,
@@ -225,46 +227,27 @@ export class DashboardService {
     squareIntercardKioskCash: number;
     totalTransactions: number;
   }> {
-    // Get payments for the specified date range
-    const payments = await paymentService.getPaymentsByDateRange(
-      dateRange,
-      'completed',
-      startDate,
-      endDate
-    );
-    
-    // Initialize values
     let partywirks = 0;
     let tripleseat = 0;
-    let tips = 0;
     let serviceCharges = 0;
     let autoGratuity = 0;
     let taxes = 0;
     let refundsTotal = 0;
     let returnsTotal = 0;
     let discountsAndComps = 0;
-    let depositClearings = 0;
-    
-    // Calculate values from payments
-    for (const payment of payments) {
-      const rawData = (payment as any).square_data ?? payment.squareData;
-      const squareData: Record<string, any> = rawData
-        ? (typeof rawData === 'string' ? JSON.parse(rawData) : rawData)
-        : {};
-      
-      if (squareData.tipMoney?.amount) {
-        tips += Number(squareData.tipMoney.amount) / 100;
-      }
-      
-      if (
-        squareData.sourceType === 'EXTERNAL' &&
-        squareData.externalDetails?.type === 'OTHER'
-      ) {
-        depositClearings += payment.amount;
-      }
-    }
 
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+
+    const [tips, depositClearings, txCountResult] = await Promise.all([
+      paymentService.getTipsByDateRange(dateRange, startDate, endDate),
+      paymentService.getDepositClearings(dateRange, startDate, endDate),
+      db.execute<{ cnt: number }>(sql`
+        SELECT COUNT(*) as cnt FROM ${transactions}
+        WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
+          AND ${transactions.status} = 'completed'
+      `),
+    ]);
+    const totalTransactionCount = Number(txCountResult.rows[0]?.cnt || 0);
 
     const refundRows = await db.execute<{ total: number }>(sql`
       SELECT COALESCE(SUM(amount), 0) as total
@@ -563,7 +546,7 @@ export class DashboardService {
       intercardCashRevenue: intercardBreakdown.cash,
       intercardCreditRevenue: intercardBreakdown.credit,
       squareIntercardKioskCash,
-      totalTransactions: payments.length
+      totalTransactions: totalTransactionCount
     };
   }
 }

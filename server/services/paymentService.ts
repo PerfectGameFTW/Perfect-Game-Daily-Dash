@@ -240,6 +240,7 @@ export class PaymentService {
     refunds: number;
     returns: number;
     giftCardRedemptions: number;
+    depositClearings: number;
     trueRevenue: number;
   }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
@@ -293,15 +294,51 @@ export class PaymentService {
 
     const grossPayments = rawGrossPayments - kioskCashExclusion;
     
+    const depositClearingsAmount = await this.getDepositClearings(dateRange, startDate, endDate);
+
     return {
       grossPayments,
       refunds: refundsAmount,
       returns: returnsAmount,
       giftCardRedemptions: gcRedemptions,
-      trueRevenue: grossPayments - refundsAmount - returnsAmount - gcRedemptions,
+      depositClearings: depositClearingsAmount,
+      trueRevenue: grossPayments - refundsAmount - returnsAmount - gcRedemptions - depositClearingsAmount,
     };
   }
-  
+
+  async getDepositClearings(
+    dateRange: DateRange,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<number> {
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const result = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM(amount), 0) as total
+      FROM ${transactions}
+      WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
+        AND ${transactions.status} = 'completed'
+        AND square_data->>'sourceType' = 'EXTERNAL'
+        AND square_data->'externalDetails'->>'type' = 'OTHER'
+    `);
+    return Number(result.rows[0]?.total || 0);
+  }
+
+  async getTipsByDateRange(
+    dateRange: DateRange,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<number> {
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+    const result = await db.execute<{ total: number }>(sql`
+      SELECT COALESCE(SUM((square_data->'tipMoney'->>'amount')::numeric / 100), 0) as total
+      FROM ${transactions}
+      WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
+        AND ${transactions.status} = 'completed'
+        AND square_data->'tipMoney'->>'amount' IS NOT NULL
+    `);
+    return Number(result.rows[0]?.total || 0);
+  }
+
   async getIntercardKioskCashTotal(
     dateRange: DateRange,
     startDate?: Date,

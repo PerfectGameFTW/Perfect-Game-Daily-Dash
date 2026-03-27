@@ -330,6 +330,7 @@ export interface DailySummary {
   refunds: number;
   returns: number;
   giftCardRedemptions: number;
+  depositClearings: number;
   revenueChange: number;
   totalOrders: number;
   ordersChange: number;

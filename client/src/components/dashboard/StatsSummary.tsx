@@ -77,7 +77,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const refunds = toNum(data?.refunds);
   const returns = toNum(data?.returns);
   const discounts = toNum(detailedTransactions?.discountsAndComps);
-  const depositClearings = toNum(detailedTransactions?.depositClearings);
+  const depositClearings = toNum(data?.depositClearings) || toNum(detailedTransactions?.depositClearings);
   const tips = toNum(detailedTransactions?.tips);
   const serviceCharges = toNum(detailedTransactions?.serviceCharges);
   const autoGratuity = toNum(detailedTransactions?.autoGratuity);
@@ -100,7 +100,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const squareKioskCash = toNum(detailedTransactions?.squareIntercardKioskCash);
   const kioskCashMatches = Math.abs(squareKioskCash - intercardCash) < 0.01;
   const refundsAndReturns = refunds + returns;
-  const trueRevenue = totalRevenue - depositClearings;
+  const trueRevenue = totalRevenue;
   const calculatedNetRevenue = trueRevenue - discounts - tips - serviceCharges - autoGratuity - taxes;
 
   return (
