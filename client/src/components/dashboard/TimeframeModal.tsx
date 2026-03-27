@@ -166,18 +166,25 @@ export default function TimeframeModal({
                 <span>Back to timeframes</span>
               </Button>
               
-              <div className="mb-6">
-                <h3 className="text-lg font-bold text-white mb-2">Custom date range</h3>
-                <p className="text-white/60 text-sm mb-3">
-                  {!endDate ? "Select start and end dates for your data view" : ""}
+              <div className="mb-4">
+                <h3 className="text-lg font-bold text-white mb-1">Custom date range</h3>
+                <p className="text-white/60 text-sm">
+                  {!startDate 
+                    ? "Tap a start date" 
+                    : !endDate 
+                      ? "Now tap an end date" 
+                      : ""}
                 </p>
-                <div className="bg-white/5 p-4 rounded-xl border border-white/10 shadow-lg">
-                  <div className="flex items-center gap-2">
-                    <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                      <Calendar className="h-5 w-5 text-primary" />
-                    </div>
-                    <span className="text-white font-medium">{getDateRangePreview()}</span>
-                  </div>
+              </div>
+
+              <div className="flex gap-3 mb-4">
+                <div className={`flex-1 p-3 rounded-lg border ${startDate ? 'border-primary bg-primary/10' : 'border-white/10 bg-white/5'}`}>
+                  <p className="text-white/50 text-xs mb-1">Start</p>
+                  <p className="text-white font-medium text-sm">{startDate ? format(startDate, "MMM d, yyyy") : "—"}</p>
+                </div>
+                <div className={`flex-1 p-3 rounded-lg border ${endDate ? 'border-primary bg-primary/10' : 'border-white/10 bg-white/5'}`}>
+                  <p className="text-white/50 text-xs mb-1">End</p>
+                  <p className="text-white font-medium text-sm">{endDate ? format(endDate, "MMM d, yyyy") : "—"}</p>
                 </div>
               </div>
               
@@ -190,7 +197,7 @@ export default function TimeframeModal({
                   }}
                   onSelect={(range) => {
                     if (range?.from) setStartDate(range.from);
-                    if (range?.to) setEndDate(range.to);
+                    setEndDate(range?.to || undefined);
                   }}
                   disabled={{
                     after: new Date()
@@ -210,13 +217,13 @@ export default function TimeframeModal({
                 />
               </div>
               
-              <div className="mt-6 flex justify-end">
+              <div className="mt-4 flex justify-end">
                 <Button 
                   className="bg-primary hover:bg-primary/90 text-white font-medium py-2 px-6 shadow-lg shadow-primary/30"
                   onClick={handleApplyCustomDates}
                   disabled={!startDate || !endDate}
                 >
-                  Apply Custom Range
+                  Apply
                 </Button>
               </div>
             </div>
