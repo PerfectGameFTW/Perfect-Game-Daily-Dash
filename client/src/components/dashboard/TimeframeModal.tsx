@@ -94,10 +94,9 @@ export default function TimeframeModal({
 
   const timeframes: { label: string, value: DateRange }[] = [
     { label: "Today", value: "today" },
-    { label: "Past week", value: "last7days" },
-    { label: "This month", value: "thisMonth" },
-    { label: "Last month", value: "lastMonth" },
-    { label: "This year", value: "last30days" },
+    { label: "Weekly", value: "last7days" },
+    { label: "Monthly", value: "thisMonth" },
+    { label: "Year to Date", value: "last30days" },
     { label: "Custom date", value: "custom" },
   ];
 
