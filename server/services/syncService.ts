@@ -1248,7 +1248,7 @@ export class SyncService {
     // This avoids per-card API calls inside the activation-event loop — instead we
     // do a single bulk fetch up front and look up cards from the in-memory map.
     console.log('[HistoricalGiftCardBackfill] Pre-loading all Square gift cards...');
-    const allSquareCards = await squareClient.fetchGiftCards();
+    const { cards: allSquareCards } = await squareClient.fetchGiftCards();
     const squareCardMap = new Map<string, any>();
     for (const card of allSquareCards) {
       const id = card.id || card.squareId;

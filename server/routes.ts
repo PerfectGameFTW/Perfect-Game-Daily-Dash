@@ -838,7 +838,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log("Starting gift card sync process...");
 
         // Fetch gift cards and activation amounts from Activities API in parallel
-        const [squareGiftCards, activationMap] = await Promise.all([
+        const [{ cards: squareGiftCards }, activationMap] = await Promise.all([
           squareClient.fetchGiftCards(),
           squareClient.fetchGiftCardActivitiesMap()
         ]);

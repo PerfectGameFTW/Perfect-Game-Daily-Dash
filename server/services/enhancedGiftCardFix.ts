@@ -102,7 +102,7 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
   const squareOrders = await fetchOrders(twoYearsAgo);
   console.log(`Fetched ${squareOrders.length} orders from Square API`);
   
-  const squareGiftCards = await fetchGiftCards();
+  const { cards: squareGiftCards } = await fetchGiftCards();
   console.log(`Fetched ${squareGiftCards.length} gift cards from Square API`);
   
   // 3. Process each gift card
