@@ -4,7 +4,6 @@ import { fetchGiftCardSummary } from "@/lib/squareApi";
 import { DateRange } from "@shared/schema";
 import { formatCurrency } from "@/lib/dateUtils";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreditCard, DollarSign, RefreshCcw, TrendingUp } from "lucide-react";
 import Chart from "chart.js/auto";
 
 interface GiftCardActivityProps {
@@ -147,47 +146,27 @@ export default function GiftCardActivity({
           
           <div className="mt-6 grid grid-cols-2 gap-4">
             <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
-              <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
-                  <DollarSign className="h-4 w-4 text-primary" />
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground">Total Outstanding Value</div>
-                  <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.outstandingBalance || 0)}</div>
-                </div>
+              <div>
+                <div className="text-sm font-medium text-muted-foreground">Total Outstanding Value</div>
+                <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.outstandingBalance || 0)}</div>
               </div>
             </div>
             <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
-              <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
-                  <CreditCard className="h-4 w-4 text-primary" />
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground">Web Res Adv Deposits</div>
-                  <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.webResAdvDeposits || 0)}</div>
-                </div>
+              <div>
+                <div className="text-sm font-medium text-muted-foreground">Web Res Adv Deposits</div>
+                <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.webResAdvDeposits || 0)}</div>
               </div>
             </div>
             <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
-              <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
-                  <RefreshCcw className="h-4 w-4 text-primary" />
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground">Cards Redeemed</div>
-                  <div className="mt-1 text-xl font-bold text-card-foreground">{data?.redeemedCount || 0}</div>
-                </div>
+              <div>
+                <div className="text-sm font-medium text-muted-foreground">Cards Redeemed</div>
+                <div className="mt-1 text-xl font-bold text-card-foreground">{data?.redeemedCount || 0}</div>
               </div>
             </div>
             <div className="bg-accent/30 rounded-xl p-4 border border-border shadow-lg">
-              <div className="flex items-center">
-                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center mr-3">
-                  <TrendingUp className="h-4 w-4 text-primary" />
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground">Redemption Value</div>
-                  <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.redeemedAmount || 0)}</div>
-                </div>
+              <div>
+                <div className="text-sm font-medium text-muted-foreground">Redemption Value</div>
+                <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.redeemedAmount || 0)}</div>
               </div>
             </div>
           </div>
