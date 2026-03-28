@@ -384,11 +384,14 @@ export async function runNightlySync(): Promise<void> {
   const threeDaysAgo = new Date();
   threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
-  // Step 1: Run the resumable Activities-API-based full reconciliation.
-  // This replaces the old syncGiftCards() (which used listGiftCards — no date filter,
-  // arbitrary order, loses progress on server restart).  The new method pages through
-  // ALL ACTIVATE events ASC, checkpointing after each page so restarts resume mid-scan.
-  // If the scan is not finished in one nightly run it will continue the next night.
+  try {
+    console.log(`${label} Step 0: Gift card balance refresh (all cards from Square)`);
+    const br = await giftCardService.refreshAllGiftCardBalances();
+    console.log(`${label} Balance refresh: updated=${br.updated} total=${br.total}`);
+  } catch (err) {
+    console.error(`${label} Gift card balance refresh failed (non-fatal):`, err);
+  }
+
   try {
     console.log(`${label} Step 1/4: Gift card full reconciliation (Activities API)`);
     const r = await syncService.syncGiftCardsHistoricalBackfill();
