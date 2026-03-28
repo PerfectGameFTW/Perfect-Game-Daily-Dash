@@ -35,6 +35,8 @@ export class SyncError extends Error {
 export class SyncService {
   /** In-memory lock to prevent concurrent backfill runs within a single process */
   private _ordersPaymentsBackfillRunning = false;
+  private _ordersSyncRunning = false;
+  private _paymentsSyncRunning = false;
 
   /**
    * Get the current sync state for a specific sync type
@@ -288,27 +290,27 @@ export class SyncService {
     failed: number;
     alreadyRunning?: boolean;
   }> {
-    // Initialize counters
+    if (this._ordersSyncRunning) {
+      console.log('[SyncOrders] Already running in this process, skipping');
+      return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
+    }
+
+    this._ordersSyncRunning = true;
     let processed = 0;
     let created = 0;
     let updated = 0;
     let failed = 0;
     
     try {
-      // Get or create sync state
       let state = await this.getSyncState('orders');
       
-      // Check if a sync is already in progress and prevent duplicate runs
       if (state && state.status === 'in_progress') {
         const lastSyncTime = state.lastSyncedAt ? new Date(state.lastSyncedAt) : new Date(0);
-        const currentTime = new Date();
-        const timeDifference = currentTime.getTime() - lastSyncTime.getTime();
-        const timeThreshold = 30 * 60 * 1000; // 30 minutes in milliseconds
+        const timeDifference = Date.now() - lastSyncTime.getTime();
+        const timeThreshold = 5 * 60 * 1000;
         
-        // If the last sync started less than 30 minutes ago and is still marked as in_progress,
-        // we consider it potentially stuck
         if (timeDifference < timeThreshold) {
-          console.log(`Sync for orders already in progress. Started at ${lastSyncTime.toISOString()}`);
+          console.log(`[SyncOrders] DB status still in_progress from ${lastSyncTime.toISOString()}, skipping`);
           return { 
             processed: state.processedCount || 0, 
             created, 
@@ -317,8 +319,7 @@ export class SyncService {
             alreadyRunning: true 
           };
         } else {
-          // If it's been running for more than 30 minutes, we'll assume it's stuck and restart it
-          console.log(`Previous orders sync appears to be stuck (running for ${Math.round(timeDifference/60000)} minutes). Restarting...`);
+          console.log(`[SyncOrders] Previous sync appears stuck (${Math.round(timeDifference/60000)} min). Restarting...`);
         }
       }
       
@@ -334,11 +335,10 @@ export class SyncService {
         });
       }
       
-      // Update state to in progress
       await this.updateSyncState(state.id, {
         isComplete: false,
         status: 'in_progress',
-        lastSyncedAt: new Date(), // Update the timestamp to now
+        lastSyncedAt: new Date(),
         processedCount: 0,
         totalCount: 0,
         errorMessage: null
@@ -588,6 +588,8 @@ export class SyncService {
         'SYNC_ERROR',
         error instanceof Error ? error.message : error
       );
+    } finally {
+      this._ordersSyncRunning = false;
     }
   }
   
@@ -605,27 +607,27 @@ export class SyncService {
     failed: number;
     alreadyRunning?: boolean;
   }> {
-    // Initialize counters
+    if (this._paymentsSyncRunning) {
+      console.log('[SyncPayments] Already running in this process, skipping');
+      return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
+    }
+
+    this._paymentsSyncRunning = true;
     let processed = 0;
     let created = 0;
     let updated = 0;
     let failed = 0;
     
     try {
-      // Get or create sync state
       let state = await this.getSyncState('payments');
       
-      // Check if a sync is already in progress and prevent duplicate runs
       if (state && state.status === 'in_progress') {
         const lastSyncTime = state.lastSyncedAt ? new Date(state.lastSyncedAt) : new Date(0);
-        const currentTime = new Date();
-        const timeDifference = currentTime.getTime() - lastSyncTime.getTime();
-        const timeThreshold = 30 * 60 * 1000; // 30 minutes in milliseconds
+        const timeDifference = Date.now() - lastSyncTime.getTime();
+        const timeThreshold = 5 * 60 * 1000;
         
-        // If the last sync started less than 30 minutes ago and is still marked as in_progress,
-        // we consider it potentially stuck
         if (timeDifference < timeThreshold) {
-          console.log(`Sync for payments already in progress. Started at ${lastSyncTime.toISOString()}`);
+          console.log(`[SyncPayments] DB status still in_progress from ${lastSyncTime.toISOString()}, skipping`);
           return { 
             processed: state.processedCount || 0, 
             created, 
@@ -634,8 +636,7 @@ export class SyncService {
             alreadyRunning: true 
           };
         } else {
-          // If it's been running for more than 30 minutes, we'll assume it's stuck and restart it
-          console.log(`Previous payments sync appears to be stuck (running for ${Math.round(timeDifference/60000)} minutes). Restarting...`);
+          console.log(`[SyncPayments] Previous sync appears stuck (${Math.round(timeDifference/60000)} min). Restarting...`);
         }
       }
       
@@ -651,10 +652,10 @@ export class SyncService {
         });
       }
       
-      // Update state to in progress
       await this.updateSyncState(state.id, {
         isComplete: false,
         status: 'in_progress',
+        lastSyncedAt: new Date(),
         processedCount: 0,
         totalCount: 0,
         errorMessage: null
@@ -768,6 +769,8 @@ export class SyncService {
         'SYNC_ERROR',
         error instanceof Error ? error.message : error
       );
+    } finally {
+      this._paymentsSyncRunning = false;
     }
   }
   
