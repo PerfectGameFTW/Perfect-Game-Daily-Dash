@@ -1102,7 +1102,7 @@ export class SyncService {
       await this.updateSyncState(state.id, { status: 'completed', isComplete: true });
     }
 
-    const lastWatermark: Date = (state?.lastSyncedAt && state.status === 'completed')
+    const lastWatermark: Date = (state?.lastSyncedAt && (state.status === 'completed' || state.status === 'error'))
       ? new Date(state.lastSyncedAt)
       : new Date(runStartedAt.getTime() - DEFAULT_LOOKBACK_MS);
     const since = new Date(lastWatermark.getTime() - OVERLAP_MS);

@@ -645,7 +645,16 @@ export class GiftCardService {
     for (const squareId of squareIds) {
       try {
         const card = await fetchGiftCardById(squareId);
-        if (!card) continue;
+        if (!card) {
+          const zeroResult = await db.update(giftCards)
+            .set({ amount: 0, isActive: false, updatedAt: new Date() })
+            .where(eq(giftCards.squareId, squareId));
+          if (zeroResult.rowCount && zeroResult.rowCount > 0) {
+            updated++;
+            console.log(`[GiftCardBalanceRefresh] Card ${squareId} not found in Square — zeroed balance`);
+          }
+          continue;
+        }
 
         let balance = 0;
         if (card.balanceMoney?.amount) {
