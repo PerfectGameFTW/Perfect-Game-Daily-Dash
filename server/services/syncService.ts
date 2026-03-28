@@ -133,6 +133,7 @@ export class SyncService {
     matched: number;
     created: number;
     errors: any[];
+    redeemedGiftCardIds: string[];
   }> {
     console.log(`Starting gift card redemption sync from ${startDate?.toISOString() || 'beginning'} to ${endDate?.toISOString() || 'now'}`);
     
@@ -164,7 +165,8 @@ export class SyncService {
         processed: 0,
         matched: 0,
         created: 0,
-        errors: [] as any[]
+        errors: [] as any[],
+        redeemedGiftCardIds: [] as string[]
       };
       
       // Step 2: Process each transaction
@@ -219,6 +221,9 @@ export class SyncService {
             if (redemptionResult) {
               result.matched++;
               result.created++;
+              if (redemptionResult.squareId) {
+                result.redeemedGiftCardIds.push(redemptionResult.squareId);
+              }
               console.log(`Created redemption record for transaction ${transaction.id}, gift card ${redemptionResult.id} (${redemptionResult.gan || sourceId})`);
             } else {
               result.errors.push({
@@ -269,6 +274,7 @@ export class SyncService {
         processed: 0,
         matched: 0,
         created: 0,
+        redeemedGiftCardIds: [],
         errors: [{
           error: error instanceof Error ? error.message : String(error)
         }]

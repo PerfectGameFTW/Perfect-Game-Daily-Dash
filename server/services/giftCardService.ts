@@ -625,6 +625,41 @@ export class GiftCardService {
     }
   }
 
+  async refreshGiftCardBalancesByIds(squareIds: string[]): Promise<{ updated: number; total: number }> {
+    if (squareIds.length === 0) return { updated: 0, total: 0 };
+
+    const { fetchGiftCardById } = await import('../squareClient');
+    let updated = 0;
+
+    for (const squareId of squareIds) {
+      try {
+        const card = await fetchGiftCardById(squareId);
+        if (!card) continue;
+
+        let balance = 0;
+        if (card.balanceMoney?.amount) {
+          balance = Number(card.balanceMoney.amount) / 100;
+        } else if (card.balance_money?.amount) {
+          balance = Number(card.balance_money.amount) / 100;
+        }
+
+        const state = card.state || card.status || 'ACTIVE';
+        const isActive = state === 'ACTIVE';
+
+        const result = await db.update(giftCards)
+          .set({ amount: balance, isActive, updatedAt: new Date() })
+          .where(eq(giftCards.squareId, squareId));
+
+        if (result.rowCount && result.rowCount > 0) updated++;
+      } catch (err) {
+        console.error(`[GiftCardBalanceRefresh] Failed to refresh balance for ${squareId}:`, err);
+      }
+    }
+
+    console.log(`[GiftCardBalanceRefresh] Refreshed ${updated}/${squareIds.length} card balances`);
+    return { updated, total: squareIds.length };
+  }
+
   async refreshAllGiftCardBalances(): Promise<{ updated: number; total: number }> {
     const { fetchGiftCards } = await import('../squareClient');
 

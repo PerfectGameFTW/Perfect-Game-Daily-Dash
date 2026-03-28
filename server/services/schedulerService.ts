@@ -353,6 +353,15 @@ export async function runFrequentSync(): Promise<void> {
     if (result.created > 0) {
       console.log(`${label} Gift card redemptions: +${result.created} new`);
     }
+    if (result.redeemedGiftCardIds && result.redeemedGiftCardIds.length > 0) {
+      try {
+        const uniqueIds = Array.from(new Set(result.redeemedGiftCardIds));
+        const refreshResult = await giftCardService.refreshGiftCardBalancesByIds(uniqueIds);
+        console.log(`${label} Refreshed ${refreshResult.updated} redeemed gift card balance(s)`);
+      } catch (refreshErr) {
+        console.error(`${label} Gift card balance refresh failed (non-fatal):`, refreshErr);
+      }
+    }
   } catch (err) {
     console.error(`${label} Gift card redemptions sync failed:`, err);
   }
