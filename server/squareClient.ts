@@ -989,6 +989,68 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
   return results;
 }
 
+export async function fetchRecentGiftCardRedemptions(since: Date): Promise<Array<{
+  giftCardId: string;
+  amountDollars: number;
+  createdAt: Date;
+}>> {
+  const results: Array<{ giftCardId: string; amountDollars: number; createdAt: Date }> = [];
+
+  if (!process.env.SQUARE_LOCATION_ID) {
+    console.error('[RedeemMonitor] Square location ID is not configured');
+    return results;
+  }
+
+  let pageCount = 0;
+
+  console.log(`[RedeemMonitor] Fetching REDEEM activities since ${since.toISOString()} (newest-first, stopping at cutoff)`);
+
+  let activitiesPage = await squareClient.giftCards.activities.list({
+    type: 'REDEEM',
+    locationId: process.env.SQUARE_LOCATION_ID,
+    limit: 50,
+    sortOrder: 'DESC',
+  });
+
+  let reachedCutoff = false;
+  while (!reachedCutoff) {
+    pageCount++;
+    const activities = activitiesPage.data ?? [];
+
+    for (const activity of activities) {
+      const giftCardId = activity.giftCardId;
+      if (!giftCardId) continue;
+
+      const activityTime = activity.createdAt ? new Date(activity.createdAt) : new Date(0);
+      if (activityTime <= since) {
+        reachedCutoff = true;
+        break;
+      }
+
+      const amountCents = activity.redeemActivityDetails?.amountMoney?.amount;
+      if (amountCents == null) continue;
+
+      results.push({
+        giftCardId,
+        amountDollars: Math.abs(Number(amountCents)) / 100,
+        createdAt: activityTime,
+      });
+    }
+
+    if (!activitiesPage.hasNextPage() || activities.length === 0) break;
+
+    try {
+      activitiesPage = await activitiesPage.getNextPage();
+    } catch (error) {
+      console.error(`[RedeemMonitor] Error on page ${pageCount}:`, error);
+      break;
+    }
+  }
+
+  console.log(`[RedeemMonitor] Found ${results.length} REDEEM events since ${since.toISOString()} (${pageCount} page${pageCount !== 1 ? 's' : ''} scanned)`);
+  return results;
+}
+
 export async function fetchGiftCardRedeemActivities(
   beginTime: string,
   endTime: string
@@ -1086,10 +1148,11 @@ export async function fetchGiftCardById(squareId: string): Promise<any | null> {
 }
 
 // Fetch gift cards from Square API with enhanced error handling
-export async function fetchGiftCards(): Promise<any[]> {
+export async function fetchGiftCards(): Promise<{ cards: any[]; complete: boolean }> {
   try {
     let allGiftCards: any[] = [];
     let pageCount = 0;
+    let paginationFailed = false;
     let giftCardsPage = await squareClient.giftCards.list({ limit: 100 });
 
     while (true) {
@@ -1118,12 +1181,13 @@ export async function fetchGiftCards(): Promise<any[]> {
         giftCardsPage = await giftCardsPage.getNextPage();
       } catch (error) {
         console.error('Error fetching gift cards page:', error);
+        paginationFailed = true;
         break;
       }
     }
 
-    console.log(`Completed fetching ${allGiftCards.length} total gift cards`);
-    return allGiftCards;
+    console.log(`Completed fetching ${allGiftCards.length} total gift cards (complete=${!paginationFailed})`);
+    return { cards: allGiftCards, complete: !paginationFailed };
   } catch (error) {
     console.error('Error fetching gift cards:', error);
     throw error;

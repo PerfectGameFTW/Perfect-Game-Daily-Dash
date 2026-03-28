@@ -1081,6 +1081,96 @@ export class SyncService {
     }
   }
 
+  async syncRedeemActivityBalances(): Promise<{
+    redeemEvents: number;
+    cardsRefreshed: number;
+  }> {
+    const SYNC_TYPE = 'giftCard_redeem_monitor';
+    const OVERLAP_MS = 2 * 60 * 1000;
+    const DEFAULT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+    const runStartedAt = new Date();
+
+    let state = await this.getSyncState(SYNC_TYPE);
+
+    const STALE_LOCK_MS = 10 * 60 * 1000;
+    if (state?.status === 'in_progress') {
+      const elapsed = state.lastSyncedAt ? Date.now() - new Date(state.lastSyncedAt).getTime() : Infinity;
+      if (elapsed < STALE_LOCK_MS) {
+        return { redeemEvents: 0, cardsRefreshed: 0 };
+      }
+      console.warn(`[RedeemMonitor] ⚠️ STALE LOCK DETECTED — stuck for ${Math.round(elapsed / 60000)} min. Force-resetting.`);
+      await this.updateSyncState(state.id, { status: 'completed', isComplete: true });
+    }
+
+    const lastWatermark: Date = (state?.lastSyncedAt && state.status === 'completed')
+      ? new Date(state.lastSyncedAt)
+      : new Date(runStartedAt.getTime() - DEFAULT_LOOKBACK_MS);
+    const since = new Date(lastWatermark.getTime() - OVERLAP_MS);
+
+    if (!state) {
+      state = await this.createSyncState({
+        syncType: SYNC_TYPE,
+        lastSyncedAt: lastWatermark,
+        isComplete: false,
+        processedCount: 0,
+        totalCount: 0,
+        status: 'in_progress',
+        errorMessage: null
+      });
+    } else {
+      await this.updateSyncState(state.id, {
+        isComplete: false,
+        status: 'in_progress',
+        errorMessage: null
+      });
+    }
+
+    try {
+      const recentRedemptions = await squareClient.fetchRecentGiftCardRedemptions(since);
+
+      if (recentRedemptions.length === 0) {
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: runStartedAt,
+          processedCount: 0
+        });
+        return { redeemEvents: 0, cardsRefreshed: 0 };
+      }
+
+      const uniqueCardIds = Array.from(new Set(recentRedemptions.map(r => r.giftCardId)));
+      console.log(`[RedeemMonitor] ${recentRedemptions.length} REDEEM events → ${uniqueCardIds.length} unique cards to refresh`);
+
+      const refreshResult = await giftCardService.refreshGiftCardBalancesByIds(uniqueCardIds);
+
+      if (refreshResult.failed > 0) {
+        console.warn(`[RedeemMonitor] ${refreshResult.failed}/${uniqueCardIds.length} card refreshes failed — holding watermark for retry`);
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: 'completed',
+          processedCount: recentRedemptions.length
+        });
+      } else {
+        await this.updateSyncState(state.id, {
+          isComplete: true,
+          status: 'completed',
+          lastSyncedAt: runStartedAt,
+          processedCount: recentRedemptions.length
+        });
+      }
+
+      return { redeemEvents: recentRedemptions.length, cardsRefreshed: refreshResult.updated };
+    } catch (error) {
+      await this.updateSyncState(state.id, {
+        isComplete: true,
+        status: 'error',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error'
+      });
+      console.error('[RedeemMonitor] Fatal error:', error);
+      return { redeemEvents: 0, cardsRefreshed: 0 };
+    }
+  }
+
   /**
    * Resumable historical gift card backfill via Activities API.
    *

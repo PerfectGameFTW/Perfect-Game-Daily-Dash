@@ -6,7 +6,7 @@
  */
 
 import { db } from '../db';
-import { eq, and, between, desc, asc, sql, isNull, gt } from 'drizzle-orm';
+import { eq, and, between, desc, asc, sql, isNull, gt, inArray } from 'drizzle-orm';
 import { 
   giftCards,
   orders,
@@ -635,11 +635,12 @@ export class GiftCardService {
     }
   }
 
-  async refreshGiftCardBalancesByIds(squareIds: string[]): Promise<{ updated: number; total: number }> {
-    if (squareIds.length === 0) return { updated: 0, total: 0 };
+  async refreshGiftCardBalancesByIds(squareIds: string[]): Promise<{ updated: number; failed: number; total: number }> {
+    if (squareIds.length === 0) return { updated: 0, failed: 0, total: 0 };
 
     const { fetchGiftCardById } = await import('../squareClient');
     let updated = 0;
+    let failed = 0;
 
     for (const squareId of squareIds) {
       try {
@@ -662,20 +663,21 @@ export class GiftCardService {
 
         if (result.rowCount && result.rowCount > 0) updated++;
       } catch (err) {
+        failed++;
         console.error(`[GiftCardBalanceRefresh] Failed to refresh balance for ${squareId}:`, err);
       }
     }
 
-    console.log(`[GiftCardBalanceRefresh] Refreshed ${updated}/${squareIds.length} card balances`);
-    return { updated, total: squareIds.length };
+    console.log(`[GiftCardBalanceRefresh] Refreshed ${updated}/${squareIds.length} card balances (${failed} failed)`);
+    return { updated, failed, total: squareIds.length };
   }
 
   async refreshAllGiftCardBalances(): Promise<{ updated: number; total: number }> {
     const { fetchGiftCards } = await import('../squareClient');
 
     console.log('[GiftCardBalanceRefresh] Fetching all gift cards from Square...');
-    const allSquareCards = await fetchGiftCards();
-    console.log(`[GiftCardBalanceRefresh] Fetched ${allSquareCards.length} cards from Square`);
+    const { cards: allSquareCards, complete: fetchComplete } = await fetchGiftCards();
+    console.log(`[GiftCardBalanceRefresh] Fetched ${allSquareCards.length} cards from Square (complete=${fetchComplete})`);
 
     const values: { squareId: string; balance: number; isActive: boolean }[] = [];
     for (const card of allSquareCards) {
@@ -713,6 +715,33 @@ export class GiftCardService {
     }
 
     console.log(`[GiftCardBalanceRefresh] Done — updated ${updated} of ${allSquareCards.length} cards`);
+
+    if (fetchComplete) {
+      const squareIdSet = new Set(values.map(v => v.squareId));
+      const staleCards = await db.select({ squareId: giftCards.squareId })
+        .from(giftCards)
+        .where(gt(giftCards.amount, 0));
+
+      const deletedIds = staleCards
+        .filter(c => !squareIdSet.has(c.squareId))
+        .map(c => c.squareId);
+
+      if (deletedIds.length > 0) {
+        const BATCH_SIZE = 500;
+        let zeroed = 0;
+        for (let i = 0; i < deletedIds.length; i += BATCH_SIZE) {
+          const batch = deletedIds.slice(i, i + BATCH_SIZE);
+          const result = await db.update(giftCards)
+            .set({ amount: 0, isActive: false, updatedAt: new Date() })
+            .where(inArray(giftCards.squareId, batch));
+          zeroed += result.rowCount ?? 0;
+        }
+        console.log(`[GiftCardBalanceRefresh] Zeroed ${zeroed} cards no longer in Square (deleted/removed)`);
+      }
+    } else {
+      console.warn(`[GiftCardBalanceRefresh] ⚠️ Skipping deleted-card cleanup — Square fetch was incomplete (pagination failed)`);
+    }
+
     return { updated, total: allSquareCards.length };
   }
 }

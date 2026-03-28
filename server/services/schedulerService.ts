@@ -366,6 +366,15 @@ export async function runFrequentSync(): Promise<void> {
     console.error(`${label} Gift card redemptions sync failed:`, err);
   }
 
+  try {
+    const result = await syncService.syncRedeemActivityBalances();
+    if (result.redeemEvents > 0) {
+      console.log(`${label} Redeem monitor: ${result.redeemEvents} events, ${result.cardsRefreshed} balances refreshed`);
+    }
+  } catch (err) {
+    console.error(`${label} Redeem activity balance sync failed:`, err);
+  }
+
   broadcast('data-updated', { syncType: 'frequent' });
 }
 

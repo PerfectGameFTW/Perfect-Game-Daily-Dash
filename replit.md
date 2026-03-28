@@ -32,8 +32,8 @@ Sync types:
 
 ### Scheduled Sync
 `server/services/schedulerService.ts`:
-- **Every 60 seconds**: Payments, orders, refunds (last 15 min window), gift card incremental sync, gift card redemption sync, Intercard today sync
-- **Nightly at 3 AM ET**: Deep sync with 3-day lookback for payments/orders/refunds, catalog sync + backfill, payout fee sync
+- **Every 60 seconds**: Payments, orders, refunds (last 15 min window), gift card incremental sync, gift card redemption sync, REDEEM activity balance monitor, Intercard today sync
+- **Nightly at 3 AM ET**: Deep sync with 3-day lookback for payments/orders/refunds, catalog sync + backfill, payout fee sync, full gift card balance refresh (includes zeroing deleted cards)
 - **On startup**: Historical backfill loops (gift cards, orders/payments, Intercard) run once in background if not already complete
 
 ### Gift Card Sync (Current Architecture)
@@ -54,6 +54,12 @@ Two sync methods now handle all gift card data:
    - For each new activation: looks up or creates the gift card record, links the activation order ID
    - **Stale lock safeguard**: If the sync has been stuck `in_progress` for >10 minutes, it force-resets with a warning log (`⚠️ STALE LOCK DETECTED`) and allows the next cycle to proceed
    - **Deleted card fallback**: If Square returns 404 for a card (fully redeemed and removed), creates a basic record from the ACTIVATE event data (squareId, activation amount, order ID) instead of skipping — ensures short-lived web reservation deposit cards are still tracked
+
+### REDEEM Activity Balance Monitor (Task #35)
+- **Purpose**: Keeps gift card balances (Total Outstanding Value, Web Res Adv Deposits) accurate in near real-time instead of only during the nightly refresh
+- **Mechanism**: Every 60 seconds, fetches REDEEM events from Square's Activities API since the last watermark (with 2-min overlap). For each redeemed card, fetches its current balance from Square and updates the DB. Uses sync_state key `giftCard_redeem_monitor`.
+- **API efficiency**: Only 1-2 API calls per cycle (activity page fetch) plus 1 call per redeemed card — not the 8,000+ card full scan
+- **Nightly deleted-card cleanup**: The nightly `refreshAllGiftCardBalances` now also zeroes out cards in the DB that no longer appear in Square's `listGiftCards` response (deleted/fully-redeemed cards)
 
 ### Stale Lock Safeguard (applies to all sync types with concurrency guards)
 - **Problem**: If the server crashes or restarts while a sync is `in_progress`, the concurrency guard blocks all future runs indefinitely
