@@ -989,16 +989,16 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
   return results;
 }
 
-export async function fetchRecentGiftCardRedemptions(since: Date): Promise<Array<{
+export async function fetchRecentGiftCardRedemptions(since: Date): Promise<{ events: Array<{
   giftCardId: string;
   amountDollars: number;
   createdAt: Date;
-}>> {
+}>; complete: boolean }> {
   const results: Array<{ giftCardId: string; amountDollars: number; createdAt: Date }> = [];
 
   if (!process.env.SQUARE_LOCATION_ID) {
     console.error('[RedeemMonitor] Square location ID is not configured');
-    return results;
+    return { events: results, complete: true };
   }
 
   let pageCount = 0;
@@ -1043,12 +1043,13 @@ export async function fetchRecentGiftCardRedemptions(since: Date): Promise<Array
       activitiesPage = await activitiesPage.getNextPage();
     } catch (error) {
       console.error(`[RedeemMonitor] Error on page ${pageCount}:`, error);
-      break;
+      console.log(`[RedeemMonitor] Found ${results.length} REDEEM events since ${since.toISOString()} (${pageCount} page${pageCount !== 1 ? 's' : ''} scanned, INCOMPLETE)`);
+      return { events: results, complete: false };
     }
   }
 
   console.log(`[RedeemMonitor] Found ${results.length} REDEEM events since ${since.toISOString()} (${pageCount} page${pageCount !== 1 ? 's' : ''} scanned)`);
-  return results;
+  return { events: results, complete: true };
 }
 
 export async function fetchGiftCardRedeemActivities(

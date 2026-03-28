@@ -1126,13 +1126,13 @@ export class SyncService {
     }
 
     try {
-      const recentRedemptions = await squareClient.fetchRecentGiftCardRedemptions(since);
+      const { events: recentRedemptions, complete: fetchComplete } = await squareClient.fetchRecentGiftCardRedemptions(since);
 
       if (recentRedemptions.length === 0) {
         await this.updateSyncState(state.id, {
           isComplete: true,
           status: 'completed',
-          lastSyncedAt: runStartedAt,
+          lastSyncedAt: fetchComplete ? runStartedAt : undefined,
           processedCount: 0
         });
         return { redeemEvents: 0, cardsRefreshed: 0 };
@@ -1143,21 +1143,16 @@ export class SyncService {
 
       const refreshResult = await giftCardService.refreshGiftCardBalancesByIds(uniqueCardIds);
 
-      if (refreshResult.failed > 0) {
-        console.warn(`[RedeemMonitor] ${refreshResult.failed}/${uniqueCardIds.length} card refreshes failed — holding watermark for retry`);
-        await this.updateSyncState(state.id, {
-          isComplete: true,
-          status: 'completed',
-          processedCount: recentRedemptions.length
-        });
-      } else {
-        await this.updateSyncState(state.id, {
-          isComplete: true,
-          status: 'completed',
-          lastSyncedAt: runStartedAt,
-          processedCount: recentRedemptions.length
-        });
+      const shouldAdvanceWatermark = fetchComplete && refreshResult.failed === 0;
+      if (!shouldAdvanceWatermark) {
+        console.warn(`[RedeemMonitor] Holding watermark for retry (fetchComplete=${fetchComplete}, failedRefreshes=${refreshResult.failed})`);
       }
+      await this.updateSyncState(state.id, {
+        isComplete: true,
+        status: 'completed',
+        lastSyncedAt: shouldAdvanceWatermark ? runStartedAt : undefined,
+        processedCount: recentRedemptions.length
+      });
 
       return { redeemEvents: recentRedemptions.length, cardsRefreshed: refreshResult.updated };
     } catch (error) {
