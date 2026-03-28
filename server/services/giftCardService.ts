@@ -226,9 +226,7 @@ export class GiftCardService {
     const outstandingResult = await db.execute(sql`
       SELECT COALESCE(SUM(gc.amount), 0) as outstanding_balance
       FROM gift_cards gc
-      LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
       WHERE gc.amount > 0
-        AND (o.source IS NULL OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction'))
     `);
 
     const soldCount = parseInt(String(activationsResult.rows?.[0]?.sold_count || '0'), 10) || 0;
