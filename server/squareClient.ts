@@ -1142,8 +1142,9 @@ export async function fetchGiftCardById(squareId: string): Promise<any | null> {
     const response = await squareClient.giftCards.get({ id: squareId });
     if (!response.giftCard) return null;
     return processSafeSquareData(response.giftCard);
-  } catch (error: any) {
-    const status = error?.statusCode ?? error?.status ?? error?.response?.status;
+  } catch (error: unknown) {
+    const err = error as Record<string, unknown>;
+    const status = err?.statusCode ?? err?.status ?? (err?.response as Record<string, unknown>)?.status;
     if (status === 404) {
       console.log(`[GiftCardFetch] Card ${squareId} not found (404) — likely deleted`);
       return null;
