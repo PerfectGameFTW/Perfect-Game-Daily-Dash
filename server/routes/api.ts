@@ -29,6 +29,7 @@ export function createApiRouter(): Router {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+
   router.use((req: Request, res: Response, next: NextFunction) => {
     if (req.path === '/health' || req.path === '/sync/status') {
       return next();

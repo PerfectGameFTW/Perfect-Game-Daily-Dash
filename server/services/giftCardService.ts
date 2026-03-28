@@ -652,7 +652,7 @@ export class GiftCardService {
     const BATCH = 500;
     for (let i = 0; i < values.length; i += BATCH) {
       const batch = values.slice(i, i + BATCH);
-      const valuesChunks = batch.map(v => sql`(${v.squareId}, ${v.balance}, ${v.isActive})`);
+      const valuesChunks = batch.map(v => sql`(${v.squareId}::text, ${v.balance}::real, ${v.isActive}::boolean)`);
       const valuesSql = sql.join(valuesChunks, sql`, `);
 
       const result = await db.execute(sql`
@@ -661,7 +661,7 @@ export class GiftCardService {
           is_active = v.is_active,
           updated_at = NOW()
         FROM (VALUES ${valuesSql}) AS v(square_id, balance, is_active)
-        WHERE gc.square_id = v.square_id::text
+        WHERE gc.square_id = v.square_id
       `);
       updated += result.rowCount ?? 0;
       console.log(`[GiftCardBalanceRefresh] Progress: ${Math.min(i + BATCH, values.length)}/${values.length}`);
