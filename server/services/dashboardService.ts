@@ -50,6 +50,7 @@ export class DashboardService {
     const intercardCurrent = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
     const totalRevenue = revenueBreakdown.trueRevenue + intercardCurrent.total;
     const depositClearings = revenueBreakdown.depositClearings;
+    const partywirksDeposits = revenueBreakdown.partywirksDeposits;
     const totalOrders = await orderService.getTotalOrders(dateRange, startDate, endDate);
     const giftCardSales = await giftCardService.getGiftCardSales(dateRange, startDate, endDate);
     
@@ -115,6 +116,7 @@ export class DashboardService {
       returns: revenueBreakdown.returns,
       giftCardRedemptions: revenueBreakdown.giftCardRedemptions,
       depositClearings,
+      partywirksDeposits,
       revenueChange,
       totalOrders,
       ordersChange,
@@ -238,7 +240,7 @@ export class DashboardService {
 
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
 
-    const [tips, depositClearings, txCountResult] = await Promise.all([
+    const [tips, depositClearingsResult, txCountResult] = await Promise.all([
       paymentService.getTipsByDateRange(dateRange, startDate, endDate),
       paymentService.getDepositClearings(dateRange, startDate, endDate),
       db.execute<{ cnt: number }>(sql`
@@ -248,6 +250,7 @@ export class DashboardService {
       `),
     ]);
     const totalTransactionCount = Number(txCountResult.rows[0]?.cnt || 0);
+    const depositClearings = depositClearingsResult.total;
 
     const refundRows = await db.execute<{ total: number }>(sql`
       SELECT COALESCE(SUM(amount), 0) as total

@@ -241,6 +241,7 @@ export class PaymentService {
     returns: number;
     giftCardRedemptions: number;
     depositClearings: number;
+    partywirksDeposits: number;
     trueRevenue: number;
   }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
@@ -294,7 +295,8 @@ export class PaymentService {
 
     const grossPayments = rawGrossPayments - kioskCashExclusion;
     
-    const depositClearingsAmount = await this.getDepositClearings(dateRange, startDate, endDate);
+    const depositClearingsResult = await this.getDepositClearings(dateRange, startDate, endDate);
+    const depositClearingsAmount = depositClearingsResult.total;
 
     return {
       grossPayments,
@@ -302,6 +304,7 @@ export class PaymentService {
       returns: returnsAmount,
       giftCardRedemptions: gcRedemptions,
       depositClearings: depositClearingsAmount,
+      partywirksDeposits: depositClearingsResult.partywirksDeposits,
       trueRevenue: grossPayments - refundsAmount - returnsAmount - gcRedemptions - depositClearingsAmount,
     };
   }
@@ -310,17 +313,31 @@ export class PaymentService {
     dateRange: DateRange,
     startDate?: Date,
     endDate?: Date
-  ): Promise<number> {
+  ): Promise<{ total: number; partywirksDeposits: number }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    const result = await db.execute<{ total: number }>(sql`
-      SELECT COALESCE(SUM(amount), 0) as total
+    const result = await db.execute<{ total: number; partywirks: number }>(sql`
+      SELECT 
+        COALESCE(SUM(amount), 0) as total,
+        COALESCE(SUM(CASE WHEN LOWER(square_data->'externalDetails'->>'source') LIKE '%partywirk%'
+                           OR LOWER(square_data->'externalDetails'->>'source') LIKE '%party wirk%'
+                           OR LOWER(square_data->'externalDetails'->>'source') LIKE '%partywiris%'
+                           OR LOWER(square_data->'externalDetails'->>'source') LIKE '%paertywirk%'
+                      THEN amount ELSE 0 END), 0) as partywirks
       FROM ${transactions}
       WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
         AND ${transactions.status} = 'completed'
         AND square_data->>'sourceType' = 'EXTERNAL'
-        AND square_data->'externalDetails'->>'type' = 'OTHER'
+        AND (square_data->'externalDetails'->>'type' = 'OTHER'
+          OR (square_data->'externalDetails'->>'type' = 'EXTERNAL'
+              AND (LOWER(square_data->'externalDetails'->>'source') LIKE '%partywirk%'
+                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%party wirk%'
+                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%partywiris%'
+                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%paertywirk%')))
     `);
-    return Number(result.rows[0]?.total || 0);
+    return {
+      total: Number(result.rows[0]?.total || 0),
+      partywirksDeposits: Number(result.rows[0]?.partywirks || 0),
+    };
   }
 
   async getTipsByDateRange(

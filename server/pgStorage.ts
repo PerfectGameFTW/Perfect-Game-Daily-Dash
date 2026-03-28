@@ -197,6 +197,7 @@ class PgStorage implements IStorage {
       returns: 0,
       giftCardRedemptions: 0,
       depositClearings: 0,
+      partywirksDeposits: 0,
       revenueChange,
       totalOrders,
       ordersChange,

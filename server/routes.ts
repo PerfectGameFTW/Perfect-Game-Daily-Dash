@@ -174,8 +174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Get daily summary data
-      const summary = await pgStorage.getDailySummary(parsedDateRange.data, startDate, endDate);
+      const summary = await dashboardService.getDailySummary(parsedDateRange.data, startDate, endDate);
 
       res.json(summary);
     } catch (error) {

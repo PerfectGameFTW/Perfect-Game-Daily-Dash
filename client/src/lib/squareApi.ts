@@ -40,6 +40,7 @@ export const fetchDailySummary = async (
       returns: toFloat(d.returns),
       giftCardRedemptions: toFloat(d.giftCardRedemptions),
       depositClearings: toFloat(d.depositClearings),
+      partywirksDeposits: toFloat(d.partywirksDeposits),
       revenueChange: toFloat(d.revenueChange),
       totalOrders: toInt(d.totalOrders),
       ordersChange: toFloat(d.ordersChange),

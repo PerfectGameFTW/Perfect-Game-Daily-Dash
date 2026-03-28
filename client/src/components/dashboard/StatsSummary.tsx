@@ -54,6 +54,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
 
   const [feesExpanded, setFeesExpanded] = useState(false);
   const [gcRedemptionsExpanded, setGcRedemptionsExpanded] = useState(false);
+  const [depositClearingsExpanded, setDepositClearingsExpanded] = useState(false);
   const [intercardExpanded, setIntercardExpanded] = useState(false);
   
   if (isLoading || isDetailedLoading) {
@@ -78,6 +79,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const returns = toNum(data?.returns);
   const discounts = toNum(detailedTransactions?.discountsAndComps);
   const depositClearings = toNum(data?.depositClearings);
+  const partywirksDeposits = toNum(data?.partywirksDeposits);
   const tips = toNum(detailedTransactions?.tips);
   const serviceCharges = toNum(detailedTransactions?.serviceCharges);
   const autoGratuity = toNum(detailedTransactions?.autoGratuity);
@@ -303,10 +305,29 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
               <span className="text-card-foreground font-semibold">{formatCurrency(grossPayments)}</span>
             </div>
 
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Event Deposit Redemptions</span>
+            <div
+              className="flex justify-between items-center cursor-pointer select-none"
+              onClick={() => setDepositClearingsExpanded(!depositClearingsExpanded)}
+            >
+              <div className="flex items-center gap-1.5">
+                {depositClearingsExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+                ) : (
+                  <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0 rotate-90" />
+                )}
+                <span className="text-muted-foreground">Event Deposit Redemptions</span>
+              </div>
               <span className="text-card-foreground font-medium">({formatCurrency(depositClearings)})</span>
             </div>
+
+            {depositClearingsExpanded && (
+              <>
+                <div className="flex justify-between items-center pl-6">
+                  <span className="text-muted-foreground text-sm">Partywirks Deposit</span>
+                  <span className="text-card-foreground font-medium">({formatCurrency(partywirksDeposits)})</span>
+                </div>
+              </>
+            )}
 
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Refunds + Returns</span>
