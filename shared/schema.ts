@@ -386,6 +386,7 @@ export interface GiftCardSummary {
   redeemedAmount: number;
   averageValue: number;
   outstandingBalance: number;
+  webResAdvDeposits: number;
 }
 
 export interface ProcessingFeeBreakdown {

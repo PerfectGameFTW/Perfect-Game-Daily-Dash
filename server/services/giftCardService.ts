@@ -212,7 +212,7 @@ export class GiftCardService {
       LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
       WHERE gc.purchase_date BETWEEN ${start} AND ${end}
         AND gc.activation_amount > 0
-        AND (o.source IS NULL OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction'))
+        AND (o.source IS NULL OR o.source NOT IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation'))
     `);
 
     const redemptionsResult = await db.execute(sql`
@@ -229,12 +229,21 @@ export class GiftCardService {
       WHERE gc.amount > 0
     `);
 
+    const webResAdvResult = await db.execute(sql`
+      SELECT COALESCE(SUM(gc.amount), 0) as web_res_adv_deposits
+      FROM gift_cards gc
+      INNER JOIN orders o ON o.square_id = gc.activation_square_order_id
+      WHERE gc.amount > 0
+        AND o.source IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
+    `);
+
     const soldCount = parseInt(String(activationsResult.rows?.[0]?.sold_count || '0'), 10) || 0;
     const soldAmount = parseFloat(String(activationsResult.rows?.[0]?.sold_amount || '0')) || 0;
     const redeemedCount = parseInt(String(redemptionsResult.rows?.[0]?.redeemed_count || '0'), 10) || 0;
     const redeemedAmount = parseFloat(String(redemptionsResult.rows?.[0]?.redeemed_amount || '0')) || 0;
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
     const outstandingBalance = parseFloat(String(outstandingResult.rows?.[0]?.outstanding_balance || '0')) || 0;
+    const webResAdvDeposits = parseFloat(String(webResAdvResult.rows?.[0]?.web_res_adv_deposits || '0')) || 0;
 
     return {
       soldCount,
@@ -242,7 +251,8 @@ export class GiftCardService {
       redeemedCount,
       redeemedAmount,
       averageValue,
-      outstandingBalance
+      outstandingBalance,
+      webResAdvDeposits
     };
   }
   

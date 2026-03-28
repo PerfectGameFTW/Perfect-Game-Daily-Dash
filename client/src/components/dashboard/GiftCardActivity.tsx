@@ -163,8 +163,8 @@ export default function GiftCardActivity({
                   <CreditCard className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-muted-foreground">Cards Sold</div>
-                  <div className="mt-1 text-xl font-bold text-card-foreground">{data?.soldCount || 0}</div>
+                  <div className="text-sm font-medium text-muted-foreground">Web Res Adv Deposits</div>
+                  <div className="mt-1 text-xl font-bold text-card-foreground">{formatCurrency(data?.webResAdvDeposits || 0)}</div>
                 </div>
               </div>
             </div>
