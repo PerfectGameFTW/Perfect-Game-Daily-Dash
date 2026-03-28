@@ -1142,9 +1142,13 @@ export async function fetchGiftCardById(squareId: string): Promise<any | null> {
     const response = await squareClient.giftCards.get({ id: squareId });
     if (!response.giftCard) return null;
     return processSafeSquareData(response.giftCard);
-  } catch (error) {
-    console.error(`[IncrementalGiftCardSync] Error fetching card ${squareId}:`, error);
-    return null;
+  } catch (error: any) {
+    const status = error?.statusCode ?? error?.status ?? error?.response?.status;
+    if (status === 404) {
+      console.log(`[GiftCardFetch] Card ${squareId} not found (404) — likely deleted`);
+      return null;
+    }
+    throw error;
   }
 }
 
