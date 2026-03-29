@@ -80,9 +80,18 @@ export function startScheduler(): void {
     }
 
     try {
+      const { cleared, relinked } = await giftCardService.repairMislinkedActivationOrders();
+      if (cleared > 0 || relinked > 0) {
+        console.log(`[Scheduler] Phase 1.5 (mislink repair): ${relinked} relinked, ${cleared} cleared`);
+      }
+    } catch (err) {
+      console.error('[Scheduler] Phase 1.5 (mislink repair) error:', err);
+    }
+
+    try {
       const { updated } = await giftCardService.backfillActivationSquareOrderIds();
       if (updated > 0) {
-        console.log(`[Scheduler] Phase 2 (heuristic backfill): ${updated} gift card(s) linked to Web Reservation orders`);
+        console.log(`[Scheduler] Phase 2 (heuristic backfill): ${updated} gift card(s) linked to orders`);
       } else {
         console.log('[Scheduler] Phase 2 (heuristic backfill): all gift cards already linked — nothing to do');
       }
@@ -464,6 +473,16 @@ export async function runNightlySync(): Promise<void> {
     console.log(`${label} Phase 1: ${r.inserted} missing order(s) inserted`);
   } catch (err) {
     console.error(`${label} Phase 1 (missing-order sync) failed (non-fatal):`, err);
+  }
+
+  try {
+    console.log(`${label} Phase 1.5 — Repair mislinked activation orders`);
+    const repair = await giftCardService.repairMislinkedActivationOrders();
+    if (repair.cleared > 0 || repair.relinked > 0) {
+      console.log(`${label} Phase 1.5: ${repair.relinked} relinked, ${repair.cleared} cleared`);
+    }
+  } catch (err) {
+    console.error(`${label} Phase 1.5 (mislink repair) failed (non-fatal):`, err);
   }
 
   try {

@@ -1687,6 +1687,14 @@ export class SyncService {
         console.error('[HistoricalBackfill] Phase 1 failed:', err);
       }
       try {
+        const repair = await giftCardService.repairMislinkedActivationOrders();
+        if (repair.cleared > 0 || repair.relinked > 0) {
+          console.log(`[HistoricalBackfill] Phase 1.5 (mislink repair): ${repair.relinked} relinked, ${repair.cleared} cleared`);
+        }
+      } catch (err) {
+        console.error('[HistoricalBackfill] Phase 1.5 (mislink repair) failed:', err);
+      }
+      try {
         const r2 = await giftCardService.backfillActivationSquareOrderIds();
         console.log(`[HistoricalBackfill] Phase 2: ${r2.updated} gift cards linked via heuristic`);
       } catch (err) {

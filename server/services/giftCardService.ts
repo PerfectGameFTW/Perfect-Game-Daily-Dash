@@ -275,17 +275,15 @@ export class GiftCardService {
 
   /**
    * Return gift card activations split into three buckets for the business day:
-   *  - bowlingWebResDeposits: gift cards whose activation_square_order_id links to a
-   *    'Web Reservation' order
-   *  - laserTagWebResDeposits: gift cards whose activation_square_order_id links to a
-   *    'Web Reservation-Attraction' order
-   *  - giftCardSales: all other activations — NULL activation_square_order_id or order
-   *    with a different source (genuine gift card purchases)
+   *  - bowlingWebResDeposits: activations linked to orders with a "Deposit" line item
+   *    where the order source is NOT laser-tag related
+   *  - laserTagWebResDeposits: activations linked to orders with a "Deposit" line item
+   *    where the order source IS laser-tag related
+   *  - giftCardSales: activations linked to orders WITHOUT a "Deposit" line item,
+   *    or activations with no linked order (genuine gift card purchases)
    *
-   * activation_square_order_id is populated by:
-   *   1. squareClient ACTIVATE event capture (when Square returns orderId in API response)
-   *   2. backfillActivationSquareOrderIds() — a one-time startup routine that matches
-   *      gift cards to Web Reservation orders by activation_amount + time proximity
+   * Uses activation_amount from the gift_cards table (the authoritative activation
+   * value from Square's ACTIVATE event), NOT tender amounts or order totals.
    */
   async getGiftCardBreakdown(
     dateRange: DateRange,
@@ -294,52 +292,46 @@ export class GiftCardService {
   ): Promise<{ bowlingWebResDeposits: number; laserTagWebResDeposits: number; giftCardSales: number }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
 
-    const orderLineItems = sql.identifier('order_line_items');
     const result = await db.execute<{
-      bowling_web_res: string;
-      laser_tag_web_res: string;
+      bowling_deposits: string;
+      laser_tag_deposits: string;
+      gc_sales: string;
     }>(sql`
       SELECT
-        COALESCE(SUM(CASE WHEN o.source = 'Web Reservation' THEN o.total_money ELSE 0 END), 0) AS bowling_web_res,
-        COALESCE(SUM(CASE WHEN o.source IN ('Web Reservation-Attraction', 'Multi Attractions Reservation') THEN o.total_money ELSE 0 END), 0) AS laser_tag_web_res
-      FROM ${orders} o
-      WHERE COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
-        AND o.source IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
-        AND o.status IN ('COMPLETED', 'OPEN')
-        AND EXISTS (
-          SELECT 1 FROM ${orderLineItems} oli
-          WHERE oli.order_id = o.id AND oli.name = 'Deposit'
-        )
-        AND (
-          o.status = 'COMPLETED'
-          OR EXISTS (
-            SELECT 1 FROM jsonb_array_elements(o.square_data->'tenders') t
-            WHERE COALESCE(t->'cardDetails'->>'status', t->>'type') != 'FAILED'
-          )
-        )
+        COALESCE(SUM(CASE
+          WHEN has_deposit_item AND NOT is_laser_tag THEN activation_amount
+          ELSE 0
+        END), 0) AS bowling_deposits,
+        COALESCE(SUM(CASE
+          WHEN has_deposit_item AND is_laser_tag THEN activation_amount
+          ELSE 0
+        END), 0) AS laser_tag_deposits,
+        COALESCE(SUM(CASE
+          WHEN NOT has_deposit_item THEN activation_amount
+          ELSE 0
+        END), 0) AS gc_sales
+      FROM (
+        SELECT
+          gc.activation_amount,
+          COALESCE(EXISTS (
+            SELECT 1 FROM order_line_items oli
+            WHERE oli.order_id = o.id AND oli.name = 'Deposit'
+          ), false) AS has_deposit_item,
+          COALESCE(o.source IN ('Web Reservation-Attraction', 'Multi Attractions Reservation'), false) AS is_laser_tag
+        FROM gift_cards gc
+        LEFT JOIN orders o ON o.square_id = gc.activation_square_order_id
+        WHERE gc.purchase_date >= ${start}
+          AND gc.purchase_date < ${end}
+          AND gc.activation_amount > 0
+      ) classified
     `);
 
-    const row = result.rows?.[0] ?? { bowling_web_res: '0', laser_tag_web_res: '0' };
-    const bowlingWebResDeposits = parseFloat(String(row.bowling_web_res || '0')) || 0;
-    const laserTagWebResDeposits = parseFloat(String(row.laser_tag_web_res || '0')) || 0;
-
-    const gcTenderResult = await db.execute<{ total_gc_tender: string }>(sql`
-      SELECT COALESCE(SUM(
-        ((tender->>'amountMoney')::jsonb->>'amount')::numeric
-      ) / 100, 0) AS total_gc_tender
-      FROM ${orders} o,
-        jsonb_array_elements(o.square_data->'tenders') AS tender
-      WHERE COALESCE(o.closed_at, o.created_at) BETWEEN ${start} AND ${end}
-        AND o.status IN ('COMPLETED', 'OPEN')
-        AND tender->>'type' = 'SQUARE_GIFT_CARD'
-    `);
-    const totalGcTenderSales = parseFloat(String(gcTenderResult.rows?.[0]?.total_gc_tender || '0')) || 0;
-    const giftCardSales = Math.max(0, totalGcTenderSales - bowlingWebResDeposits - laserTagWebResDeposits);
+    const row = result.rows?.[0] ?? { bowling_deposits: '0', laser_tag_deposits: '0', gc_sales: '0' };
 
     return {
-      bowlingWebResDeposits,
-      laserTagWebResDeposits,
-      giftCardSales,
+      bowlingWebResDeposits: parseFloat(String(row.bowling_deposits || '0')) || 0,
+      laserTagWebResDeposits: parseFloat(String(row.laser_tag_deposits || '0')) || 0,
+      giftCardSales: parseFloat(String(row.gc_sales || '0')) || 0,
     };
   }
 
@@ -459,12 +451,14 @@ export class GiftCardService {
    *
    * Matching strategy: activation_amount = order.total_money AND
    *   |gc.purchase_date - order.created_at| < 5 minutes AND
-   *   order.source IN ('Web Reservation', 'Web Reservation-Attraction')
+   *   order has a "Deposit" line item (for deposit orders) or gift card line items
    *
-   * @param orderDateRange  Optional date window to scope the order search. When provided
-   *   (e.g. during per-chunk backfill), only orders whose created_at falls within
-   *   [start, end) are candidates — avoids repeated full-table scans.
-   *   Omit (or pass undefined) for a global scan (e.g. the final post-backfill run).
+   * Guards to prevent mislinking:
+   *   (a) Never link to an order already claimed by another gift card
+   *   (b) Prefer orders where a line item amount matches the activation amount
+   *   (c) When multiple candidates exist, pick best amount match, then closest in time
+   *
+   * @param orderDateRange  Optional date window to scope the order search.
    */
   async backfillActivationSquareOrderIds(
     orderDateRange?: { start: Date; end: Date }
@@ -475,29 +469,139 @@ export class GiftCardService {
 
     const result = await db.execute(sql`
       UPDATE gift_cards gc
-      SET activation_square_order_id = matched.square_id,
+      SET activation_square_order_id = best.square_id,
           updated_at = NOW()
       FROM (
-        SELECT DISTINCT ON (gc2.id)
-          gc2.id AS gc_id,
-          o.square_id
-        FROM gift_cards gc2
-        JOIN orders o
-          ON  o.total_money = gc2.activation_amount
-          AND o.source IN ('Web Reservation', 'Web Reservation-Attraction')
-          AND ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at))) < 300
-          ${dateFilter}
-        WHERE gc2.activation_square_order_id IS NULL
-          AND gc2.activation_amount > 0
-        ORDER BY gc2.id, ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at)))
-      ) matched
-      WHERE gc.id = matched.gc_id
+        SELECT DISTINCT ON (gc_id) gc_id, square_id
+        FROM (
+          SELECT DISTINCT ON (gc2.id, o.square_id)
+            gc2.id AS gc_id,
+            o.square_id,
+            (CASE WHEN EXISTS (
+              SELECT 1 FROM order_line_items oli
+              WHERE oli.order_id = o.id
+                AND ABS(oli.total_money - gc2.activation_amount) < 0.01
+            ) THEN 0 ELSE 1 END) AS amount_match_rank,
+            ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at))) AS time_diff
+          FROM gift_cards gc2
+          JOIN orders o
+            ON  o.total_money = gc2.activation_amount
+            AND ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at))) < 300
+            ${dateFilter}
+          WHERE gc2.activation_square_order_id IS NULL
+            AND gc2.activation_amount > 0
+            AND NOT EXISTS (
+              SELECT 1 FROM gift_cards other
+              WHERE other.activation_square_order_id = o.square_id
+                AND other.id != gc2.id
+            )
+            AND EXISTS (
+              SELECT 1 FROM order_line_items oli
+              WHERE oli.order_id = o.id
+                AND (oli.name = 'Deposit'
+                     OR oli.name ILIKE '%gift%card%'
+                     OR oli.name ILIKE '%gift card%')
+            )
+        ) candidates
+        ORDER BY gc_id, amount_match_rank, time_diff
+      ) best
+      WHERE gc.id = best.gc_id
       RETURNING gc.id
     `);
 
     const updated = result.rows.length;
     console.log(`[GiftCardBackfill] activation_square_order_id backfill: ${updated} rows updated`);
     return { updated };
+  }
+
+  /**
+   * Repair mislinkings: detect gift cards where activation_square_order_id points to
+   * an order whose line item amounts don't match the card's activation_amount.
+   *
+   * Example: card 3992 ($60) linked to a $25 Gift Card order instead of the $60
+   * Web Reservation deposit order — both created within seconds of each other.
+   *
+   * This clears the bad link so the next heuristic backfill run can re-match correctly.
+   * Should run BEFORE the heuristic backfill.
+   */
+  async repairMislinkedActivationOrders(): Promise<{ cleared: number; relinked: number }> {
+    const mislinked = await db.execute<{
+      gc_id: string;
+      gc_activation_amount: string;
+      bad_order_square_id: string;
+    }>(sql`
+      SELECT gc.id AS gc_id,
+             gc.activation_amount AS gc_activation_amount,
+             gc.activation_square_order_id AS bad_order_square_id
+      FROM gift_cards gc
+      JOIN orders o ON o.square_id = gc.activation_square_order_id
+      WHERE gc.activation_square_order_id IS NOT NULL
+        AND gc.activation_amount > 0
+        AND ABS(o.total_money - gc.activation_amount) > 0.01
+        AND NOT EXISTS (
+          SELECT 1 FROM order_line_items oli
+          WHERE oli.order_id = o.id
+            AND ABS(oli.total_money - gc.activation_amount) < 0.01
+        )
+    `);
+
+    if (mislinked.rows.length === 0) {
+      console.log('[GiftCardRepair] No mislinked activation orders found');
+      return { cleared: 0, relinked: 0 };
+    }
+
+    console.log(`[GiftCardRepair] Found ${mislinked.rows.length} mislinked gift card(s)`);
+
+    let cleared = 0;
+    let relinked = 0;
+
+    for (const row of mislinked.rows) {
+      const gcId = parseInt(String(row.gc_id));
+      const activationAmount = parseFloat(String(row.gc_activation_amount));
+
+      const betterMatch = await db.execute<{ better_square_id: string }>(sql`
+        SELECT o.square_id AS better_square_id
+        FROM gift_cards gc
+        JOIN orders o
+          ON o.total_money = gc.activation_amount
+          AND ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at))) < 300
+        WHERE gc.id = ${gcId}
+          AND NOT EXISTS (
+            SELECT 1 FROM gift_cards other
+            WHERE other.activation_square_order_id = o.square_id
+              AND other.id != gc.id
+          )
+          AND EXISTS (
+            SELECT 1 FROM order_line_items oli
+            WHERE oli.order_id = o.id
+              AND ABS(oli.total_money - gc.activation_amount) < 0.01
+          )
+        ORDER BY ABS(EXTRACT(EPOCH FROM (gc.purchase_date - o.created_at)))
+        LIMIT 1
+      `);
+
+      if (betterMatch.rows.length > 0) {
+        const betterSquareId = String(betterMatch.rows[0].better_square_id);
+        await db.execute(sql`
+          UPDATE gift_cards
+          SET activation_square_order_id = ${betterSquareId}, updated_at = NOW()
+          WHERE id = ${gcId}
+        `);
+        relinked++;
+        console.log(`[GiftCardRepair] Card ${gcId} ($${activationAmount}): relinked from ${row.bad_order_square_id} to ${betterSquareId}`);
+      } else {
+        await db.execute(sql`
+          UPDATE gift_cards
+          SET activation_square_order_id = NULL, updated_at = NOW()
+          WHERE id = ${gcId}
+        `);
+        cleared++;
+        console.log(`[GiftCardRepair] Card ${gcId} ($${activationAmount}): cleared bad link ${row.bad_order_square_id} (no better match found)`);
+      }
+    }
+
+    console.log(`[GiftCardRepair] Done: ${relinked} relinked, ${cleared} cleared for re-backfill`);
+    return { cleared, relinked };
   }
 
   /**
