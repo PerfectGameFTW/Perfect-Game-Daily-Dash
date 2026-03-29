@@ -472,11 +472,6 @@ export class GiftCardService {
         SELECT
           gc2.id AS gc_id,
           o.square_id,
-          (CASE WHEN EXISTS (
-            SELECT 1 FROM order_line_items oli
-            WHERE oli.order_id = o.id
-              AND ABS(oli.total_money - gc2.activation_amount) < 0.01
-          ) THEN 0 ELSE 1 END) AS amount_match_rank,
           ABS(EXTRACT(EPOCH FROM (gc2.purchase_date - o.created_at))) AS time_diff
         FROM gift_cards gc2
         JOIN orders o
@@ -493,25 +488,26 @@ export class GiftCardService {
           AND EXISTS (
             SELECT 1 FROM order_line_items oli
             WHERE oli.order_id = o.id
+              AND ABS(oli.total_money - gc2.activation_amount) < 0.01
               AND (oli.name = 'Deposit'
                    OR oli.name ILIKE '%gift%card%'
                    OR oli.name ILIKE '%gift card%')
           )
       ),
       ranked_per_gc AS (
-        SELECT gc_id, square_id, amount_match_rank, time_diff,
-               ROW_NUMBER() OVER (PARTITION BY gc_id ORDER BY amount_match_rank, time_diff) AS rn_gc
+        SELECT gc_id, square_id, time_diff,
+               ROW_NUMBER() OVER (PARTITION BY gc_id ORDER BY time_diff) AS rn_gc
         FROM candidates
       ),
       best_per_gc AS (
-        SELECT gc_id, square_id, amount_match_rank, time_diff
+        SELECT gc_id, square_id, time_diff
         FROM ranked_per_gc WHERE rn_gc = 1
       ),
       unique_orders AS (
         SELECT gc_id, square_id
         FROM (
           SELECT gc_id, square_id,
-                 ROW_NUMBER() OVER (PARTITION BY square_id ORDER BY amount_match_rank, time_diff) AS rn_order
+                 ROW_NUMBER() OVER (PARTITION BY square_id ORDER BY time_diff) AS rn_order
           FROM best_per_gc
         ) t WHERE rn_order = 1
       )
@@ -551,11 +547,24 @@ export class GiftCardService {
       JOIN orders o ON o.square_id = gc.activation_square_order_id
       WHERE gc.activation_square_order_id IS NOT NULL
         AND gc.activation_amount > 0
-        AND ABS(o.total_money - gc.activation_amount) > 0.01
-        AND NOT EXISTS (
-          SELECT 1 FROM order_line_items oli
-          WHERE oli.order_id = o.id
-            AND ABS(oli.total_money - gc.activation_amount) < 0.01
+        AND (
+          (ABS(o.total_money - gc.activation_amount) > 0.01
+           AND NOT EXISTS (
+             SELECT 1 FROM order_line_items oli
+             WHERE oli.order_id = o.id
+               AND ABS(oli.total_money - gc.activation_amount) < 0.01
+           ))
+          OR
+          (EXISTS (
+             SELECT 1 FROM order_line_items oli
+             WHERE oli.order_id = o.id AND oli.name = 'Deposit'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM order_line_items oli
+             WHERE oli.order_id = o.id
+               AND oli.name = 'Deposit'
+               AND ABS(oli.total_money - gc.activation_amount) < 0.01
+           ))
         )
     `);
 
