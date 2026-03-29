@@ -80,6 +80,7 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
   const discounts = toNum(detailedTransactions?.discountsAndComps);
   const depositClearings = toNum(data?.depositClearings);
   const partywirksDeposits = toNum(data?.partywirksDeposits);
+  const tripleseatDeposits = toNum(data?.tripleseatDeposits);
   const tips = toNum(detailedTransactions?.tips);
   const serviceCharges = toNum(detailedTransactions?.serviceCharges);
   const autoGratuity = toNum(detailedTransactions?.autoGratuity);
@@ -325,6 +326,10 @@ export default function StatsSummary({ dateRange, customStartDate, customEndDate
                 <div className="flex justify-between items-center pl-6">
                   <span className="text-muted-foreground text-sm">Partywirks Deposit</span>
                   <span className="text-card-foreground font-medium">({formatCurrency(partywirksDeposits)})</span>
+                </div>
+                <div className="flex justify-between items-center pl-6">
+                  <span className="text-muted-foreground text-sm">Tripleseat Deposit</span>
+                  <span className="text-card-foreground font-medium">({formatCurrency(tripleseatDeposits)})</span>
                 </div>
               </>
             )}

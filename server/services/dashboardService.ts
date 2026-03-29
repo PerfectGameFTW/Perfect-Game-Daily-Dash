@@ -51,6 +51,7 @@ export class DashboardService {
     const totalRevenue = revenueBreakdown.trueRevenue + intercardCurrent.total;
     const depositClearings = revenueBreakdown.depositClearings;
     const partywirksDeposits = revenueBreakdown.partywirksDeposits;
+    const tripleseatDeposits = revenueBreakdown.tripleseatDeposits;
     const totalOrders = await orderService.getTotalOrders(dateRange, startDate, endDate);
     const giftCardSales = await giftCardService.getGiftCardSales(dateRange, startDate, endDate);
     
@@ -117,6 +118,7 @@ export class DashboardService {
       giftCardRedemptions: revenueBreakdown.giftCardRedemptions,
       depositClearings,
       partywirksDeposits,
+      tripleseatDeposits,
       revenueChange,
       totalOrders,
       ordersChange,

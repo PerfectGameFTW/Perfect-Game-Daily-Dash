@@ -242,6 +242,7 @@ export class PaymentService {
     giftCardRedemptions: number;
     depositClearings: number;
     partywirksDeposits: number;
+    tripleseatDeposits: number;
     trueRevenue: number;
   }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
@@ -305,6 +306,7 @@ export class PaymentService {
       giftCardRedemptions: gcRedemptions,
       depositClearings: depositClearingsAmount,
       partywirksDeposits: depositClearingsResult.partywirksDeposits,
+      tripleseatDeposits: depositClearingsResult.tripleseatDeposits,
       trueRevenue: grossPayments - refundsAmount - returnsAmount - gcRedemptions - depositClearingsAmount,
     };
   }
@@ -313,16 +315,21 @@ export class PaymentService {
     dateRange: DateRange,
     startDate?: Date,
     endDate?: Date
-  ): Promise<{ total: number; partywirksDeposits: number }> {
+  ): Promise<{ total: number; partywirksDeposits: number; tripleseatDeposits: number }> {
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
-    const result = await db.execute<{ total: number; partywirks: number }>(sql`
+    const result = await db.execute<{ total: number; partywirks: number; tripleseat: number }>(sql`
       SELECT 
         COALESCE(SUM(amount), 0) as total,
         COALESCE(SUM(CASE WHEN LOWER(square_data->'externalDetails'->>'source') LIKE '%partywirk%'
                            OR LOWER(square_data->'externalDetails'->>'source') LIKE '%party wirk%'
                            OR LOWER(square_data->'externalDetails'->>'source') LIKE '%partywiris%'
                            OR LOWER(square_data->'externalDetails'->>'source') LIKE '%paertywirk%'
-                      THEN amount ELSE 0 END), 0) as partywirks
+                      THEN amount ELSE 0 END), 0) as partywirks,
+        COALESCE(SUM(CASE WHEN LOWER(square_data->'externalDetails'->>'source') LIKE '%tripleseat%'
+                           OR LOWER(square_data->'externalDetails'->>'source') LIKE '%triple seat%'
+                           OR LOWER(square_data->'externalDetails'->>'source') LIKE '%triple deposit%'
+                           OR LOWER(square_data->'externalDetails'->>'source') LIKE '%triple%seat%'
+                      THEN amount ELSE 0 END), 0) as tripleseat
       FROM ${transactions}
       WHERE ${transactions.timestamp} BETWEEN ${start} AND ${end}
         AND ${transactions.status} = 'completed'
@@ -332,11 +339,16 @@ export class PaymentService {
               AND (LOWER(square_data->'externalDetails'->>'source') LIKE '%partywirk%'
                 OR LOWER(square_data->'externalDetails'->>'source') LIKE '%party wirk%'
                 OR LOWER(square_data->'externalDetails'->>'source') LIKE '%partywiris%'
-                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%paertywirk%')))
+                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%paertywirk%'
+                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%tripleseat%'
+                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%triple seat%'
+                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%triple deposit%'
+                OR LOWER(square_data->'externalDetails'->>'source') LIKE '%triple%seat%')))
     `);
     return {
       total: Number(result.rows[0]?.total || 0),
       partywirksDeposits: Number(result.rows[0]?.partywirks || 0),
+      tripleseatDeposits: Number(result.rows[0]?.tripleseat || 0),
     };
   }
 

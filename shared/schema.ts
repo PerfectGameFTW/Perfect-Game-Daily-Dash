@@ -359,6 +359,7 @@ export interface DailySummary {
   giftCardRedemptions: number;
   depositClearings: number;
   partywirksDeposits: number;
+  tripleseatDeposits: number;
   revenueChange: number;
   totalOrders: number;
   ordersChange: number;
