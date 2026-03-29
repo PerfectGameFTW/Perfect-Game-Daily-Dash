@@ -313,21 +313,29 @@ export class DashboardService {
           const activationSourceRows = await db.execute<{
             square_id: string;
             source: string | null;
+            has_deposit_item: boolean;
           }>(sql`
-            SELECT gc.square_id, o.source
+            SELECT gc.square_id, o.source,
+              COALESCE(EXISTS (
+                SELECT 1 FROM order_line_items oli
+                WHERE oli.order_id = o.id AND oli.name = 'Deposit'
+              ), false) AS has_deposit_item
             FROM gift_cards gc
             LEFT JOIN ${ordersTable} o ON o.square_id = gc.activation_square_order_id
             WHERE gc.square_id IN ${sql`(${sql.join(uniqueGcIds.map(id => sql`${id}`), sql`, `)})`}
           `);
 
-          const sourceMap = new Map<string, string | null>();
+          const classificationMap = new Map<string, { source: string | null; hasDepositItem: boolean }>();
           for (const row of activationSourceRows.rows) {
-            sourceMap.set(row.square_id, row.source);
+            classificationMap.set(row.square_id, {
+              source: row.source,
+              hasDepositItem: row.has_deposit_item,
+            });
           }
           dbResolved = activationSourceRows.rows.filter(r => r.source !== null).length;
 
           const unresolvedGcIds = uniqueGcIds.filter(id =>
-            !sourceMap.has(id) || sourceMap.get(id) === null
+            !classificationMap.has(id) || classificationMap.get(id)?.source === null
           );
           fallbackAttempted = unresolvedGcIds.length;
           if (unresolvedGcIds.length > 0) {
@@ -342,18 +350,30 @@ export class DashboardService {
 
             if (gcToOrderId.size > 0) {
               const orderIds = Array.from(gcToOrderId.values());
-              const orderRows = await db.execute<{ square_id: string; source: string }>(sql`
-                SELECT square_id, source FROM ${ordersTable}
-                WHERE square_id IN ${sql`(${sql.join(orderIds.map(id => sql`${id}`), sql`, `)})`}
+              const orderRows = await db.execute<{
+                square_id: string;
+                source: string;
+                has_deposit_item: boolean;
+              }>(sql`
+                SELECT o.square_id, o.source,
+                  EXISTS (
+                    SELECT 1 FROM order_line_items oli
+                    WHERE oli.order_id = o.id AND oli.name = 'Deposit'
+                  ) AS has_deposit_item
+                FROM ${ordersTable} o
+                WHERE o.square_id IN ${sql`(${sql.join(orderIds.map(id => sql`${id}`), sql`, `)})`}
               `);
-              const orderSourceMap = new Map<string, string>();
+              const orderInfoMap = new Map<string, { source: string; hasDepositItem: boolean }>();
               for (const row of orderRows.rows) {
-                orderSourceMap.set(row.square_id, row.source);
+                orderInfoMap.set(row.square_id, {
+                  source: row.source,
+                  hasDepositItem: row.has_deposit_item,
+                });
               }
               for (const [gcId, orderId] of Array.from(gcToOrderId.entries())) {
-                const source = orderSourceMap.get(orderId) ?? null;
-                if (source) {
-                  sourceMap.set(gcId, source);
+                const info = orderInfoMap.get(orderId);
+                if (info) {
+                  classificationMap.set(gcId, info);
                   fallbackSuccesses++;
                 }
               }
@@ -362,10 +382,13 @@ export class DashboardService {
           }
 
           for (const activity of redeemActivities) {
-            const source = sourceMap.get(activity.giftCardId) ?? null;
-            if (source === 'Web Reservation') {
+            const info = classificationMap.get(activity.giftCardId);
+            const hasDeposit = info?.hasDepositItem ?? false;
+            const source = info?.source ?? null;
+            const isLaserTag = source === 'Web Reservation-Attraction' || source === 'Multi Attractions Reservation';
+            if (hasDeposit && !isLaserTag) {
               bowlingRedemptions += activity.amountDollars;
-            } else if (source === 'Web Reservation-Attraction' || source === 'Multi Attractions Reservation') {
+            } else if (hasDeposit && isLaserTag) {
               laserTagRedemptions += activity.amountDollars;
             }
           }
