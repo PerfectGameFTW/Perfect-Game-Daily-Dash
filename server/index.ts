@@ -29,8 +29,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 app.use('/api', apiLimiter);
-
-registerMcpRoutes(app);
+app.use('/mcp', apiLimiter);
 
 // Configure session middleware
 const PgSession = connectPgSimple(session);
@@ -51,6 +50,8 @@ app.use(session({
   },
   name: 'pg.sid'
 }));
+
+registerMcpRoutes(app);
 
 // Add startup timestamp and environment check
 const startTime = new Date().toISOString();

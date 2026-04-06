@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { randomUUID } from "crypto";
 import type { Express } from "express";
 import { z } from "zod";
+import { requireAuth, requireAdmin } from "./middleware/auth";
 import { dashboardService } from "./services/dashboardService";
 import { giftCardService } from "./services/giftCardService";
 import { paymentService } from "./services/paymentService";
@@ -620,6 +621,11 @@ server.tool(
       }
     }
 
+    const sensitiveTablePattern = /\busers\b|\bsessions\b/i;
+    if (sensitiveTablePattern.test(trimmed)) {
+      throw new Error('Access to user/session tables is not allowed.');
+    }
+
     const { pool } = await import("./db");
     const client = await pool.connect();
     try {
@@ -679,7 +685,7 @@ export function registerMcpRoutes(app: Express) {
     }
   }
 
-  app.post("/mcp", async (req, res) => {
+  app.post("/mcp", requireAuth, requireAdmin, async (req, res) => {
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       let transport: StreamableHTTPServerTransport;
@@ -717,7 +723,7 @@ export function registerMcpRoutes(app: Express) {
     }
   });
 
-  app.get("/mcp", async (req, res) => {
+  app.get("/mcp", requireAuth, requireAdmin, async (req, res) => {
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       if (!sessionId || !transports.has(sessionId)) {
@@ -732,7 +738,7 @@ export function registerMcpRoutes(app: Express) {
     }
   });
 
-  app.delete("/mcp", async (req, res) => {
+  app.delete("/mcp", requireAuth, requireAdmin, async (req, res) => {
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       if (!sessionId || !transports.has(sessionId)) {
@@ -748,7 +754,7 @@ export function registerMcpRoutes(app: Express) {
     }
   });
 
-  app.get("/mcp/health", (_req, res) => {
+  app.get("/mcp/health", requireAuth, requireAdmin, (_req, res) => {
     res.json({ status: "ok", server: "perfect-game-mcp", sessions: transports.size });
   });
 

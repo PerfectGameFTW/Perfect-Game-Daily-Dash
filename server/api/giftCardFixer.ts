@@ -15,6 +15,7 @@ import {
   fixAllGiftCardActivationAmounts,
   fixNewGiftCardActivationAmount
 } from '../services/enhancedGiftCardFix';
+import { requireAuth, requireAdmin } from '../middleware/auth';
 
 export const giftCardFixerRouter = Router();
 
@@ -25,7 +26,7 @@ export const giftCardFixerRouter = Router();
  * This endpoint provides a comprehensive solution for accurately linking
  * ALL gift cards to their original orders with exact activation amounts.
  */
-giftCardFixerRouter.post('/fix-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
+giftCardFixerRouter.post('/fix-gift-cards', requireAuth, requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     // Call the function that handles the comprehensive gift card fixing
     const result = await fixAllGiftCardActivationAmounts();
@@ -47,7 +48,7 @@ giftCardFixerRouter.post('/fix-gift-cards', async (_req: Request, res: Response,
  * This endpoint provides a way to fix a specific gift card's activation amount
  * by linking it to its original order.
  */
-giftCardFixerRouter.post('/fix-gift-card/:id', async (req: Request, res: Response, next: NextFunction) => {
+giftCardFixerRouter.post('/fix-gift-card/:id', requireAuth, requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const giftCardId = parseInt(req.params.id);
     
@@ -89,7 +90,7 @@ giftCardFixerRouter.post('/fix-gift-card/:id', async (req: Request, res: Respons
  * This endpoint provides detailed information about the current state
  * of gift card activation amounts and order linking.
  */
-giftCardFixerRouter.get('/analyze-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
+giftCardFixerRouter.get('/analyze-gift-cards', requireAuth, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     // Get detailed analysis of gift card status
     const result = await analyzeGiftCardLinkingStatus();
