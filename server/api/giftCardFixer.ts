@@ -90,7 +90,7 @@ giftCardFixerRouter.post('/fix-gift-card/:id', requireAuth, requireAdmin, async 
  * This endpoint provides detailed information about the current state
  * of gift card activation amounts and order linking.
  */
-giftCardFixerRouter.get('/analyze-gift-cards', requireAuth, async (_req: Request, res: Response, next: NextFunction) => {
+giftCardFixerRouter.get('/analyze-gift-cards', requireAuth, requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     // Get detailed analysis of gift card status
     const result = await analyzeGiftCardLinkingStatus();
