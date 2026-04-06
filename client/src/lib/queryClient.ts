@@ -28,8 +28,12 @@ export async function apiRequest(
   const mergedOptions: RequestInit = {
     method,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      ...(options.headers as Record<string, string>),
+    },
   };
 
   try {
