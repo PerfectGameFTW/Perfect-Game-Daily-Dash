@@ -31,7 +31,7 @@ export function createApiRouter(): Router {
 
 
   router.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.path === '/health' || req.path === '/sync/status') {
+    if (req.path === '/health') {
       return next();
     }
     requireAuth(req, res, next);

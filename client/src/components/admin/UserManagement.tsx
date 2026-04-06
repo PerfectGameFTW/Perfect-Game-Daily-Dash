@@ -88,7 +88,7 @@ export default function UserManagement() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/auth/users');
+      const response = await fetch('/api/auth/users', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
       if (response.ok) {
         const data = await response.json();
         setUsers(data);
@@ -123,6 +123,7 @@ export default function UserManagement() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
         },
         body: JSON.stringify(data),
       });
@@ -177,6 +178,7 @@ export default function UserManagement() {
       setLoading(true);
       const response = await fetch(`/api/auth/users/${userToDelete.id}`, {
         method: 'DELETE',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
       });
 
       if (response.ok) {

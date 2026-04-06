@@ -28,7 +28,7 @@ export async function apiRequest(
   const mergedOptions: RequestInit = {
     method,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     ...options,
   };
 
@@ -81,7 +81,7 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const url = queryKey[0] as string;
     
-    const res = await fetch(url, { credentials: "include" });
+    const res = await fetch(url, { credentials: "include", headers: { 'X-Requested-With': 'XMLHttpRequest' } });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

@@ -11,7 +11,7 @@ export async function testGiftCardLinking() {
   // Test API endpoint
   try {
     console.log('Testing gift card analysis API...');
-    const analysisResponse = await fetch('/api/analyze-gift-cards');
+    const analysisResponse = await fetch('/api/analyze-gift-cards', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
     
     if (!analysisResponse.ok) {
       throw new Error(`API error: ${analysisResponse.status}`);
@@ -38,6 +38,7 @@ export async function testGiftCardLinking() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
       },
     });
     

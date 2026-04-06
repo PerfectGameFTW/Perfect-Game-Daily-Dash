@@ -24,7 +24,7 @@ const fetchHourlyData = async (dateRange: DateRange, startDate?: Date, endDate?:
     url += `&endDate=${endDate.toISOString()}`;
   }
   
-  const response = await fetch(url);
+  const response = await fetch(url, { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
   
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);

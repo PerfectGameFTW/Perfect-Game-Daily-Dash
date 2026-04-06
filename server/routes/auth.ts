@@ -46,22 +46,16 @@ export function createAuthRouter(): Router {
   router.get('/me', async (req: Request & { session?: any }, res: Response) => {
     try {
       if (!req.session) {
-        console.log('GET /api/auth/me - No session found');
         return res.json(null);
       }
       
-      console.log('GET /api/auth/me - Session found, userId:', req.session.userId);
-      
       if (!req.session.userId) {
-        console.log('GET /api/auth/me - No userId in session');
         return res.json(null);
       }
 
-      console.log(`GET /api/auth/me - Fetching user with ID: ${req.session.userId}`);
       const user = await authService.getUserById(req.session.userId);
       
       if (!user) {
-        console.log(`GET /api/auth/me - No user found with ID: ${req.session.userId}`);
         // Clear invalid session if user no longer exists
         req.session.userId = undefined;
         await new Promise<void>((resolve) => {
@@ -71,9 +65,6 @@ export function createAuthRouter(): Router {
       }
 
       const safeUser = createSafeUser(user);
-      if (safeUser) {
-        console.log(`GET /api/auth/me - Successfully retrieved user: ${safeUser.username} (Role: ${safeUser.role})`);
-      }
       res.json(safeUser);
     } catch (error) {
       console.error('Error checking authentication:', error);
@@ -93,12 +84,11 @@ export function createAuthRouter(): Router {
       }
 
       const { username, password } = validationResult.data;
-      console.log(`Login attempt for username: ${username}`);
       
       const user = await authService.loginUser(username, password);
 
       if (!user) {
-        console.log(`Authentication failed for username: ${username}`);
+        console.log('Authentication failed');
         return res.status(401).json({ error: 'Invalid username or password' });
       }
 
@@ -113,7 +103,7 @@ export function createAuthRouter(): Router {
       req.session.username = user.username;
       req.session.role = user.role;
       
-      console.log(`User authenticated successfully: ${username} (ID: ${user.id}, Role: ${user.role})`);
+      console.log('User authenticated successfully');
       
       // Save session explicitly to ensure it's stored before response
       await new Promise<void>((resolve, reject) => {
@@ -122,7 +112,7 @@ export function createAuthRouter(): Router {
             console.error('Error saving session:', err);
             reject(err);
           } else {
-            console.log('Session saved successfully with userId:', req.session.userId);
+            console.log('Session saved successfully');
             resolve();
           }
         });
@@ -141,7 +131,7 @@ export function createAuthRouter(): Router {
   // Logout endpoint
   router.post('/logout', (req: Request & { session?: any }, res: Response) => {
     if (req.session) {
-      console.log(`Logging out user: ${req.session.username || 'Unknown'} (ID: ${req.session.userId || 'Unknown'})`);
+      console.log('Processing logout request');
       
       req.session.destroy((err: Error | null) => {
         if (err) {
@@ -190,7 +180,7 @@ export function createAuthRouter(): Router {
                 console.error('Error saving session during initial registration:', err);
                 reject(err);
               } else {
-                console.log(`Session saved for first user: ${user.username} (ID: ${user.id})`);
+                console.log('Session saved for first user');
                 resolve();
               }
             });

@@ -43,7 +43,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    maxAge: 30 * 24 * 60 * 60 * 1000,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     httpOnly: true
@@ -52,6 +52,14 @@ app.use(session({
 }));
 
 registerMcpRoutes(app);
+
+app.use('/api', (req, res, next) => {
+  const mutatingMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
+  if (mutatingMethods.includes(req.method) && req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+    return res.status(403).json({ error: 'Forbidden: missing CSRF header' });
+  }
+  next();
+});
 
 // Add startup timestamp and environment check
 const startTime = new Date().toISOString();
@@ -79,7 +87,7 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
+      if (capturedJsonResponse && !path.startsWith("/api/auth")) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
