@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, Calendar, Activity, Clock } from "lucide-react";
 import { DateRange } from "@shared/schema";
 import { format, isSameDay, subDays, formatDistanceToNow } from "date-fns";
-import { navigateDate } from "@/lib/dateUtils";
+import { navigateDate, currentBusinessDayDateET } from "@/lib/dateUtils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
 
@@ -31,9 +31,11 @@ export default function Header({
     return formatDistanceToNow(d, { addSuffix: true });
   })();
 
-  // Format the current display date 
-  const today = new Date();
-  
+  // Format the current display date.
+  // Use the 6am→6am Eastern business day so the label matches the stats below
+  // (between midnight and 6am ET, "today" is still the previous calendar day).
+  const today = currentBusinessDayDateET();
+
   let displayDate;
   
   if (customStartDate) {
@@ -48,7 +50,7 @@ export default function Header({
     displayDate = dateRange === 'today' 
       ? `Today, ${format(today, 'MMM d')}`
       : dateRange === 'yesterday'
-        ? `Yesterday, ${format(subDays(new Date(), 1), 'MMM d')}`
+        ? `Yesterday, ${format(subDays(today, 1), 'MMM d')}`
         : dateRange === 'thisMonth'
           ? `This Month`
           : dateRange === 'last7days'

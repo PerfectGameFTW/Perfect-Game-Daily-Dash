@@ -22,7 +22,7 @@ export function formatInTimezone(date: Date, fmt: string, timezone: string = 'Am
  * Before 6 AM ET the business day is still the previous calendar date,
  * matching Square's 6 AM → 6 AM daily reporting boundary.
  */
-function currentBusinessDayET(now: Date = new Date()): string {
+export function currentBusinessDayET(now: Date = new Date()): string {
   const calendarDate = formatInTimeZone(now, EASTERN_TIMEZONE, 'yyyy-MM-dd');
   const hourET = parseInt(formatInTimeZone(now, EASTERN_TIMEZONE, 'H'), 10);
 
@@ -41,6 +41,15 @@ function currentBusinessDayET(now: Date = new Date()): string {
 function localDateFrom(dateStr: string): Date {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(y, m - 1, d);
+}
+
+/**
+ * Returns the active 6am→6am Eastern business day as a local Date at midnight,
+ * suitable for date-fns formatting/arithmetic. Before 6 AM ET this returns the
+ * previous calendar day so display labels match the underlying business-day stats.
+ */
+export function currentBusinessDayDateET(now: Date = new Date()): Date {
+  return localDateFrom(currentBusinessDayET(now));
 }
 
 export function getFormattedDate(dateRange: DateRange, customStartDate?: Date, customEndDate?: Date): string {
