@@ -5,7 +5,7 @@
  */
 
 import { compare, hash } from 'bcryptjs';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { users, type InsertUser, type User } from '../../shared/schema';
 
@@ -16,6 +16,10 @@ class AuthError extends Error {
   }
 }
 
+// Stable advisory lock key used to serialize bootstrap attempts at the DB level.
+// pg_advisory_xact_lock takes a bigint; this constant is arbitrary but fixed.
+const BOOTSTRAP_ADVISORY_LOCK_KEY = BigInt('8472619341205310');
+
 export class AuthService {
   /**
    * Register a new user
@@ -25,7 +29,7 @@ export class AuthService {
    * @param role User role (default: 'user')
    * @returns Created user
    */
-  async registerUser(username: string, password: string, role: string = 'user'): Promise<User> {
+  async registerUser(username: string, password: string, role: 'user' | 'admin' = 'user'): Promise<User> {
     // Check if user already exists
     const existingUser = await this.getUserByUsername(username);
     if (existingUser) {
@@ -35,15 +39,62 @@ export class AuthService {
     // Hash password
     const hashedPassword = await hash(password, 10);
 
-    // Create user with validated role
+    // Create user with validated role (defaults to 'user' for any unexpected value)
     const userData: InsertUser = {
       username,
       password: hashedPassword,
-      role: (role === 'admin' ? 'admin' : 'user') as 'user' | 'admin'
+      role: role === 'admin' ? 'admin' : 'user',
     };
 
     const result = await db.insert(users).values(userData).returning();
     return result[0];
+  }
+
+  /**
+   * Bootstrap the very first admin account.
+   *
+   * Concurrency-safe: wraps the check-and-insert in a transaction guarded by a
+   * Postgres advisory lock so two concurrent callers cannot both pass the
+   * "no admins yet" check. Refuses to create a second admin if one already
+   * exists.
+   *
+   * Intended to be invoked from a CLI/bootstrap script (out-of-band), never
+   * from an unauthenticated HTTP request.
+   */
+  async bootstrapInitialAdmin(username: string, password: string): Promise<User> {
+    const hashedPassword = await hash(password, 10);
+
+    return await db.transaction(async (tx) => {
+      // Serialize all bootstrap attempts at the DB level.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${BOOTSTRAP_ADVISORY_LOCK_KEY})`);
+
+      const existingAdmins = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.role, 'admin'))
+        .limit(1);
+
+      if (existingAdmins.length > 0) {
+        throw new AuthError('An admin account already exists; refusing to bootstrap a second one.');
+      }
+
+      const existingByName = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.username, username))
+        .limit(1);
+
+      if (existingByName.length > 0) {
+        throw new AuthError(`User with username ${username} already exists`);
+      }
+
+      const inserted = await tx
+        .insert(users)
+        .values({ username, password: hashedPassword, role: 'admin' })
+        .returning();
+
+      return inserted[0];
+    });
   }
 
   /**
@@ -88,34 +139,6 @@ export class AuthService {
    */
   async getUserByUsername(username: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(eq(users.username, username));
-    return result[0];
-  }
-
-  /**
-   * Create initial admin user if no users exist in the database
-   * 
-   * @param username Default admin username
-   * @param password Default admin password
-   * @returns Created admin user or null if users already exist
-   */
-  async createInitialAdmin(username: string, password: string): Promise<User | null> {
-    // Check if users exist
-    const existingUsers = await db.select().from(users);
-    if (existingUsers.length > 0) {
-      return null;
-    }
-
-    // Hash password
-    const hashedPassword = await hash(password, 10);
-
-    // Create admin user
-    const adminData: InsertUser = {
-      username,
-      password: hashedPassword,
-      role: 'admin'
-    };
-
-    const result = await db.insert(users).values(adminData).returning();
     return result[0];
   }
 

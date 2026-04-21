@@ -4,10 +4,11 @@
  * Provides endpoints for login, logout, and user management.
  */
 
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response } from 'express';
 import { authService } from '../services/authService';
 import { createSafeUser, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
+import { adminCreateUserSchema } from '../../shared/schema';
 import { authLimiter } from '../middleware/rateLimiter';
 
 // Validation schemas
@@ -20,29 +21,6 @@ const resetPasswordSchema = z.object({
   username: z.string().min(3).max(50),
   newPassword: z.string().min(6).max(100)
 });
-
-const registerSchema = z.object({
-  username: z.string().min(3).max(50),
-  password: z.string().min(6).max(100),
-  role: z.enum(['user', 'admin']).default('user')
-});
-
-// Custom middleware to ensure only admins can register new users
-const adminOrInitialUserMiddleware = async (req: Request & { session?: { userId?: number } }, res: Response, next: NextFunction) => {
-  try {
-    // Always allow the initial user creation
-    const usersExist = await authService.checkUsersExist();
-    if (!usersExist) {
-      return next();
-    }
-    
-    // For subsequent user registrations, require admin access
-    requireAdmin(req, res, next);
-  } catch (error) {
-    console.error('Error in admin middleware:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
 
 export function createAuthRouter(): Router {
   const router = Router();
@@ -178,54 +156,31 @@ export function createAuthRouter(): Router {
     }
   });
 
-  // Register endpoint - protected for admin-only use after initial user
-  router.post('/register', adminOrInitialUserMiddleware, async (req: Request & { session?: any }, res: Response) => {
+  // Register endpoint — admin-only. Creating the first admin happens
+  // out-of-band via the bootstrap CLI script (see replit.md), never here.
+  router.post('/register', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      // Validate input
-      const validationResult = registerSchema.safeParse(req.body);
+      const validationResult = adminCreateUserSchema.safeParse(req.body);
       if (!validationResult.success) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Invalid input',
-          details: validationResult.error.format()
+          details: validationResult.error.format(),
         });
       }
 
       const { username, password, role } = validationResult.data;
-      
+
       try {
         const user = await authService.registerUser(username, password, role);
-        
-        // Only set session if it's the initial registration or self-registration
-        const usersCount = await authService.getUsersCount();
-        if (usersCount === 1) {
-          // This is the first user, set session
-          req.session.userId = user.id;
-          req.session.username = user.username;
-          req.session.role = user.role;
-          
-          // Save session explicitly for the first user
-          await new Promise<void>((resolve, reject) => {
-            req.session.save((err: Error | null) => {
-              if (err) {
-                console.error('Error saving session during initial registration:', err);
-                reject(err);
-              } else {
-                console.log('Session saved for first user');
-                resolve();
-              }
-            });
-          });
-        }
-        
         res.json({
           success: true,
-          user: createSafeUser(user)
+          user: createSafeUser(user),
         });
       } catch (err) {
         if (err instanceof Error && err.message.includes('already exists')) {
           return res.status(409).json({ error: 'Username already exists' });
         }
-        throw err; // Re-throw for the outer catch
+        throw err;
       }
     } catch (error) {
       console.error('Error during registration:', error);

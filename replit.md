@@ -246,6 +246,22 @@ Item categories are now pulled directly from Square's Catalog API instead of bei
 - **All tools** share the same date range parameters: dateRange (today/yesterday/last7days/last30days/thisMonth/lastMonth/custom) + optional startDate/endDate for custom ranges
 - **SQL-only tools** (Task #26): 7 new tools added that query PostgreSQL directly without going through service layers. These are optimized for Claude's BI analysis across any date range without timeout risk. The `run_read_query` tool provides full flexibility with safety guards (READ ONLY transaction + keyword blocklist).
 
+## Admin Bootstrap (first admin user)
+The HTTP `POST /api/auth/register` endpoint is **admin-only**. An unauthenticated caller cannot create any account, including the very first one — the old "if the users table is empty, anyone can register as admin" path has been removed.
+
+To create the first admin on a fresh database, run the bootstrap script out-of-band:
+
+```bash
+INITIAL_ADMIN_USERNAME=alice INITIAL_ADMIN_PASSWORD='strong-password' \
+  tsx scripts/bootstrap-admin.ts
+# or:
+tsx scripts/bootstrap-admin.ts <username> <password>
+```
+
+The script wraps a check-and-insert in a transaction guarded by a Postgres advisory lock (`pg_advisory_xact_lock`), so concurrent invocations cannot both succeed — at most one admin is ever created. If an admin already exists the script refuses to create another one; create additional users via the admin UI (which calls `POST /api/auth/register` with a logged-in admin session).
+
+The public registration path no longer exists. The admin-create schema (`adminCreateUserSchema` in `shared/schema.ts`) is the only way `role` can be set, and it is server-side validated; values from the request body are otherwise ignored / coerced to `'user'`.
+
 ## Security Hardening
 - **Rate limiting**: All `/api` routes limited to 100 req/min; login limited to 10 attempts per 15 min; sync endpoints limited to 5 req/min
 - **Auth on API routes**: All data-fetching routes require authenticated session (except `/api/health` and `/api/sync/status`)

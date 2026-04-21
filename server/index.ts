@@ -121,9 +121,9 @@ async function exitWithError(error: unknown) {
       
       const usersExist = await authService.checkUsersExist();
       if (usersExist) {
-        log('ℹ Users already exist, skipping initial admin creation');
+        log('ℹ Users already exist');
       } else {
-        log('ℹ No users exist — register the first admin via /register');
+        log('ℹ No users exist — bootstrap the first admin out-of-band: `tsx scripts/bootstrap-admin.ts` (see replit.md)');
       }
     } catch (dbError) {
       log('✗ Database connection failed', 'error');

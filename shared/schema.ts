@@ -278,7 +278,22 @@ export const insertUserSchema = createInsertSchema(users).pick({
   role: true,
 });
 
+// Public self-registration: role is never accepted from the request.
+export const selfRegisterSchema = z.object({
+  username: z.string().min(3).max(50),
+  password: z.string().min(6).max(100),
+});
+
+// Admin-create: an authenticated admin may choose the new user's role.
+export const adminCreateUserSchema = z.object({
+  username: z.string().min(3).max(50),
+  password: z.string().min(6).max(100),
+  role: z.enum(['user', 'admin']).default('user'),
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
+export type SelfRegisterInput = z.infer<typeof selfRegisterSchema>;
+export type AdminCreateUserInput = z.infer<typeof adminCreateUserSchema>;
 export type User = typeof users.$inferSelect;
 
 // Sync state table to track Square data synchronization progress
