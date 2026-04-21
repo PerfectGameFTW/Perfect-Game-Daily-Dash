@@ -51,17 +51,16 @@ app.disable('etag');
 // session never gets pinned to https in the browser.
 const isProd = process.env.NODE_ENV === 'production';
 
-// Production CSP: strict same-origin with the bare minimum third-party
-// allowances (Google Fonts) and no inline scripts / no eval.
+// Production CSP: strict same-origin with no third-party allowances
+// and no inline scripts / no eval.
 const prodCspDirectives = {
   defaultSrc: ["'self'"],
   scriptSrc: ["'self'"],
-  // shadcn/Tailwind ship runtime styles, and client/index.html pulls
-  // the Inter font stylesheet from fonts.googleapis.com.
-  styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+  // shadcn/Tailwind ship runtime styles inline.
+  styleSrc: ["'self'", "'unsafe-inline'"],
   imgSrc: ["'self'", 'data:', 'blob:'],
-  // Inter webfont files are served from fonts.gstatic.com.
-  fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+  // Inter webfont files are bundled and served from same-origin.
+  fontSrc: ["'self'", 'data:'],
   // Same-origin XHR + same-origin /ws WebSocket. 'self' covers both
   // http(s) and ws(s) on the same origin per CSP3.
   connectSrc: ["'self'"],
@@ -80,9 +79,9 @@ const prodCspDirectives = {
 const devCspDirectives = {
   defaultSrc: ["'self'"],
   scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'blob:'],
-  styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+  styleSrc: ["'self'", "'unsafe-inline'"],
   imgSrc: ["'self'", 'data:', 'blob:'],
-  fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+  fontSrc: ["'self'", 'data:'],
   // ws: covers Vite's HMR socket on http://localhost.
   connectSrc: ["'self'", 'ws:', 'wss:'],
   workerSrc: ["'self'", 'blob:'],
