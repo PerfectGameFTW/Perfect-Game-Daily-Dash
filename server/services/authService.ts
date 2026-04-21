@@ -22,6 +22,7 @@ import {
   type User,
 } from '../../shared/schema';
 import { sendEmail } from './emailService';
+import { logger, errorContext } from '../logger';
 
 // Password reset token policy.
 const RESET_TOKEN_BYTES = 32; // 256 bits of entropy in the raw token.
@@ -263,8 +264,14 @@ export class AuthService {
           .set({ password: upgraded })
           .where(eq(users.id, user.id));
       }
-    } catch {
-      // Ignore — login still succeeds at the existing cost.
+    } catch (rehashErr) {
+      // Ignore — login still succeeds at the existing cost. Emit a
+      // warning so operators can spot a stuck rehash migration
+      // without it ever blocking authentication.
+      logger.warn('bcrypt transparent rehash failed', {
+        userId: user.id,
+        ...errorContext(rehashErr),
+      });
     }
 
     return user;
