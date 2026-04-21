@@ -99,6 +99,41 @@ process.on('unhandledRejection', (reason) => {
   void fatalShutdown('unhandledRejection', reason);
 });
 
+// ----------------------------------------------------------------------------
+// NODE_ENV resolution (must run before validateEnv / app creation)
+// ----------------------------------------------------------------------------
+// Express defaults `app.get('env')` to 'development' whenever NODE_ENV
+// is unset, and the dev/prod branch in this file (Vite middleware,
+// strict CSP, HSTS, secure-cookie session config in server/session.ts,
+// helmet via the `isProd` constant below) all key off either NODE_ENV
+// or that derived setting. If a deployment ever boots without
+// NODE_ENV, the process would silently fall into the dev branch:
+// Vite's HMR middleware would be mounted, the loose dev CSP would be
+// served, HSTS would be off, and the session cookie would lose its
+// Secure attribute — a serious downgrade.
+//
+// We detect "production runtime" structurally rather than trusting
+// the env var alone: the production build emits a bundled
+// `dist/index.js` that this module is loaded from, while local dev
+// runs `tsx server/index.ts`. If we're executing from the bundle,
+// force NODE_ENV='production' (auto-coerce) and log the action so
+// it's visible in deployment logs. Local dev (running the .ts source)
+// is left untouched, so `npm run dev` continues to work without any
+// env fiddling.
+const runningFromBundle = import.meta.url.endsWith('/dist/index.js');
+if (runningFromBundle && process.env.NODE_ENV !== 'production') {
+  const before = process.env.NODE_ENV || 'unset';
+  process.env.NODE_ENV = 'production';
+  // `state` carries the prior value (allow-listed string) so the
+  // coercion is auditable.
+  logger.warn('startup.node_env_coerced', {
+    nodeEnv: 'production',
+    state: before,
+  });
+}
+const RESOLVED_NODE_ENV = process.env.NODE_ENV ?? 'development';
+logger.info('startup.env_resolved', { nodeEnv: RESOLVED_NODE_ENV });
+
 validateEnv();
 
 const app = express();
