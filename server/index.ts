@@ -11,7 +11,7 @@ import { startScheduler } from "./services/schedulerService";
 import { validateEnv } from "./validateEnv";
 import { apiLimiter } from "./middleware/rateLimiter";
 import { registerMcpRoutes } from "./mcp";
-import { toSafeErrorResponse } from "./errors";
+import { toSafeErrorResponse, sendError, ForbiddenError } from "./errors";
 
 // Prevent unhandled async errors from crashing the process.
 // Node.js 15+ exits by default on unhandledRejection — this keeps the server alive.
@@ -147,7 +147,7 @@ registerMcpRoutes(app);
 app.use('/api', (req, res, next) => {
   const mutatingMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
   if (mutatingMethods.includes(req.method) && req.headers['x-requested-with'] !== 'XMLHttpRequest') {
-    return res.status(403).json({ error: 'Forbidden: missing CSRF header' });
+    return sendError(res, new ForbiddenError('Forbidden: missing CSRF header'));
   }
   next();
 });

@@ -266,14 +266,24 @@ class PgStorage implements IStorage {
     
     // Calculate average value
     const averageValue = soldCount > 0 ? soldAmount / soldCount : 0;
-    
+
+    const webResAdvResult = await db.execute(sql`
+      SELECT COALESCE(SUM(gc.amount), 0) as web_res_adv_deposits
+      FROM gift_cards gc
+      INNER JOIN orders o ON o.square_id = gc.activation_square_order_id
+      WHERE gc.amount > 0
+        AND o.source IN ('Web Reservation', 'Web Reservation-Attraction', 'Multi Attractions Reservation')
+    `);
+    const webResAdvDeposits = Number(webResAdvResult.rows[0]?.web_res_adv_deposits) || 0;
+
     return {
       soldCount,
       soldAmount,
       redeemedCount,
       redeemedAmount,
       averageValue,
-      outstandingBalance: soldAmount - redeemedAmount
+      outstandingBalance: soldAmount - redeemedAmount,
+      webResAdvDeposits,
     };
   }
 
