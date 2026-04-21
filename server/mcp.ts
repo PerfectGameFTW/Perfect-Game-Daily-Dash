@@ -852,6 +852,14 @@ server.tool(
           // still recorded server-side via auditReadQuery in the outer
           // finally. We deliberately re-wrap as ValidationError instead
           // of a generic 500, since the user input caused this.
+          //
+          // SECURITY: this verbose disclosure is acceptable ONLY because
+          // every MCP route in this file is gated by requireAuth +
+          // requireAdmin (see app.use("/mcp", ...) registrations below)
+          // and the underlying connection runs as the read-only
+          // mcp_read_only role. If MCP is ever opened up to non-admin
+          // callers, replace this with a generic message and a
+          // correlation ID into the audit log instead.
           const msg = err instanceof Error ? err.message : String(err);
           throw new ValidationError(`SQL execution failed: ${msg}`);
         } finally {
