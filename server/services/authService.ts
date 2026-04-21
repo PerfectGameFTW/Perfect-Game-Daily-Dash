@@ -20,6 +20,17 @@ class AuthError extends Error {
 // pg_advisory_xact_lock takes a bigint; this constant is arbitrary but fixed.
 const BOOTSTRAP_ADVISORY_LOCK_KEY = BigInt('8472619341205310');
 
+// Dummy bcrypt hash used so the "user not found" branch of loginUser still
+// runs a real bcrypt.compare and takes the same wall-clock time as the
+// "user exists, wrong password" branch. This prevents username enumeration
+// via response-time timing.
+//
+// The cleartext for this hash is intentionally a long random string that is
+// not a valid password and can never be matched. Generated with bcryptjs
+// cost=10 (the same cost used elsewhere in this service).
+const DUMMY_BCRYPT_HASH =
+  '$2b$10$CwTycUXWue0Thq9StjUM0uJ8K8tQy2j8XaQjvs8R0p4U6Ww2X0o7C';
+
 export class AuthService {
   /**
    * Register a new user
@@ -105,15 +116,17 @@ export class AuthService {
    * @returns User if authentication successful, null otherwise
    */
   async loginUser(username: string, password: string): Promise<User | null> {
-    // Find user by username
+    // Look up the user. If the username does not exist, we still run a real
+    // bcrypt.compare against a constant dummy hash so the response time of
+    // this code path is indistinguishable from the "user exists, wrong
+    // password" path. This prevents an attacker from enumerating valid
+    // usernames by measuring login latency.
     const user = await this.getUserByUsername(username);
-    if (!user) {
-      return null;
-    }
+    const hashToCompare = user ? user.password : DUMMY_BCRYPT_HASH;
 
-    // Verify password
-    const passwordMatch = await compare(password, user.password);
-    if (!passwordMatch) {
+    const passwordMatch = await compare(password, hashToCompare);
+
+    if (!user || !passwordMatch) {
       return null;
     }
 
