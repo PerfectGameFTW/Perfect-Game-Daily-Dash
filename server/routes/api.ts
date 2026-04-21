@@ -8,6 +8,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { dashboardService } from '../services/dashboardService';
+import { pgStorage } from '../pgStorage';
 import { giftCardService } from '../services/giftCardService';
 import { syncService } from '../services/syncService';
 import { paymentService } from '../services/paymentService';
@@ -132,10 +133,27 @@ export function createApiRouter(): Router {
   });
   
   /**
+   * Transactions API
+   * GET /api/transactions
+   * Returns completed transactions in the requested date range.
+   */
+  const transactionsHandler = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { dateRange, startDate, endDate } = extractDateRange(req);
+      const txns = await pgStorage.getTransactions(dateRange, startDate, endDate, 'completed');
+      res.json(txns);
+    } catch (error) {
+      next(error);
+    }
+  };
+  router.get('/transactions', transactionsHandler);
+
+  /**
    * Category Revenue API
    * GET /api/category-revenue
+   * GET /api/revenue-by-category (legacy alias)
    */
-  router.get('/category-revenue', async (req: Request, res: Response, next: NextFunction) => {
+  const categoryRevenueHandler = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const categoryRevenue = await dashboardService.getCategoryRevenue(dateRange, startDate, endDate);
@@ -143,7 +161,9 @@ export function createApiRouter(): Router {
     } catch (error) {
       next(error);
     }
-  });
+  };
+  router.get('/category-revenue', categoryRevenueHandler);
+  router.get('/revenue-by-category', categoryRevenueHandler);
   
   /**
    * Hourly Revenue API
