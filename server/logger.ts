@@ -64,6 +64,7 @@ const ALLOWED_FIELDS = new Set<string>([
   'port',
   'hasDatabaseUrl',
   'hasIntercard',
+  'trustProxyHops',
   // startup-only: a list of missing required env var names emitted on
   // the fatal-exit path so an operator knows what to set. The sanitizer
   // drops arrays by default, so this key has special handling below.

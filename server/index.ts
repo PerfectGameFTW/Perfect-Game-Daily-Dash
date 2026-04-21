@@ -102,7 +102,48 @@ process.on('unhandledRejection', (reason) => {
 validateEnv();
 
 const app = express();
-app.set('trust proxy', 1);
+
+// ----------------------------------------------------------------------------
+// Trust proxy / client-IP topology
+// ----------------------------------------------------------------------------
+// Express derives `req.ip` (and the X-Forwarded-For chain consumed by
+// express-rate-limit and the structured request logger) from the
+// `trust proxy` setting. Getting this number wrong is a security
+// issue:
+//
+//   - Set it too LOW (e.g. 0) and every client looks like it comes
+//     from the proxy's IP. apiLimiter / authLimiter then rate-limit
+//     the entire deployment as a single client, and our audit logs
+//     record the wrong IP.
+//   - Set it too HIGH (more hops than really exist) and an attacker
+//     can spoof their X-Forwarded-For header — Express will trust
+//     the spoofed value as the real client IP, bypassing per-IP
+//     rate limits and poisoning audit trails.
+//
+// Today the deployment topology is exactly one trusted reverse proxy
+// in front of this process (Replit's edge). Hence the default of `1`.
+// If a future deployment adds another L7 hop (CDN, additional LB,
+// etc.) the operator MUST bump TRUST_PROXY_HOPS to match the real
+// number of trusted hops between the client and this Node process.
+// Anything other than a non-negative integer is rejected so a typo
+// in the env can't accidentally re-enable boolean `true` (which
+// would trust ALL hops and is exactly the spoofing footgun above).
+const TRUST_PROXY_HOPS_DEFAULT = 1;
+const trustProxyRaw = process.env.TRUST_PROXY_HOPS;
+let TRUST_PROXY_HOPS: number;
+if (trustProxyRaw === undefined || trustProxyRaw === '') {
+  TRUST_PROXY_HOPS = TRUST_PROXY_HOPS_DEFAULT;
+} else {
+  const parsed = Number(trustProxyRaw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    logger.error('startup.invalid_trust_proxy_hops');
+    process.exit(1);
+  }
+  TRUST_PROXY_HOPS = parsed;
+}
+app.set('trust proxy', TRUST_PROXY_HOPS);
+logger.info('startup.trust_proxy', { trustProxyHops: TRUST_PROXY_HOPS });
+
 app.disable('etag');
 
 // ----------------------------------------------------------------------------
