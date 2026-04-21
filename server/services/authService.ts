@@ -145,12 +145,25 @@ export class AuthService {
 
     const passwordMatch = await compare(password, hashToCompare);
 
-    // Unknown username or locked account: indistinguishable from a wrong
-    // password to the caller. We deliberately do NOT increment any counter
-    // here — for unknown usernames there is nothing to count, and for
-    // already-locked accounts further increments would just push the
-    // unlock time around without revealing anything new.
-    if (!user || isLocked) {
+    // Unknown username: we have no row to update, but to keep timing
+    // parity with the "wrong password against an existing user" path
+    // (which runs one UPDATE) we issue an equivalent no-op UPDATE that
+    // matches no rows. Same query shape, same round trip.
+    if (!user) {
+      await db.execute(
+        sql`UPDATE users SET locked_until = locked_until WHERE id = -1`
+      );
+      return null;
+    }
+
+    if (isLocked) {
+      // Locked account: do NOT increment further (would just push the
+      // unlock time around). Issue a no-op UPDATE on the same row so the
+      // response latency matches the wrong-password path exactly — no
+      // timing oracle for "is this account currently locked?".
+      await db.execute(
+        sql`UPDATE users SET locked_until = locked_until WHERE id = ${user.id}`
+      );
       return null;
     }
 
