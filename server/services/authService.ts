@@ -34,8 +34,18 @@ const DUMMY_BCRYPT_HASH =
 // Per-account lockout policy. After LOCKOUT_THRESHOLD consecutive failed
 // password attempts, the account is locked for LOCKOUT_WINDOW_MS regardless
 // of the source IP. A successful login clears the counter.
-const LOCKOUT_THRESHOLD = 5;
-const LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
+//
+// Both values are env-configurable so an operator can tighten them on a
+// hardened deployment (or relax them for a dev environment) without a code
+// change. Defaults: 5 attempts / 15 minutes.
+function parsePositiveInt(envValue: string | undefined, fallback: number): number {
+  if (!envValue) return fallback;
+  const n = Number.parseInt(envValue, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+const LOCKOUT_THRESHOLD = parsePositiveInt(process.env.LOGIN_LOCKOUT_THRESHOLD, 5);
+const LOCKOUT_WINDOW_MS =
+  parsePositiveInt(process.env.LOGIN_LOCKOUT_WINDOW_MINUTES, 15) * 60 * 1000;
 
 export class AuthService {
   /**
