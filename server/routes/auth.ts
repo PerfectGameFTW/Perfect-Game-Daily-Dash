@@ -30,6 +30,7 @@ import {
   toSafeErrorResponse,
 } from '../errors';
 import { authLimiter, passwordResetRequestLimiter } from '../middleware/rateLimiter';
+import { SESSION_COOKIE_NAME } from '../sessionConfig';
 
 // Validation schemas
 //
@@ -140,6 +141,11 @@ export function createAuthRouter(): Router {
       req.session.userId = user.id;
       req.session.username = user.username;
       req.session.role = user.role;
+      // Stamp the session-creation time so the absolute-max-age
+      // enforcement middleware in server/index.ts can expire
+      // long-lived sessions even when the user keeps them active
+      // (rolling sessions reset the cookie expiry on every request).
+      req.session.createdAt = Date.now();
 
       console.log('User authenticated successfully');
 
@@ -157,7 +163,7 @@ export function createAuthRouter(): Router {
         await new Promise<void>((resolve) => {
           req.session.destroy(() => resolve());
         });
-        res.clearCookie('pg.sid');
+        res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
         throw new Error('Session initialization failed');
       }
 
@@ -274,7 +280,7 @@ export function createAuthRouter(): Router {
           return sendError(res, new Error('Failed to logout'));
         }
 
-        res.clearCookie('pg.sid');
+        res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
         res.json({ success: true });
       });
     } else {

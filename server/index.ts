@@ -13,6 +13,12 @@ import { apiLimiter } from "./middleware/rateLimiter";
 import { registerMcpRoutes } from "./mcp";
 import { toSafeErrorResponse, sendError, ForbiddenError } from "./errors";
 import { isAllowedOrigin } from "./security/origin";
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_COOKIE_SECURE,
+  SESSION_IDLE_MS,
+  SESSION_ABSOLUTE_MS,
+} from "./sessionConfig";
 
 // Prevent unhandled async errors from crashing the process.
 // Node.js 15+ exits by default on unhandledRejection — this keeps the server alive.
@@ -124,6 +130,49 @@ app.use('/mcp', apiLimiter);
 
 // Configure session middleware
 const PgSession = connectPgSimple(session);
+
+// Cookie-name compatibility shim. When SESSION_COOKIE_NAME is the
+// hardened `__Host-pg.sid` (i.e. anywhere outside an explicit
+// development environment), browsers that signed in *before* this
+// deploy will still be presenting the legacy `pg.sid` cookie. The
+// session id itself is unchanged and remains valid in the
+// connect-pg-simple `sessions` table — only the cookie *name* moved.
+//
+// Without this shim every previously-authenticated user would get
+// silently logged out on deploy, violating the task's "Existing
+// logins continue to work after deploy" requirement. Express-session
+// reads from `req.headers.cookie` by name only, so we copy the
+// legacy value over to the new name on the inbound request and let
+// the rolling-session response set the cookie under the new
+// hardened name. We also actively clear the stale legacy cookie so
+// the browser stops sending two parallel session ids.
+//
+// This shim is a no-op once everyone has cycled onto the new name
+// and can be deleted in a future pass; it costs one regex per
+// request until then.
+const LEGACY_SESSION_COOKIE_NAME = 'pg.sid';
+if (SESSION_COOKIE_NAME !== LEGACY_SESSION_COOKIE_NAME) {
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const cookieHeader = req.headers.cookie;
+    if (
+      cookieHeader &&
+      !cookieHeader.includes(`${SESSION_COOKIE_NAME}=`) &&
+      cookieHeader.includes(`${LEGACY_SESSION_COOKIE_NAME}=`)
+    ) {
+      const match = cookieHeader.match(/(?:^|;\s*)pg\.sid=([^;]+)/);
+      if (match) {
+        req.headers.cookie = `${cookieHeader}; ${SESSION_COOKIE_NAME}=${match[1]}`;
+        // Tell the browser to drop the legacy cookie. We don't know
+        // whether the original was Secure or not, but clearCookie
+        // only needs the name + path to match for the browser to
+        // expire it.
+        res.clearCookie(LEGACY_SESSION_COOKIE_NAME, { path: '/' });
+      }
+    }
+    next();
+  });
+}
+
 app.use(session({
   store: new PgSession({
     pool: pool as any, // Type casting to avoid compatibility issues
@@ -133,14 +182,56 @@ app.use(session({
   secret: process.env.SESSION_SECRET!,
   resave: false,
   saveUninitialized: false,
+  // Rolling sessions: every authenticated request resets the cookie
+  // expiry, turning `cookie.maxAge` into an idle timeout. The
+  // absolute upper bound is enforced by the middleware below.
+  rolling: true,
   cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-    secure: process.env.NODE_ENV === 'production',
+    maxAge: SESSION_IDLE_MS,
+    secure: SESSION_COOKIE_SECURE,
     sameSite: 'lax',
-    httpOnly: true
+    httpOnly: true,
+    // `__Host-` cookies must have Path=/ and no Domain attribute.
+    // We never set `domain` so the cookie stays bound to the exact
+    // origin that issued it.
+    path: '/',
   },
-  name: 'pg.sid'
+  name: SESSION_COOKIE_NAME,
 }));
+
+// Absolute session lifetime cap. `rolling: true` above keeps
+// extending the cookie for active users, so without this an
+// always-on tab could keep a session alive indefinitely. We stamp
+// `createdAt` on the session at login time (see auth router) and
+// destroy any session that exceeds SESSION_ABSOLUTE_MS regardless
+// of activity, forcing periodic re-authentication.
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  const sess: any = (req as any).session;
+  if (sess && sess.userId) {
+    // Backfill createdAt for sessions that pre-date this deploy so
+    // the absolute cap eventually applies to them too. Without this,
+    // legacy authenticated sessions would be exempt from the cap
+    // until the user voluntarily logs out and back in.
+    if (typeof sess.createdAt !== 'number') {
+      sess.createdAt = Date.now();
+    }
+    if (Date.now() - sess.createdAt > SESSION_ABSOLUTE_MS) {
+      sess.destroy((err: Error | null) => {
+        if (err) {
+          console.error('Error destroying expired session:', err);
+        }
+        // Leave it to the next request to issue a new (anonymous)
+        // session cookie. Clearing here would require knowing the
+        // exact cookie attributes (Secure, Path, name prefix); the
+        // browser will simply receive no Set-Cookie this round and
+        // the now-orphaned cookie will be rejected by the store.
+        next();
+      });
+      return;
+    }
+  }
+  next();
+});
 
 // ----------------------------------------------------------------------------
 // CSRF defense (header check) — mounted BEFORE every router, including
