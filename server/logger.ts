@@ -59,10 +59,15 @@ const ALLOWED_FIELDS = new Set<string>([
   'code',
   'errorMessage',
   'stack',
-  // env summary
+  // env summary — presence flags only, never values or var names
   'nodeEnv',
   'port',
   'hasDatabaseUrl',
+  'hasIntercard',
+  // startup-only: a list of missing required env var names emitted on
+  // the fatal-exit path so an operator knows what to set. The sanitizer
+  // drops arrays by default, so this key has special handling below.
+  'missing',
 ]);
 
 export interface LogContext {
@@ -97,6 +102,15 @@ function sanitize(ctx?: LogContext): Record<string, unknown> | undefined {
       v === null
     ) {
       out[key] = v;
+    } else if (
+      key === 'missing' &&
+      Array.isArray(v) &&
+      v.every((x) => typeof x === 'string')
+    ) {
+      // Allow-listed: array of env-var names from the startup
+      // missing-required path. Capped at 32 entries to bound the line
+      // size if someone ever passes a runaway list.
+      out[key] = (v as string[]).slice(0, 32);
     } else {
       // Drop arrays/objects entirely — callers should pre-extract counts
       // or IDs rather than handing a payload to the logger.
