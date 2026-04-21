@@ -13,7 +13,6 @@ import { giftCardService } from '../services/giftCardService';
 import { syncService } from '../services/syncService';
 import { paymentService } from '../services/paymentService';
 import { DateRange, dateRangeSchema } from '../../shared/schema';
-import { giftCardFixerRouter } from '../api/giftCardFixer';
 import { broadcast } from '../ws';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { syncLimiter } from '../middleware/rateLimiter';
@@ -436,9 +435,6 @@ export function createApiRouter(): Router {
     }
   });
   
-  // Use gift card fixer router for dedicated API endpoints
-  router.use(giftCardFixerRouter);
-
   /**
    * Sync Status API
    * GET /api/sync/status
