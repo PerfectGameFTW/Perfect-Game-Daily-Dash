@@ -18,9 +18,16 @@ import { broadcast } from '../ws';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import {
   syncLimiter,
-  heavyReadLimiter,
-  statusPollLimiter,
-  analysisLimiter,
+  summaryLimiter,
+  categoryRevenueLimiter,
+  hourlyRevenueLimiter,
+  giftCardSummaryLimiter,
+  detailedTransactionsLimiter,
+  syncProgressLimiter,
+  syncStatusLimiter,
+  analyzeGiftCardsLimiter,
+  fixGiftCardsLimiter,
+  fixGiftCardSingleLimiter,
 } from '../middleware/rateLimiter';
 import { toSafeErrorResponse } from '../errors';
 import { logger, errorContext } from '../logger';
@@ -110,7 +117,7 @@ export function createApiRouter(): Router {
    * Dashboard Summary API
    * GET /api/summary
    */
-  router.get('/summary', heavyReadLimiter, async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/summary', summaryLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const summary = await dashboardService.getDailySummary(dateRange, startDate, endDate);
@@ -150,14 +157,14 @@ export function createApiRouter(): Router {
       next(error);
     }
   };
-  router.get('/category-revenue', heavyReadLimiter, categoryRevenueHandler);
-  router.get('/revenue-by-category', heavyReadLimiter, categoryRevenueHandler);
+  router.get('/category-revenue', categoryRevenueLimiter, categoryRevenueHandler);
+  router.get('/revenue-by-category', categoryRevenueLimiter, categoryRevenueHandler);
   
   /**
    * Hourly Revenue API
    * GET /api/hourly-revenue
    */
-  router.get('/hourly-revenue', heavyReadLimiter, async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/hourly-revenue', hourlyRevenueLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const hourlyRevenue = await dashboardService.getHourlyRevenue(dateRange, startDate, endDate);
@@ -171,7 +178,7 @@ export function createApiRouter(): Router {
    * Gift Card Summary API
    * GET /api/gift-card-summary
    */
-  router.get('/gift-card-summary', heavyReadLimiter, async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/gift-card-summary', giftCardSummaryLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const giftCardSummary = await dashboardService.getGiftCardSummary(dateRange, startDate, endDate);
@@ -185,7 +192,7 @@ export function createApiRouter(): Router {
    * Detailed Transactions API
    * GET /api/detailed-transactions
    */
-  router.get('/detailed-transactions', heavyReadLimiter, async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/detailed-transactions', detailedTransactionsLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const detailedTransactions = await dashboardService.getDetailedTransactionBreakdown(
@@ -203,7 +210,7 @@ export function createApiRouter(): Router {
    * Sync Progress API
    * GET /api/sync-progress
    */
-  router.get('/sync-progress', statusPollLimiter, async (_req: Request, res: Response, next: NextFunction) => {
+  router.get('/sync-progress', syncProgressLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const progress = await syncService.getSyncProgress();
       res.json(progress);
@@ -380,7 +387,7 @@ export function createApiRouter(): Router {
    * 
    * Returns detailed results of the operation including counts and individual card fixes.
    */
-  router.post('/fix-gift-cards', requireAdmin, syncLimiter, async (_req: Request, res: Response, next: NextFunction) => {
+  router.post('/fix-gift-cards', requireAdmin, syncLimiter, fixGiftCardsLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       // Use the Activities-API-first backfill (preferred) with order-matching fallback
       const { backfillGiftCardActivationAmounts } = await import('../services/enhancedGiftCardFix');
@@ -406,7 +413,7 @@ export function createApiRouter(): Router {
    * and their linking to original orders, including detailed statistics for monitoring
    * the health of the gift card system.
    */
-  router.get('/analyze-gift-cards', analysisLimiter, async (_req: Request, res: Response, next: NextFunction) => {
+  router.get('/analyze-gift-cards', analyzeGiftCardsLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       // Import the enhanced gift card analysis service
       const { analyzeGiftCardLinkingStatus } = await import('../services/enhancedGiftCardFix');
@@ -434,7 +441,7 @@ export function createApiRouter(): Router {
    * `server/api/giftCardFixer.ts` (the rest of that router was duplicate
    * dead code shadowed by the handlers above).
    */
-  router.post('/fix-gift-card/:id', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  router.post('/fix-gift-card/:id', requireAdmin, fixGiftCardSingleLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const giftCardId = parseInt(req.params.id, 10);
       if (isNaN(giftCardId)) {
@@ -475,7 +482,7 @@ export function createApiRouter(): Router {
    * Returns the most recent sync timestamps for every sync type so the UI can
    * display a "last synced" indicator.
    */
-  router.get('/sync/status', statusPollLimiter, async (_req: Request, res: Response, next: NextFunction) => {
+  router.get('/sync/status', syncStatusLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const { db } = await import('../db');
       const { syncState } = await import('../../shared/schema');

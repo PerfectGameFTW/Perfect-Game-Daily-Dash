@@ -53,48 +53,65 @@ export const syncLimiter = rateLimit({
 //   - /analyze-gift-cards → manual button, very rare
 //   - /mcp → admin tool, low volume but each call may run a SQL query
 
+// Factory that produces a fresh, route-scoped limiter instance.
+// We deliberately create one limiter *per route* (rather than sharing a
+// single limiter across many routes) because express-rate-limit's
+// in-memory store is keyed only by client IP — sharing the same limiter
+// instance would pool the budget across every endpoint that mounts it,
+// effectively turning per-route limits into a group limit. With one
+// instance per route, hitting /summary 30 times in a minute does not
+// also lock the same client out of /hourly-revenue.
+function makeLimiter(opts: { max: number; windowMs?: number; message?: string }) {
+  return rateLimit({
+    windowMs: opts.windowMs ?? 60 * 1000,
+    max: opts.max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: opts.message ?? 'Too many requests, please try again later.' },
+  });
+}
+
 // Heavy aggregation endpoints. All of these run multiple joined SQL
 // aggregations over the orders / transactions / refunds tables. 30/min
 // = 1 every 2s sustained, well above the ~2/min the dashboard actually
-// fires per endpoint.
-export const heavyReadLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.' },
-});
+// fires per endpoint. One limiter instance per route so they don't share
+// a bucket.
+export const summaryLimiter = makeLimiter({ max: 30 });
+export const categoryRevenueLimiter = makeLimiter({ max: 30 });
+export const hourlyRevenueLimiter = makeLimiter({ max: 30 });
+export const giftCardSummaryLimiter = makeLimiter({ max: 30 });
+export const detailedTransactionsLimiter = makeLimiter({ max: 30 });
 
 // Sync status / progress polling. Has to tolerate a UI polling every 5s
 // while a long-running sync is visible (12/min), with headroom for two
 // open tabs and a manual refresh.
-export const statusPollLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.' },
-});
+export const syncProgressLimiter = makeLimiter({ max: 60 });
+export const syncStatusLimiter = makeLimiter({ max: 60 });
 
 // Gift-card analysis: scans every gift card row + cross-references orders,
 // so it's the single most expensive read in the app. Manual button only —
 // 10/min is generous.
-export const analysisLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.' },
+export const analyzeGiftCardsLimiter = makeLimiter({ max: 10 });
+
+// Gift-card "fix" endpoints. /fix-gift-cards rescans every unresolved
+// card via the Square Activities API; /fix-gift-card/:id retries a
+// single card. They're admin-only and sit behind syncLimiter for the
+// bulk path, but each deserves its own per-route bucket so one card
+// retry can't burn the bulk-fix budget (and vice versa).
+export const fixGiftCardsLimiter = makeLimiter({
+  max: 5,
+  message: 'Too many gift card fix requests, please try again later.',
+});
+export const fixGiftCardSingleLimiter = makeLimiter({
+  max: 20,
+  message: 'Too many gift card fix requests, please try again later.',
 });
 
 // MCP JSON-RPC endpoint. Admin-only, but each request can drive a
 // run_read_query call that pins a DB connection. 20/min is roughly one
 // call every 3s — fine for an interactive admin session, tight enough
 // that a stolen session can't blast the read replica.
-export const mcpLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
+export const mcpLimiter = makeLimiter({
   max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many MCP requests, please try again later.' },
+  message: 'Too many MCP requests, please try again later.',
 });
