@@ -13,7 +13,7 @@ import {
   adminUpdateUserEmailSchema,
   strongPasswordSchema,
 } from '../../shared/schema';
-import { AuthError, ConflictError } from '../errors';
+import { AuthError, ConflictError, toSafeErrorResponse } from '../errors';
 import { authLimiter, passwordResetRequestLimiter } from '../middleware/rateLimiter';
 
 // Validation schemas
@@ -296,12 +296,17 @@ export function createAuthRouter(): Router {
       } catch (err) {
         // authService throws ConflictError for "already exists" cases now,
         // but fall back to the legacy AuthError + message check for any
-        // path that hasn't been migrated yet.
+        // path that hasn't been migrated yet. Both paths route through
+        // toSafeErrorResponse so the response shape (including `code`)
+        // matches every other error in the API.
         if (err instanceof ConflictError) {
-          return res.status(err.statusCode).json({ error: err.message });
+          const { status, body } = toSafeErrorResponse(err);
+          return res.status(status).json(body);
         }
         if (err instanceof AuthError && err.message.includes('already exists')) {
-          return res.status(409).json({ error: 'Username already exists' });
+          const conflict = new ConflictError('Username already exists');
+          const { status, body } = toSafeErrorResponse(conflict);
+          return res.status(status).json(body);
         }
         throw err;
       }
@@ -356,7 +361,8 @@ export function createAuthRouter(): Router {
           res.json({ success: true, user: createSafeUser(updated) });
         } catch (err) {
           if (err instanceof ConflictError) {
-            return res.status(err.statusCode).json({ error: err.message });
+            const { status, body } = toSafeErrorResponse(err);
+            return res.status(status).json(body);
           }
           throw err;
         }
