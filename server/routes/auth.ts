@@ -81,26 +81,47 @@ export function createAuthRouter(): Router {
         return res.status(500).json({ error: 'Session initialization failed' });
       }
 
-      // Set user information in session
+      // Regenerate session ID to prevent session fixation. Any pre-login
+      // session value (and its server-side row) is discarded; a brand-new
+      // session ID is issued before any authenticated state is attached.
+      try {
+        await new Promise<void>((resolve, reject) => {
+          req.session.regenerate((err: Error | null) => {
+            if (err) reject(err); else resolve();
+          });
+        });
+      } catch (regenErr) {
+        console.error('Error regenerating session:', regenErr);
+        return res.status(500).json({ error: 'Session initialization failed' });
+      }
+
+      // Populate the fresh session with authenticated user info.
       req.session.userId = user.id;
       req.session.username = user.username;
       req.session.role = user.role;
-      
+
       console.log('User authenticated successfully');
-      
-      // Save session explicitly to ensure it's stored before response
-      await new Promise<void>((resolve, reject) => {
-        req.session.save((err: Error | null) => {
-          if (err) {
-            console.error('Error saving session:', err);
-            reject(err);
-          } else {
-            console.log('Session saved successfully');
-            resolve();
-          }
+
+      // Persist the new session before responding.
+      try {
+        await new Promise<void>((resolve, reject) => {
+          req.session.save((err: Error | null) => {
+            if (err) reject(err); else resolve();
+          });
         });
-      });
-      
+      } catch (saveErr) {
+        console.error('Error saving session:', saveErr);
+        // Tear down the partially-populated session so no half-authenticated
+        // state can leak to the client.
+        await new Promise<void>((resolve) => {
+          req.session.destroy(() => resolve());
+        });
+        res.clearCookie('pg.sid');
+        return res.status(500).json({ error: 'Session initialization failed' });
+      }
+
+      console.log('Session saved successfully');
+
       res.json({
         success: true,
         user: createSafeUser(user)
