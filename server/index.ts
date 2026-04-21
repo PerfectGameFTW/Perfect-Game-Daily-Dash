@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { db, sql, pool, ensureMcpReadRole } from "./db";
@@ -26,6 +27,66 @@ validateEnv();
 const app = express();
 app.set('trust proxy', 1);
 app.disable('etag');
+
+// ----------------------------------------------------------------------------
+// Security headers (helmet)
+// ----------------------------------------------------------------------------
+// Defense-in-depth headers for clickjacking, MIME-sniffing, and downgrade
+// attacks. Configuration differs per environment because the Vite dev
+// middleware injects inline scripts, opens an HMR WebSocket, and uses
+// eval() for fast refresh — all of which a strict prod CSP must forbid.
+//
+// Both modes set:
+//   - X-Content-Type-Options: nosniff
+//   - X-Frame-Options: DENY  (also enforced via CSP frame-ancestors 'none')
+//   - Referrer-Policy: no-referrer
+//   - Cross-Origin-Opener-Policy / Resource-Policy: same-origin
+// Production additionally sets:
+//   - Strict-Transport-Security: max-age=1y; includeSubDomains; preload
+//   - A tight Content-Security-Policy (no inline/eval, no third-party
+//     origins). Same-origin /ws WebSocket is allowed via connect-src 'self'.
+//
+// HSTS is intentionally OFF in development so a local http://localhost
+// session never gets pinned to https in the browser.
+const isProd = process.env.NODE_ENV === 'production';
+app.use(
+  helmet({
+    contentSecurityPolicy: isProd
+      ? {
+          useDefaults: true,
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            // shadcn/Tailwind ship runtime styles, and client/index.html
+            // pulls the Inter font stylesheet from fonts.googleapis.com.
+            styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+            imgSrc: ["'self'", 'data:', 'blob:'],
+            // Inter webfont files are served from fonts.gstatic.com.
+            fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+            // Same-origin XHR + same-origin /ws WebSocket. 'self' covers
+            // both http(s) and ws(s) on the same origin per CSP3.
+            connectSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+            upgradeInsecureRequests: [],
+          },
+        }
+      : false, // Vite dev server needs inline scripts + eval; CSP off in dev.
+    strictTransportSecurity: isProd
+      ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+      : false,
+    // X-Frame-Options is also covered by CSP frame-ancestors in prod, but
+    // we keep the legacy header on for older browsers.
+    frameguard: { action: 'deny' },
+    referrerPolicy: { policy: 'no-referrer' },
+    crossOriginEmbedderPolicy: false, // would block third-party images / Square assets
+    crossOriginResourcePolicy: { policy: 'same-origin' },
+    crossOriginOpenerPolicy: { policy: 'same-origin' },
+  }),
+);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
