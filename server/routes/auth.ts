@@ -1,10 +1,17 @@
 /**
  * Authentication Routes
- * 
+ *
  * Provides endpoints for login, logout, and user management.
+ *
+ * Error handling: handlers throw typed `AppError` subclasses
+ * (`ValidationError`, `UnauthorizedError`, `ConflictError`, `NotFoundError`,
+ * etc.) and rely on the router-level error middleware at the bottom of this
+ * file (which delegates to `toSafeErrorResponse`) to map them to the right
+ * HTTP status and a sanitized JSON body. Don't call `res.status(N).json(...)`
+ * directly for error paths — see `server/errors.ts` for the convention.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authService } from '../services/authService';
 import { createSafeUser, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
@@ -13,7 +20,15 @@ import {
   adminUpdateUserEmailSchema,
   strongPasswordSchema,
 } from '../../shared/schema';
-import { AuthError, ConflictError, toSafeErrorResponse } from '../errors';
+import {
+  AuthError,
+  ConflictError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+  sendError,
+  toSafeErrorResponse,
+} from '../errors';
 import { authLimiter, passwordResetRequestLimiter } from '../middleware/rateLimiter';
 
 // Validation schemas
@@ -49,22 +64,29 @@ const RESET_REQUEST_GENERIC_MESSAGE =
   'If an account matching that username or email exists and has a recovery email on file, ' +
   'a password reset link has been sent. Check your inbox (and spam folder) within a few minutes.';
 
+/**
+ * Throw a `ValidationError` carrying the zod issue tree. Keeps the
+ * pre-existing client-facing shape (`{ error: 'Invalid input', details: ... }`)
+ * because the sanitizer now forwards `details` for any AppError that has it.
+ */
+function throwOnInvalidInput(parsed: z.SafeParseReturnType<unknown, unknown>) {
+  if (!parsed.success) {
+    throw new ValidationError('Invalid input', parsed.error.format());
+  }
+}
+
 export function createAuthRouter(): Router {
   const router = Router();
 
   // Current user endpoint
-  router.get('/me', async (req: Request & { session?: any }, res: Response) => {
+  router.get('/me', async (req: Request & { session?: any }, res: Response, next: NextFunction) => {
     try {
-      if (!req.session) {
-        return res.json(null);
-      }
-      
-      if (!req.session.userId) {
+      if (!req.session || !req.session.userId) {
         return res.json(null);
       }
 
       const user = await authService.getUserById(req.session.userId);
-      
+
       if (!user) {
         // Clear invalid session if user no longer exists
         req.session.userId = undefined;
@@ -74,38 +96,30 @@ export function createAuthRouter(): Router {
         return res.json(null);
       }
 
-      const safeUser = createSafeUser(user);
-      res.json(safeUser);
+      res.json(createSafeUser(user));
     } catch (error) {
       console.error('Error checking authentication:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      next(error);
     }
   });
 
-  router.post('/login', authLimiter, async (req: Request & { session?: any }, res: Response) => {
+  router.post('/login', authLimiter, async (req: Request & { session?: any }, res: Response, next: NextFunction) => {
     try {
-      // Validate input
-      const validationResult = loginSchema.safeParse(req.body);
-      if (!validationResult.success) {
-        return res.status(400).json({ 
-          error: 'Invalid input',
-          details: validationResult.error.format()
-        });
-      }
+      const parsed = loginSchema.safeParse(req.body);
+      throwOnInvalidInput(parsed);
+      const { username, password } = parsed.data!;
 
-      const { username, password } = validationResult.data;
-      
       const user = await authService.loginUser(username, password);
 
       if (!user) {
         console.log('Authentication failed');
-        return res.status(401).json({ error: 'Invalid username or password' });
+        throw new UnauthorizedError('Invalid username or password');
       }
 
       // Ensure session exists
       if (!req.session) {
         console.error('No session object available');
-        return res.status(500).json({ error: 'Session initialization failed' });
+        throw new Error('Session initialization failed');
       }
 
       // Regenerate session ID to prevent session fixation. Any pre-login
@@ -119,7 +133,7 @@ export function createAuthRouter(): Router {
         });
       } catch (regenErr) {
         console.error('Error regenerating session:', regenErr);
-        return res.status(500).json({ error: 'Session initialization failed' });
+        throw new Error('Session initialization failed');
       }
 
       // Populate the fresh session with authenticated user info.
@@ -144,7 +158,7 @@ export function createAuthRouter(): Router {
           req.session.destroy(() => resolve());
         });
         res.clearCookie('pg.sid');
-        return res.status(500).json({ error: 'Session initialization failed' });
+        throw new Error('Session initialization failed');
       }
 
       console.log('Session saved successfully');
@@ -155,7 +169,7 @@ export function createAuthRouter(): Router {
       });
     } catch (error) {
       console.error('Error during login:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      next(error);
     }
   });
 
@@ -222,33 +236,27 @@ export function createAuthRouter(): Router {
   router.post(
     '/complete-reset',
     authLimiter,
-    async (req: Request, res: Response) => {
+    async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const validation = completeResetSchema.safeParse(req.body);
-        if (!validation.success) {
-          return res.status(400).json({
-            error: 'Invalid input',
-            details: validation.error.format(),
-          });
-        }
+        const parsed = completeResetSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
 
-        const { token, newPassword } = validation.data;
+        const { token, newPassword } = parsed.data!;
         const success = await authService.completePasswordReset(
           token,
           newPassword,
         );
 
         if (!success) {
-          return res.status(400).json({
-            error:
-              'This reset link is invalid or has expired. Please request a new one.',
-          });
+          throw new ValidationError(
+            'This reset link is invalid or has expired. Please request a new one.',
+          );
         }
 
         res.json({ success: true });
       } catch (error) {
         console.error('Error completing password reset:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        next(error);
       }
     },
   );
@@ -257,13 +265,15 @@ export function createAuthRouter(): Router {
   router.post('/logout', (req: Request & { session?: any }, res: Response) => {
     if (req.session) {
       console.log('Processing logout request');
-      
+
       req.session.destroy((err: Error | null) => {
         if (err) {
           console.error('Error destroying session:', err);
-          return res.status(500).json({ error: 'Failed to logout' });
+          // Inside a synchronous callback, no `next` available — use the
+          // sanitizer directly so the response shape stays consistent.
+          return sendError(res, new Error('Failed to logout'));
         }
-        
+
         res.clearCookie('pg.sid');
         res.json({ success: true });
       });
@@ -275,17 +285,11 @@ export function createAuthRouter(): Router {
 
   // Register endpoint — admin-only. Creating the first admin happens
   // out-of-band via the bootstrap CLI script (see replit.md), never here.
-  router.post('/register', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  router.post('/register', requireAuth, requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const validationResult = adminCreateUserSchema.safeParse(req.body);
-      if (!validationResult.success) {
-        return res.status(400).json({
-          error: 'Invalid input',
-          details: validationResult.error.format(),
-        });
-      }
-
-      const { username, password, role, email } = validationResult.data;
+      const parsed = adminCreateUserSchema.safeParse(req.body);
+      throwOnInvalidInput(parsed);
+      const { username, password, role, email } = parsed.data!;
 
       try {
         const user = await authService.registerUser(username, password, role, email);
@@ -295,37 +299,32 @@ export function createAuthRouter(): Router {
         });
       } catch (err) {
         // authService throws ConflictError for "already exists" cases now,
-        // but fall back to the legacy AuthError + message check for any
-        // path that hasn't been migrated yet. Both paths route through
-        // toSafeErrorResponse so the response shape (including `code`)
-        // matches every other error in the API.
+        // but legacy AuthError-with-"already exists"-message is kept as a
+        // safety net. Both are converted to a ConflictError so the response
+        // shape (status + code) is identical to every other conflict.
         if (err instanceof ConflictError) {
-          const { status, body } = toSafeErrorResponse(err);
-          return res.status(status).json(body);
+          throw err;
         }
         if (err instanceof AuthError && err.message.includes('already exists')) {
-          const conflict = new ConflictError('Username already exists');
-          const { status, body } = toSafeErrorResponse(conflict);
-          return res.status(status).json(body);
+          throw new ConflictError('Username already exists');
         }
         throw err;
       }
     } catch (error) {
       console.error('Error during registration:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      next(error);
     }
   });
 
   // Get all users (admin only)
-  router.get('/users', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  router.get('/users', requireAuth, requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const users = await authService.getAllUsers();
-      // Transform users to safe format
       const safeUsers = users.map(createSafeUser);
       res.json(safeUsers);
     } catch (error) {
       console.error('Error fetching users:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      next(error);
     }
   });
 
@@ -337,64 +336,66 @@ export function createAuthRouter(): Router {
     '/users/:id/email',
     requireAuth,
     requireAdmin,
-    async (req: Request, res: Response) => {
+    async (req: Request, res: Response, next: NextFunction) => {
       try {
         const userId = parseInt(req.params.id, 10);
         if (isNaN(userId)) {
-          return res.status(400).json({ error: 'Invalid user ID' });
+          throw new ValidationError('Invalid user ID');
         }
-        const validation = adminUpdateUserEmailSchema.safeParse(req.body);
-        if (!validation.success) {
-          return res.status(400).json({
-            error: 'Invalid input',
-            details: validation.error.format(),
-          });
+        const parsed = adminUpdateUserEmailSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+
+        const updated = await authService.updateUserEmail(
+          userId,
+          parsed.data!.email,
+        );
+        if (!updated) {
+          throw new NotFoundError('User not found');
         }
-        try {
-          const updated = await authService.updateUserEmail(
-            userId,
-            validation.data.email,
-          );
-          if (!updated) {
-            return res.status(404).json({ error: 'User not found' });
-          }
-          res.json({ success: true, user: createSafeUser(updated) });
-        } catch (err) {
-          if (err instanceof ConflictError) {
-            const { status, body } = toSafeErrorResponse(err);
-            return res.status(status).json(body);
-          }
-          throw err;
-        }
+        res.json({ success: true, user: createSafeUser(updated) });
       } catch (error) {
         console.error('Error updating user email:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        next(error);
       }
     },
   );
 
   // Delete user (admin only)
-  router.delete('/users/:id', requireAuth, requireAdmin, async (req: Request & { session?: { userId?: number } }, res: Response) => {
-    try {
-      const userId = parseInt(req.params.id, 10);
-      if (isNaN(userId)) {
-        return res.status(400).json({ error: 'Invalid user ID' });
-      }
+  router.delete(
+    '/users/:id',
+    requireAuth,
+    requireAdmin,
+    async (req: Request & { session?: { userId?: number } }, res: Response, next: NextFunction) => {
+      try {
+        const userId = parseInt(req.params.id, 10);
+        if (isNaN(userId)) {
+          throw new ValidationError('Invalid user ID');
+        }
 
-      // Prevent self-deletion
-      if (req.session && req.session.userId === userId) {
-        return res.status(400).json({ error: 'You cannot delete your own account' });
-      }
+        // Prevent self-deletion
+        if (req.session && req.session.userId === userId) {
+          throw new ValidationError('You cannot delete your own account');
+        }
 
-      const deleted = await authService.deleteUser(userId);
-      if (deleted) {
+        const deleted = await authService.deleteUser(userId);
+        if (!deleted) {
+          throw new NotFoundError('User not found');
+        }
         res.json({ success: true });
-      } else {
-        res.status(404).json({ error: 'User not found' });
+      } catch (error) {
+        console.error('Error deleting user:', error);
+        next(error);
       }
-    } catch (error) {
-      console.error('Error deleting user:', error);
-      res.status(500).json({ error: 'Internal server error' });
+    },
+  );
+
+  // Router-level error middleware. Every handler above either throws or
+  // calls `next(err)`; this middleware is the single place that converts
+  // an arbitrary thrown value into the wire-format JSON error response.
+  router.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+    if (!res.headersSent) {
+      const { status, body } = toSafeErrorResponse(err);
+      res.status(status).json(body);
     }
   });
 

@@ -19,6 +19,22 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { syncLimiter } from '../middleware/rateLimiter';
 import { toSafeErrorResponse } from '../errors';
 
+/**
+ * Router-level error middleware. Exported so that `server/routes.ts` can
+ * attach it AFTER it has finished mounting its own backfill routes onto
+ * the apiRouter — Express only invokes error middleware that was
+ * registered after the route that called `next(err)`.
+ */
+export function attachApiErrorMiddleware(router: Router) {
+  router.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('API Error:', err);
+    if (!res.headersSent) {
+      const { status, body } = toSafeErrorResponse(err);
+      res.status(status).json(body);
+    }
+  });
+}
+
 export function createApiRouter(): Router {
   const router = Router();
   
@@ -93,16 +109,9 @@ export function createApiRouter(): Router {
     return { dateRange, startDate, endDate };
   }
   
-  /**
-   * API error handler middleware. Uses the centralized error sanitizer
-   * (`server/errors.ts`) which knows the right HTTP status for every
-   * AppError subclass and falls back to a generic 500 for anything else.
-   */
-  router.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-    console.error('API Error:', err);
-    const { status, body } = toSafeErrorResponse(err);
-    res.status(status).json(body);
-  });
+  // The router-level error middleware is attached at the bottom of
+  // createApiRouter (see attachApiErrorMiddleware) so it can actually
+  // catch next(err) from the routes registered below.
   
   /**
    * Dashboard Summary API
@@ -594,6 +603,11 @@ export function createApiRouter(): Router {
     }
   });
 
+  // NOTE: do NOT attach the error middleware here — `server/routes.ts`
+  // adds more routes to this router AFTER createApiRouter() returns,
+  // and Express won't dispatch an error middleware to a route that was
+  // registered after it. routes.ts calls attachApiErrorMiddleware once
+  // every route has been mounted.
   return router;
 }
 

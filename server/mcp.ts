@@ -6,6 +6,12 @@ import { z } from "zod";
 import sqlParserPkg from "node-sql-parser";
 const { Parser: SqlParser } = sqlParserPkg;
 import { requireAuth, requireAdmin } from "./middleware/auth";
+import {
+  AppError,
+  ValidationError,
+  ServiceUnavailableError,
+  sendError,
+} from "./errors";
 import { dashboardService } from "./services/dashboardService";
 import { giftCardService } from "./services/giftCardService";
 import { paymentService } from "./services/paymentService";
@@ -56,7 +62,7 @@ const dateRangeParam = {
 function parseAndValidateDate(dateStr: string): Date {
   const d = new Date(dateStr + "T00:00:00Z");
   if (isNaN(d.getTime())) {
-    throw new Error(`Invalid date: '${dateStr}'. Use YYYY-MM-DD format.`);
+    throw new ValidationError(`Invalid date: '${dateStr}'. Use YYYY-MM-DD format.`);
   }
   return d;
 }
@@ -71,19 +77,29 @@ function parseDates(params: {
   let endDate: Date | undefined;
   if (dateRange === "custom") {
     if (!params.startDate || !params.endDate) {
-      throw new Error("startDate and endDate are required when dateRange is 'custom'.");
+      throw new ValidationError("startDate and endDate are required when dateRange is 'custom'.");
     }
     startDate = parseAndValidateDate(params.startDate);
     endDate = parseAndValidateDate(params.endDate);
     if (startDate > endDate) {
-      throw new Error(`startDate (${params.startDate}) must be before endDate (${params.endDate}).`);
+      throw new ValidationError(`startDate (${params.startDate}) must be before endDate (${params.endDate}).`);
     }
   }
   return { dateRange, startDate, endDate };
 }
 
+/**
+ * Wrap any thrown value into the MCP tool error envelope. Mirrors the
+ * HTTP sanitizer in `server/errors.ts`: AppError messages are pre-blessed
+ * and surfaced verbatim; anything else collapses to a generic message so
+ * raw upstream error text (Square SDK, Postgres, etc.) never leaks to the
+ * MCP client.
+ */
 function errorResponse(err: unknown) {
-  const message = err instanceof Error ? err.message : String(err);
+  const message =
+    err instanceof AppError && err.expose
+      ? err.message
+      : "An unexpected error occurred";
   return {
     content: [{ type: "text" as const, text: `Error: ${message}` }],
     isError: true,
@@ -160,7 +176,7 @@ export function validateReadQueryTables(query: string): void {
   ];
   for (const re of sensitiveTokens) {
     if (re.test(stripped)) {
-      throw new Error(
+      throw new ValidationError(
         "Query references a table or function that is not on the allow-list."
       );
     }
@@ -175,17 +191,17 @@ export function validateReadQueryTables(query: string): void {
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Could not parse SQL: ${msg}`);
+    throw new ValidationError(`Could not parse SQL: ${msg}`);
   }
 
   const astNodes = Array.isArray(parsed.ast) ? parsed.ast : [parsed.ast];
   if (astNodes.length !== 1) {
-    throw new Error("Only a single SELECT statement is allowed per call.");
+    throw new ValidationError("Only a single SELECT statement is allowed per call.");
   }
   for (const node of astNodes) {
     const nodeType = (node as { type?: string } | null)?.type;
     if (nodeType !== "select") {
-      throw new Error("Only SELECT statements are allowed.");
+      throw new ValidationError("Only SELECT statements are allowed.");
     }
   }
 
@@ -233,10 +249,10 @@ export function validateReadQueryTables(query: string): void {
     const schema = parts[1];
     const table = parts[2];
     if (op !== "select") {
-      throw new Error("Only read operations are allowed.");
+      throw new ValidationError("Only read operations are allowed.");
     }
     if (!READ_QUERY_ALLOWED_SCHEMAS.has(schema)) {
-      throw new Error(
+      throw new ValidationError(
         `Schema '${schema}' is not allowed. Only the public schema is accessible.`
       );
     }
@@ -246,7 +262,7 @@ export function validateReadQueryTables(query: string): void {
     }
     // Unqualified references to a CTE alias are allowed.
     if (schema === "null" && cteAliases.has(table.toLowerCase())) continue;
-    throw new Error(
+    throw new ValidationError(
       `Table '${table}' is not on the allow-list. Allowed tables: ${Array.from(
         READ_QUERY_ALLOWED_TABLES
       )
@@ -258,7 +274,7 @@ export function validateReadQueryTables(query: string): void {
   // metadata-only queries like `SELECT current_user` or `SELECT version()`
   // that have no FROM clause and therefore no entries in tableList.
   if (allowedTableReferenceCount === 0) {
-    throw new Error(
+    throw new ValidationError(
       "Query must reference at least one allow-listed business table."
     );
   }
@@ -830,7 +846,14 @@ server.tool(
           };
         } catch (err) {
           await client.query('ROLLBACK').catch(() => {});
-          throw err;
+          // Surface the Postgres error message back to the MCP client so
+          // the LLM can correct its query (syntax errors, permission
+          // errors from the read-only role, etc.). The full stack is
+          // still recorded server-side via auditReadQuery in the outer
+          // finally. We deliberately re-wrap as ValidationError instead
+          // of a generic 500, since the user input caused this.
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new ValidationError(`SQL execution failed: ${msg}`);
         } finally {
           client.release();
         }
@@ -898,7 +921,7 @@ export function registerMcpRoutes(app: Express) {
         touchSession(sessionId);
       } else if (!sessionId && isInitializeRequest(req.body)) {
         if (transports.size >= MAX_SESSIONS) {
-          res.status(503).json({ error: "Too many active sessions" });
+          sendError(res, new ServiceUnavailableError("Too many active sessions"));
           return;
         }
         transport = new StreamableHTTPServerTransport({
@@ -922,13 +945,13 @@ export function registerMcpRoutes(app: Express) {
         }
         return;
       } else {
-        res.status(400).json({ error: "Bad request: no valid session" });
+        sendError(res, new ValidationError("Bad request: no valid session"));
         return;
       }
       await transport.handleRequest(req, res, req.body);
     } catch (err) {
       console.error("MCP POST error:", err);
-      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+      if (!res.headersSent) sendError(res, err);
     }
   });
 
@@ -936,14 +959,14 @@ export function registerMcpRoutes(app: Express) {
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       if (!sessionId || !transports.has(sessionId)) {
-        res.status(400).json({ error: "Bad request: no valid session" });
+        sendError(res, new ValidationError("Bad request: no valid session"));
         return;
       }
       touchSession(sessionId);
       await transports.get(sessionId)!.handleRequest(req, res);
     } catch (err) {
       console.error("MCP GET error:", err);
-      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+      if (!res.headersSent) sendError(res, err);
     }
   });
 
@@ -951,7 +974,7 @@ export function registerMcpRoutes(app: Express) {
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       if (!sessionId || !transports.has(sessionId)) {
-        res.status(400).json({ error: "Bad request: no valid session" });
+        sendError(res, new ValidationError("Bad request: no valid session"));
         return;
       }
       const transport = transports.get(sessionId)!;
@@ -959,7 +982,7 @@ export function registerMcpRoutes(app: Express) {
       cleanupSession(sessionId);
     } catch (err) {
       console.error("MCP DELETE error:", err);
-      if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+      if (!res.headersSent) sendError(res, err);
     }
   });
 

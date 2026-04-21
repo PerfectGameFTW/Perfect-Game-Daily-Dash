@@ -6,14 +6,14 @@
  *
  *   - `statusCode` — the HTTP status the route layer should send.
  *   - `code`       — a stable machine-readable code for the client.
- *   - `details`    — optional structured context.
+ *   - `details`    — optional structured context (validation issues, etc.).
  *
- * The route layer (`/api` router error middleware and the global Express
- * error handler in `server/index.ts`) calls `toSafeErrorResponse(err)` to
- * get both the status code and a sanitized JSON body in one shot. Anything
- * that is NOT an `AppError` (Square SDK errors, Postgres errors, generic
- * `Error`s, etc.) collapses to a 500 with a generic message so we never
- * leak stack traces, file paths, or upstream library internals.
+ * The route layer calls `toSafeErrorResponse(err)` (or the convenience
+ * `sendError(res, err)`) to get both the status code and a sanitized JSON
+ * body in one shot. Anything that is NOT an `AppError` (Square SDK errors,
+ * Postgres errors, generic `Error`s, etc.) collapses to a 500 with a
+ * generic message so we never leak stack traces, file paths, or upstream
+ * library internals. ZodError is special-cased and surfaces as a 400.
  *
  * Domain-specific subclasses (OrderError, PaymentError, GiftCardError,
  * SyncError, AuthError) live here too rather than in their respective
@@ -24,7 +24,26 @@
  *
  * The service files re-export the names they used to define locally so
  * existing `import { OrderError } from './orderService'` keeps working.
+ *
+ * # Convention for new route handlers
+ *
+ * Don't write `res.status(400).json({ error: '...' })` — throw a typed
+ * AppError subclass instead and let the centralized sanitizer pick the
+ * status code:
+ *
+ *     throw new ValidationError('startDate must be before endDate');
+ *     throw new UnauthorizedError();
+ *     throw new ConflictError('Email already in use');
+ *
+ * In an Express handler with a `next` parameter, just `throw` from an
+ * async handler (Express 5) or `next(err)` (Express 4) and the global
+ * error middleware in `server/index.ts` will sanitize. In the rare
+ * handler without a `next` (e.g. inside a synchronous callback like
+ * `req.session.destroy`), call `sendError(res, err)` directly.
  */
+
+import type { Response } from 'express';
+import { ZodError } from 'zod';
 
 // ---------------------------------------------------------------------------
 // Public response shape
@@ -33,6 +52,7 @@
 export interface ErrorResponse {
   error: string;
   code?: string;
+  details?: unknown;
 }
 
 export interface SafeErrorResult {
@@ -43,6 +63,13 @@ export interface SafeErrorResult {
 // ---------------------------------------------------------------------------
 // Base class
 // ---------------------------------------------------------------------------
+
+export interface AppErrorOptions {
+  statusCode?: number;
+  code?: string;
+  details?: unknown;
+  expose?: boolean;
+}
 
 export class AppError extends Error {
   public readonly statusCode: number;
@@ -56,15 +83,7 @@ export class AppError extends Error {
    */
   public readonly expose: boolean;
 
-  constructor(
-    message: string,
-    opts: {
-      statusCode?: number;
-      code?: string;
-      details?: unknown;
-      expose?: boolean;
-    } = {},
-  ) {
+  constructor(message: string, opts: AppErrorOptions = {}) {
     super(message);
     this.name = new.target.name;
     this.statusCode = opts.statusCode ?? 500;
@@ -105,6 +124,12 @@ export class NotFoundError extends AppError {
 export class ConflictError extends AppError {
   constructor(message: string, details?: unknown) {
     super(message, { statusCode: 409, code: 'CONFLICT', details });
+  }
+}
+
+export class ServiceUnavailableError extends AppError {
+  constructor(message = 'Service unavailable') {
+    super(message, { statusCode: 503, code: 'SERVICE_UNAVAILABLE' });
   }
 }
 
@@ -220,7 +245,12 @@ const GENERIC_MESSAGE = 'An unexpected error occurred';
 /**
  * Convert any thrown value into `{ status, body }` for the route layer.
  *
- *   - `AppError` (and subclasses) → its own statusCode + safe message + code.
+ *   - `AppError` (and subclasses) → its own statusCode + safe message + code
+ *                                   (+ details if present).
+ *   - `ZodError`                  → 400 + 'Invalid input' + the zod issue
+ *                                   tree as `details`. This catches the
+ *                                   common pattern of `schema.parse()`
+ *                                   throwing inside a route handler.
  *   - Anything else               → 500 + generic message, no leaked details.
  *
  * Server-side logging (full stack, full message) happens elsewhere — this
@@ -230,7 +260,18 @@ export function toSafeErrorResponse(error: unknown): SafeErrorResult {
   if (error instanceof AppError && error.expose) {
     const body: ErrorResponse = { error: error.message };
     if (error.code) body.code = error.code;
+    if (error.details !== undefined) body.details = error.details;
     return { status: error.statusCode, body };
+  }
+  if (error instanceof ZodError) {
+    return {
+      status: 400,
+      body: {
+        error: 'Invalid input',
+        code: 'VALIDATION_ERROR',
+        details: error.format(),
+      },
+    };
   }
   // AppError with expose=false (or any other Error / non-Error) → generic.
   const status =
@@ -241,9 +282,24 @@ export function toSafeErrorResponse(error: unknown): SafeErrorResult {
 }
 
 /**
+ * Convenience wrapper for the common pattern of:
+ *
+ *     const { status, body } = toSafeErrorResponse(err);
+ *     res.status(status).json(body);
+ *
+ * Use this from any handler that doesn't want to (or can't) defer to the
+ * global Express error middleware — e.g. legacy callbacks or the MCP
+ * transport layer where there's no `next` to call.
+ */
+export function sendError(res: Response, error: unknown): Response {
+  const { status, body } = toSafeErrorResponse(error);
+  return res.status(status).json(body);
+}
+
+/**
  * Backwards-compatible adapter for callers that only want the JSON body.
- * New code should prefer `toSafeErrorResponse` so the status code is
- * applied automatically.
+ * New code should prefer `toSafeErrorResponse` (or `sendError`) so the
+ * status code is applied automatically.
  */
 export function toErrorResponse(error: unknown): ErrorResponse {
   return toSafeErrorResponse(error).body;
