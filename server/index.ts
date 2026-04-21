@@ -5,6 +5,7 @@ import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { db, sql, pool, ensureMcpReadRole } from "./db";
+import { pgStorage } from "./pgStorage";
 import { authService } from "./services/authService";
 import { startScheduler } from "./services/schedulerService";
 import { validateEnv } from "./validateEnv";
@@ -299,6 +300,25 @@ async function exitWithError(error: unknown) {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens (user_id)`);
     log('✓ Auth-recovery schema verified');
 
+    // MCP read-query audit log. Persists every `run_read_query` call so
+    // admins can review who ran what query without shell access. Same
+    // self-bootstrap pattern as the auth-recovery block above — see the
+    // long comment there for the rationale (drizzle-kit push currently
+    // hangs on an interactive prompt).
+    log('Bootstrapping MCP audit schema...');
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS mcp_query_audit (
+      id SERIAL PRIMARY KEY,
+      admin_user_id INTEGER,
+      ip TEXT,
+      query TEXT NOT NULL,
+      row_count INTEGER,
+      error TEXT,
+      duration_ms INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_mcp_query_audit_created_at ON mcp_query_audit (created_at)`);
+    log('✓ MCP audit schema verified');
+
     log('Registering routes...');
     const server = await registerRoutes(app);
     log('✓ Routes registered successfully');
@@ -337,6 +357,27 @@ async function exitWithError(error: unknown) {
       log(`✓ Server ready and listening on port ${port}`);
       // Start nightly sync scheduler (3 AM Eastern Time every day)
       startScheduler();
+      // Prune the MCP query audit log so it doesn't grow unbounded.
+      // Runs once at boot and then daily; 90-day retention is plenty
+      // for abuse investigations without bloating disk.
+      const MCP_AUDIT_RETENTION_DAYS = 90;
+      const pruneMcpAudit = () => {
+        pgStorage
+          .pruneMcpQueryAudit(MCP_AUDIT_RETENTION_DAYS)
+          .then((deleted) => {
+            if (deleted > 0) {
+              log(`[mcp] pruned ${deleted} audit row(s) older than ${MCP_AUDIT_RETENTION_DAYS} days`);
+            }
+          })
+          .catch((err) => {
+            log(
+              `[mcp] audit prune failed: ${err instanceof Error ? err.message : String(err)}`,
+              'error'
+            );
+          });
+      };
+      pruneMcpAudit();
+      setInterval(pruneMcpAudit, 24 * 60 * 60 * 1000).unref();
     });
 
   } catch (error) {

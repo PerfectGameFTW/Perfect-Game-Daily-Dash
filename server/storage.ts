@@ -10,7 +10,8 @@ import {
   OrderLineItem, InsertOrderLineItem,
   OrderModifier, InsertOrderModifier,
   OrderDiscount, InsertOrderDiscount,
-  OrderSummary
+  OrderSummary,
+  InsertMcpQueryAudit
 } from "@shared/schema";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
 
@@ -64,6 +65,10 @@ export interface IStorage {
 
   // Add new method for gift card sales
   getGiftCardSales(dateRange: DateRange, startDate?: Date, endDate?: Date): Promise<number>;
+
+  // MCP read-query audit log
+  recordMcpQueryAudit(entry: InsertMcpQueryAudit): Promise<void>;
+  pruneMcpQueryAudit(maxAgeDays: number): Promise<number>;
 }
 
 // No MemStorage implementation - we now exclusively use PgStorage for all data storage

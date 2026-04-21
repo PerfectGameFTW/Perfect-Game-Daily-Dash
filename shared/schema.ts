@@ -426,6 +426,31 @@ export const insertSquareCatalogItemSchema = createInsertSchema(squareCatalogIte
 export type InsertSquareCatalogItem = z.infer<typeof insertSquareCatalogItemSchema>;
 export type SquareCatalogItem = typeof squareCatalogItems.$inferSelect;
 
+// Audit log of every MCP `run_read_query` invocation (success or failure).
+// Persisted so admins can review who ran what query without needing shell
+// access to the host. Pruned to ~90 days by a periodic job; see
+// `pruneMcpQueryAudit` in `server/pgStorage.ts`.
+export const mcpQueryAudit = pgTable("mcp_query_audit", {
+  id: serial("id").primaryKey(),
+  adminUserId: integer("admin_user_id"),
+  ip: text("ip"),
+  query: text("query").notNull(),
+  rowCount: integer("row_count"),
+  error: text("error"),
+  durationMs: integer("duration_ms").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+});
+
+export const insertMcpQueryAuditSchema = createInsertSchema(mcpQueryAudit).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertMcpQueryAudit = z.infer<typeof insertMcpQueryAuditSchema>;
+export type McpQueryAudit = typeof mcpQueryAudit.$inferSelect;
+
 // Add Order Summary type for dashboard
 export interface OrderSummary {
   totalOrders: number;

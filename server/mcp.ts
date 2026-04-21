@@ -19,6 +19,7 @@ import { orderService } from "./services/orderService";
 import { intercardService } from "./services/intercardService";
 import { payoutService } from "./services/payoutService";
 import { db, sql } from "./db";
+import { pgStorage } from "./pgStorage";
 import {
   orders,
   orderLineItems,
@@ -149,6 +150,26 @@ function auditReadQuery(entry: {
       query: entry.query,
     })
   );
+
+  // Persist to the mcp_query_audit table so admins can review history
+  // without shell access. Fire-and-forget: a DB hiccup must not break
+  // the MCP request. The console.log above is the durable fallback.
+  pgStorage
+    .recordMcpQueryAudit({
+      adminUserId: entry.adminUserId,
+      ip: entry.ip,
+      query: entry.query,
+      rowCount: entry.rowCount,
+      error: entry.error,
+      durationMs: entry.durationMs,
+    })
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(
+        "[mcp] failed to persist run_read_query audit row:",
+        err instanceof Error ? err.message : err
+      );
+    });
 }
 
 export function validateReadQueryTables(query: string): void {

@@ -3,12 +3,14 @@ import { sql, eq, and, desc } from 'drizzle-orm';
 import { 
   users, transactions, giftCards, giftCardRedemptions, 
   orders, orderLineItems, orderModifiers, orderDiscounts, syncState,
+  mcpQueryAudit,
   DateRange, TransactionStatus, Order, OrderLineItem, OrderModifier, OrderDiscount,
   InsertUser, User, InsertTransaction, Transaction,
   InsertGiftCard, GiftCard, InsertGiftCardRedemption, GiftCardRedemption,
   InsertOrder, InsertOrderLineItem, InsertOrderModifier, InsertOrderDiscount,
   OrderSummary, InsertSyncState, SyncState,
-  DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary
+  DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
+  InsertMcpQueryAudit
 } from '@shared/schema';
 import { getEasternDateRange, formatEasternDate, formatHour, EASTERN_TIMEZONE } from './dateUtils';
 import { formatInTimeZone } from 'date-fns-tz';
@@ -393,6 +395,19 @@ class PgStorage implements IStorage {
     // Return just the gift card sales from activation_amount
     // This eliminates potential double-counting issues
     return giftCardSales;
+  }
+
+  // MCP read-query audit log
+  async recordMcpQueryAudit(entry: InsertMcpQueryAudit): Promise<void> {
+    await db.insert(mcpQueryAudit).values(entry);
+  }
+
+  async pruneMcpQueryAudit(maxAgeDays: number): Promise<number> {
+    const result = await db.execute(sql`
+      DELETE FROM mcp_query_audit
+      WHERE created_at < NOW() - (${maxAgeDays} || ' days')::interval
+    `);
+    return result.rowCount ?? 0;
   }
 }
 
