@@ -232,6 +232,62 @@ app.use(
   }),
 );
 
+// ----------------------------------------------------------------------------
+// CORS — explicit deny
+// ----------------------------------------------------------------------------
+// This server is consumed only by its own first-party dashboard and
+// MCP admin client, both of which run on the same origin. Browsers
+// block cross-origin XHR/fetch by default, but we make that policy
+// explicit here so:
+//
+//   1. The intent ("no cross-origin callers, ever") is visible in
+//      code, not implicit in "we just never added a `cors()` line".
+//   2. A future copy-paste of `cors()` somewhere downstream cannot
+//      silently re-enable a permissive policy without removing this
+//      block first.
+//   3. Cross-origin requests from a non-allow-listed origin fail at
+//      the CORS layer (403, no `Access-Control-Allow-Origin` header)
+//      rather than only being caught by the CSRF / Origin checks
+//      further down the stack.
+//
+// Same-origin browser traffic (no Origin header, or Origin === Host)
+// is allowed through with NO `Access-Control-Allow-*` response
+// headers, which is the correct posture: same-origin requests don't
+// need them, and not emitting them prevents accidental relaxation.
+// `ALLOWED_ORIGINS` (used by `isAllowedOrigin`) remains an escape
+// hatch for reverse-proxy / preview deployments — those origins are
+// also allowed through with no CORS response headers, on the
+// assumption that the proxy terminates origin and forwards a
+// matching Host.
+//
+// CSRF (`x-requested-with`) and the `/mcp` Origin allow-list still
+// run after this middleware as defense-in-depth — this block is
+// deliberately not their replacement.
+app.use((req, res, next) => {
+  // Browsers always send Origin on cross-origin requests and on
+  // preflight. They omit it on top-level same-origin GETs and on
+  // simple form posts, both of which are handled by other layers.
+  const origin = req.headers.origin;
+  if (typeof origin !== 'string' || origin.length === 0) {
+    return next();
+  }
+  if (isAllowedOrigin(req)) {
+    // Same-origin (or ALLOWED_ORIGINS escape hatch). Deliberately
+    // do NOT echo the origin back via `Access-Control-Allow-Origin`:
+    // a same-origin request does not need it, and not setting it
+    // keeps the "no third-party callers" posture explicit.
+    return next();
+  }
+  // Disallowed cross-origin. Short-circuit preflight and actual
+  // requests with a 403 and no CORS headers so the browser fails
+  // closed regardless of method.
+  if (req.method === 'OPTIONS') {
+    res.status(403).end();
+    return;
+  }
+  return sendError(res, new ForbiddenError('Forbidden: cross-origin request denied'));
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
