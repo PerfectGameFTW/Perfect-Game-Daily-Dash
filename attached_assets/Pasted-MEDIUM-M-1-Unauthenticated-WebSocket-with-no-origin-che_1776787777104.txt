@@ -1,0 +1,46 @@
+MEDIUM
+M-1. Unauthenticated WebSocket with no origin check
+Component: server/ws.ts
+Description: /ws accepts any client from any origin and broadcasts data-updated events. There's no verifyClient, no origin check, no per-IP cap, no ping/pong heartbeat.
+Impact: Exfiltration of operational rhythm (when syncs happen → infer business cadence); DoS by holding thousands of connections; cross-origin embedding can read your "data-updated" events.
+Fix: Validate req.headers.origin against an allow-list, require a valid session cookie via verifyClient, cap concurrent connections per IP, add ping/pong with timeout.
+M-2. CSRF defense is partial and inconsistent
+Component: server/index.ts (the x-requested-with: XMLHttpRequest middleware)
+Description: This is mounted only on /api and after registerMcpRoutes(app) is called — meaning /mcp POST/DELETE bypass it entirely. While CORS preflight on JSON content-type partially mitigates /mcp CSRF, browsers do allow text/plain body POSTs without preflight; an attacker page could POST text/plain JSON-RPC to /mcp with the admin's cookie. MCP is admin-only, so this is the highest-value CSRF target you have.
+Impact: A logged-in admin visiting an attacker page could trigger arbitrary MCP tool calls (including run_read_query).
+Fix: Apply the CSRF header check globally before all routers, or use double-submit CSRF tokens. Reject /mcp requests whose Content-Type is not strictly application/json and whose Origin header does not match an allow-list.
+M-3. Missing security headers (no Helmet)
+Component: server/index.ts
+Description: No CSP, X-Frame-Options/frame-ancestors, X-Content-Type-Options, Referrer-Policy, or HSTS. Cookie is httpOnly + sameSite=lax which helps, but lack of CSP means any future XSS becomes a full account takeover; lack of X-Frame-Options enables clickjacking the dashboard.
+Fix: Add helmet() with a strict CSP (script-src 'self', no inline unless nonced); enable HSTS in prod; set frame-ancestors 'none'.
+M-4. Mass-assignment of role field in registration
+Component: server/routes/auth.ts registerSchema
+Description: Even after bootstrap, registration accepts a client-supplied role. While the route is admin-protected post-bootstrap, an admin endpoint that accepts privilege-bearing attributes from the request body invites mistakes (e.g., a future "self-service profile" endpoint reusing the schema). It's also the lever exploited in C-1.
+Fix: Split into registerSelfSchema (no role) and adminCreateUserSchema (admin-only). Default role='user' server-side.
+M-5. Session cookie configuration
+Component: server/index.ts session config
+Description:
+secure: process.env.NODE_ENV === 'production' — fine, but if NODE_ENV is anything other than literally production in the deployed environment, cookies leak over HTTP.
+7-day fixed maxAge, no rolling expiry, no idle timeout.
+No domain set (relies on default).
+Cookie name pg.sid is fine; __Host- prefix would harden it (but requires secure + no domain).
+Fix: Force secure: true in any non-development environment; add idle timeout via rolling: true + shorter maxAge; consider __Host-pg.sid.
+M-6. requireAuth does not re-validate user existence/role per request
+Component: server/middleware/auth.ts
+Description: requireAuth only checks req.session.userId exists. If you delete a user (DELETE /api/auth/users/:id) their existing sessions in pg.sessions continue to work for any non-admin endpoint until expiry (7 days). requireAdmin does re-fetch from DB, but requireAuth does not.
+Impact: A demoted/deleted user retains access to all read endpoints (full revenue data) for up to 7 days.
+Fix: Centralize auth: load user from DB once in requireAuth, attach to req.user. Invalidate sessions for a user on delete (DELETE FROM sessions WHERE sess->>'userId' = ...).
+M-7. Verbose request/response logging to console
+Component: server/index.ts request logger; numerous console.log(...) of Square data
+Description: Captured JSON responses are logged for all /api paths except /api/auth (truncated at 80 chars but still leaky). Many places log raw Square payment/order data including payment.note, customer-facing strings, and IDs. Replit logs are visible to anyone with workspace access.
+Impact: PII leakage via logs (customer names in order data, payment notes, IDs).
+Fix: Move to a structured logger with explicit field allow-listing; never log full upstream payloads at info level.
+M-8. Unbounded historical/sync triggers + low rate limits
+Component: server/routes/api.ts /sync/historical, /sync/backfill
+Description: syncLimiter is 5/min, but each call kicks off a multi-day Square API loop that can saturate the Square rate limit shared by the whole business and run for hours. There is no concurrency guard outside the in-process alreadyRunning flag (single-process only — fine on Replit, not for any HA setup).
+Impact: A single compromised admin can DoS the business's Square integration / dashboards.
+Fix: DB-level lock (advisory lock or row in sync_state), audit log of who triggered each backfill, smaller per-day budget, alerting on Square 429s.
+M-9. process.on('uncaughtException') swallows fatal errors
+Component: server/index.ts
+Description: uncaughtException and unhandledRejection only log and continue. Per Node docs, after uncaughtException, the process is in an undefined state — security invariants (e.g., transaction state, locks) may be violated.
+Fix: Log + graceful shutdown on uncaughtException. Let Replit restart the workflow.
