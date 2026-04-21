@@ -4,7 +4,14 @@
  * Provides authentication and user management functionality.
  */
 
-import { compare, hash } from 'bcryptjs';
+import { compare, hash, getRounds } from 'bcryptjs';
+
+// Centralized bcrypt cost factor. Bumped from 10 to 12 to slow offline
+// cracking if the user table is ever leaked. All password-hashing call
+// sites in this service must use this constant. On successful login,
+// stored hashes below this cost are transparently re-hashed at the
+// current cost (see loginUser).
+export const BCRYPT_COST = 12;
 import { createHash, randomBytes } from 'crypto';
 import { and, eq, isNull, gt, or, sql } from 'drizzle-orm';
 import { db } from '../db';
@@ -40,9 +47,10 @@ const BOOTSTRAP_ADVISORY_LOCK_KEY = BigInt('8472619341205310');
 //
 // The cleartext for this hash is intentionally a long random string that is
 // not a valid password and can never be matched. Generated with bcryptjs
-// cost=10 (the same cost used elsewhere in this service).
+// at the current BCRYPT_COST so the wall-clock time of a "no such user"
+// compare matches a real cost-BCRYPT_COST compare.
 const DUMMY_BCRYPT_HASH =
-  '$2b$10$CwTycUXWue0Thq9StjUM0uJ8K8tQy2j8XaQjvs8R0p4U6Ww2X0o7C';
+  '$2b$12$NEe1aT5JJJcWsq/ctTUR8uRb7Rti3YR/PPPeIEk0xbg6E2pn9gLYK';
 
 // Per-account lockout policy. After LOCKOUT_THRESHOLD consecutive failed
 // password attempts, the account is locked for LOCKOUT_WINDOW_MS regardless
@@ -82,7 +90,7 @@ export class AuthService {
     }
 
     // Hash password
-    const hashedPassword = await hash(password, 10);
+    const hashedPassword = await hash(password, BCRYPT_COST);
 
     // Create user with validated role (defaults to 'user' for any unexpected value)
     const userData: InsertUser & { email?: string } = {
@@ -136,7 +144,7 @@ export class AuthService {
    * from an unauthenticated HTTP request.
    */
   async bootstrapInitialAdmin(username: string, password: string): Promise<User> {
-    const hashedPassword = await hash(password, 10);
+    const hashedPassword = await hash(password, BCRYPT_COST);
 
     return await db.transaction(async (tx) => {
       // Serialize all bootstrap attempts at the DB level.
@@ -239,6 +247,24 @@ export class AuthService {
         .update(users)
         .set({ failedLoginCount: 0, lockedUntil: null })
         .where(eq(users.id, user.id));
+    }
+
+    // Transparent rehash: if the stored hash was produced at a cost
+    // below the current BCRYPT_COST, we have the plaintext in hand and
+    // can upgrade the stored hash without forcing the user to reset.
+    // Wrapped in try/catch so a malformed hash (or rehash failure)
+    // never breaks an otherwise valid login.
+    try {
+      const currentRounds = getRounds(user.password);
+      if (currentRounds < BCRYPT_COST) {
+        const upgraded = await hash(password, BCRYPT_COST);
+        await db
+          .update(users)
+          .set({ password: upgraded })
+          .where(eq(users.id, user.id));
+      }
+    } catch {
+      // Ignore — login still succeeds at the existing cost.
     }
 
     return user;
@@ -425,7 +451,7 @@ export class AuthService {
         .returning({ id: passwordResetTokens.id });
       if (consumed.length === 0) return false;
 
-      const hashedPassword = await hash(newPassword, 10);
+      const hashedPassword = await hash(newPassword, BCRYPT_COST);
       await tx
         .update(users)
         .set({
