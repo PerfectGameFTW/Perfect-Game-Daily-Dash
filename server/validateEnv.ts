@@ -23,9 +23,13 @@ export function validateEnv(): void {
 
   if (missing.length > 0) {
     // Fatal startup-error path: we are about to exit, the operator
-    // needs the names to fix the deployment. Names from the
-    // REQUIRED_ENV allow-list only — never values.
-    logger.error('startup.missing_required_env', { missing });
+    // needs the names to fix the deployment. Defense-in-depth: even
+    // though `missing` is already derived from REQUIRED_ENV.filter()
+    // above, explicitly intersect with REQUIRED_ENV again so a
+    // refactor that later widens the source of `missing` cannot
+    // leak unrelated env-var names into the startup log.
+    const safeMissing = missing.filter((k) => REQUIRED_ENV.includes(k));
+    logger.error('startup.missing_required_env', { missing: safeMissing });
     process.exit(1);
   }
 
