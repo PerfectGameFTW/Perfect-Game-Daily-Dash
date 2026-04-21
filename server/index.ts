@@ -89,6 +89,11 @@ const devCspDirectives = {
   frameAncestors: ["'none'"],
   baseUri: ["'self'"],
   formAction: ["'self'"],
+  // Explicitly drop helmet's default `upgrade-insecure-requests` in
+  // dev. On http://localhost it would force the browser to rewrite
+  // ws:// HMR connections to wss:// (mixed-content "upgrade") and
+  // break Vite's hot reload.
+  upgradeInsecureRequests: null,
 };
 
 app.use(
