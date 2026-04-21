@@ -1,8 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { randomUUID } from "crypto";
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { z } from "zod";
+import sqlParserPkg from "node-sql-parser";
+const { Parser: SqlParser } = sqlParserPkg;
 import { requireAuth, requireAdmin } from "./middleware/auth";
 import { dashboardService } from "./services/dashboardService";
 import { giftCardService } from "./services/giftCardService";
@@ -96,7 +98,176 @@ async function safeTool<T>(fn: () => Promise<T>): Promise<T | ReturnType<typeof 
   }
 }
 
-function createMcpServer(): McpServer {
+const READ_QUERY_ALLOWED_TABLES = new Set<string>([
+  "orders",
+  "order_line_items",
+  "transactions",
+  "gift_cards",
+  "refunds",
+  "intercard_revenue",
+  "payout_fee_entries",
+]);
+
+const READ_QUERY_ALLOWED_SCHEMAS = new Set<string>(["null", "public"]);
+
+function auditReadQuery(entry: {
+  adminUserId: number | null;
+  ip: string | null;
+  query: string;
+  rowCount: number | null;
+  error: string | null;
+  durationMs: number;
+}) {
+  // Structured server-side audit log. No PII beyond the admin's user_id
+  // and the request IP that opened the MCP session.
+  // eslint-disable-next-line no-console
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      event: "mcp.run_read_query",
+      adminUserId: entry.adminUserId,
+      ip: entry.ip,
+      durationMs: entry.durationMs,
+      rowCount: entry.rowCount,
+      error: entry.error,
+      query: entry.query,
+    })
+  );
+}
+
+export function validateReadQueryTables(query: string): void {
+  // Defense-in-depth keyword screen. The parser-based check below is
+  // authoritative, but rejecting these substrings outright closes off
+  // any parser quirks where references hide inside string literals or
+  // comment-split keywords.
+  const stripped = query
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ");
+  const sensitiveTokens = [
+    /\busers\b/i,
+    /\bsessions\b/i,
+    /\bpg_catalog\b/i,
+    /\bpg_authid\b/i,
+    /\bpg_shadow\b/i,
+    /\bpg_user\b/i,
+    /\bpg_roles\b/i,
+    /\bpg_stat_activity\b/i,
+    /\bpg_settings\b/i,
+    /\bpg_class\b/i,
+    /\bpg_namespace\b/i,
+    /\binformation_schema\b/i,
+    /\bcurrent_setting\s*\(/i,
+  ];
+  for (const re of sensitiveTokens) {
+    if (re.test(stripped)) {
+      throw new Error(
+        "Query references a table or function that is not on the allow-list."
+      );
+    }
+  }
+
+  let parsed: { ast: unknown; tableList: string[] };
+  try {
+    const parser = new SqlParser();
+    parsed = parser.parse(query, { database: "PostgresQL" }) as {
+      ast: unknown;
+      tableList: string[];
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Could not parse SQL: ${msg}`);
+  }
+
+  const astNodes = Array.isArray(parsed.ast) ? parsed.ast : [parsed.ast];
+  if (astNodes.length !== 1) {
+    throw new Error("Only a single SELECT statement is allowed per call.");
+  }
+  for (const node of astNodes) {
+    const nodeType = (node as { type?: string } | null)?.type;
+    if (nodeType !== "select") {
+      throw new Error("Only SELECT statements are allowed.");
+    }
+  }
+
+  // Collect CTE alias names so we don't treat them as table references.
+  type AstNode = {
+    with?: Array<{
+      name?: string | { value?: string };
+      stmt?: AstNode;
+    }>;
+  } & Record<string, unknown>;
+  const cteAliases = new Set<string>();
+  const collectCtes = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) collectCtes(child);
+      return;
+    }
+    const obj = node as AstNode;
+    if (Array.isArray(obj.with)) {
+      for (const cte of obj.with) {
+        const rawName = cte?.name;
+        const name =
+          typeof rawName === "string"
+            ? rawName
+            : typeof rawName?.value === "string"
+            ? rawName.value
+            : null;
+        if (name) cteAliases.add(name.toLowerCase());
+        collectCtes(cte?.stmt);
+      }
+    }
+    for (const [key, value] of Object.entries(obj)) {
+      if (key === "with") continue;
+      collectCtes(value);
+    }
+  };
+  for (const node of astNodes) collectCtes(node);
+
+  // tableList entries look like "<op>::<schema|null>::<table>".
+  let allowedTableReferenceCount = 0;
+  for (const entry of parsed.tableList || []) {
+    const parts = entry.split("::");
+    if (parts.length < 3) continue;
+    const op = parts[0];
+    const schema = parts[1];
+    const table = parts[2];
+    if (op !== "select") {
+      throw new Error("Only read operations are allowed.");
+    }
+    if (!READ_QUERY_ALLOWED_SCHEMAS.has(schema)) {
+      throw new Error(
+        `Schema '${schema}' is not allowed. Only the public schema is accessible.`
+      );
+    }
+    if (READ_QUERY_ALLOWED_TABLES.has(table)) {
+      allowedTableReferenceCount += 1;
+      continue;
+    }
+    // Unqualified references to a CTE alias are allowed.
+    if (schema === "null" && cteAliases.has(table.toLowerCase())) continue;
+    throw new Error(
+      `Table '${table}' is not on the allow-list. Allowed tables: ${Array.from(
+        READ_QUERY_ALLOWED_TABLES
+      )
+        .sort()
+        .join(", ")}.`
+    );
+  }
+  // Require the query to actually read from a business table. This blocks
+  // metadata-only queries like `SELECT current_user` or `SELECT version()`
+  // that have no FROM clause and therefore no entries in tableList.
+  if (allowedTableReferenceCount === 0) {
+    throw new Error(
+      "Query must reference at least one allow-listed business table."
+    );
+  }
+}
+
+function createMcpServer(
+  adminUserId: number | null,
+  adminIp: string | null
+): McpServer {
   const server = new McpServer({
     name: "perfect-game-sales",
     version: "1.0.0",
@@ -608,45 +779,77 @@ server.tool(
     query: z.string().describe("SQL SELECT query to execute"),
     maxRows: z.number().int().min(1).max(1000).default(100).describe("Maximum rows to return (1-1000, default 100)"),
   },
-  async (params) => safeTool(async () => {
+  async (params) => {
+    const startedAt = Date.now();
     const trimmed = params.query.trim().replace(/;+$/, '');
-    const upper = trimmed.toUpperCase().replace(/\s+/g, ' ').trim();
-    if (!upper.startsWith('SELECT ') && !upper.startsWith('WITH ')) {
-      throw new Error('Only SELECT queries (or WITH/CTE queries) are allowed.');
-    }
-    const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'COPY', 'EXECUTE', 'CALL'];
-    for (const keyword of forbidden) {
-      if (upper.match(new RegExp(`\\b${keyword}\\b`))) {
-        throw new Error(`Write operations are not allowed. Found forbidden keyword: ${keyword}`);
-      }
-    }
-
-    const sensitiveTablePattern = /\busers\b|\bsessions\b/i;
-    if (sensitiveTablePattern.test(trimmed)) {
-      throw new Error('Access to user/session tables is not allowed.');
-    }
-
-    const { pool } = await import("./db");
-    const client = await pool.connect();
+    let rowCount: number | null = null;
+    let errorMessage: string | null = null;
     try {
-      await client.query('BEGIN READ ONLY');
-      await client.query('SET LOCAL statement_timeout = 30000');
-      const wrappedQuery = `SELECT * FROM (${trimmed}) AS _q LIMIT ${params.maxRows}`;
-      const result = await client.query(wrappedQuery);
-      await client.query('COMMIT');
-      return {
-        content: [{
-          type: "text" as const,
-          text: JSON.stringify({ rowCount: result.rowCount, rows: result.rows }, null, 2),
-        }],
-      };
+      const result = await (async () => {
+        const upper = trimmed.toUpperCase().replace(/\s+/g, ' ').trim();
+        if (!upper.startsWith('SELECT ') && !upper.startsWith('WITH ')) {
+          throw new Error('Only SELECT queries (or WITH/CTE queries) are allowed.');
+        }
+        const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'COPY', 'EXECUTE', 'CALL'];
+        for (const keyword of forbidden) {
+          if (upper.match(new RegExp(`\\b${keyword}\\b`))) {
+            throw new Error(`Write operations are not allowed. Found forbidden keyword: ${keyword}`);
+          }
+        }
+
+        validateReadQueryTables(trimmed);
+
+        const { pool, ensureMcpReadRole, MCP_READ_ROLE } = await import("./db");
+        // Fail closed if the restricted role can't be provisioned — never
+        // silently fall back to running as the privileged app role.
+        await ensureMcpReadRole();
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN READ ONLY');
+          await client.query('SET LOCAL statement_timeout = 30000');
+          // Restrict name resolution to the public schema so even if the
+          // parser allow-list is bypassed, unqualified references to
+          // pg_catalog tables (which Postgres normally resolves implicitly)
+          // will not be found.
+          await client.query("SET LOCAL search_path = public, pg_temp");
+          // Database-level least privilege: switch into a role that only
+          // has SELECT on the seven business tables. References to
+          // users/sessions/pg_authid/etc. now fail with a Postgres
+          // permission error even if the parser/keyword filters are
+          // bypassed. SET LOCAL is reverted at COMMIT/ROLLBACK.
+          await client.query(`SET LOCAL ROLE ${MCP_READ_ROLE}`);
+          const wrappedQuery = `SELECT * FROM (${trimmed}) AS _q LIMIT ${params.maxRows}`;
+          const queryResult = await client.query(wrappedQuery);
+          await client.query('COMMIT');
+          rowCount = queryResult.rowCount;
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({ rowCount: queryResult.rowCount, rows: queryResult.rows }, null, 2),
+            }],
+          };
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw err;
+        } finally {
+          client.release();
+        }
+      })();
+      return result;
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
+      errorMessage = err instanceof Error ? err.message : String(err);
+      return errorResponse(err);
     } finally {
-      client.release();
+      auditReadQuery({
+        adminUserId,
+        ip: adminIp,
+        query: trimmed,
+        rowCount,
+        error: errorMessage,
+        durationMs: Date.now() - startedAt,
+      });
     }
-  })
+  }
 );
 
   return server;
@@ -704,7 +907,13 @@ export function registerMcpRoutes(app: Express) {
         transport.onclose = () => {
           if (transport.sessionId) cleanupSession(transport.sessionId);
         };
-        const mcpServer = createMcpServer();
+        const adminUserId =
+          (req as Request & { session?: { userId?: number } }).session?.userId ?? null;
+        const adminIp =
+          (req.ip as string | undefined) ??
+          (req.socket?.remoteAddress as string | undefined) ??
+          null;
+        const mcpServer = createMcpServer(adminUserId, adminIp);
         await mcpServer.connect(transport);
         await transport.handleRequest(req, res, req.body);
         if (transport.sessionId) {

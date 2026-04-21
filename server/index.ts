@@ -3,7 +3,7 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { db, sql, pool } from "./db";
+import { db, sql, pool, ensureMcpReadRole } from "./db";
 import { authService } from "./services/authService";
 import { startScheduler } from "./services/schedulerService";
 import { validateEnv } from "./validateEnv";
@@ -129,6 +129,18 @@ async function exitWithError(error: unknown) {
       log('✗ Database connection failed', 'error');
       throw dbError;
     }
+
+    // Best-effort warm-up of the restricted MCP read-only role. The
+    // request path also invokes ensureMcpReadRole() and will fail
+    // closed if provisioning is not possible, so a startup failure
+    // here (e.g. missing CREATEROLE on a managed Postgres) only logs
+    // a warning and does not abort the server.
+    ensureMcpReadRole().catch((err) => {
+      log(
+        `[mcp] warm-up of read-only role failed; run_read_query will be unavailable until resolved: ${(err as Error).message}`,
+        'error'
+      );
+    });
 
     log('Creating database indexes if missing...');
     try {
