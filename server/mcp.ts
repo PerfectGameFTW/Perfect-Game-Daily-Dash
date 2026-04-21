@@ -521,8 +521,8 @@ server.tool(
     const p1End = parseAndValidateDate(params.period1End);
     const p2Start = parseAndValidateDate(params.period2Start);
     const p2End = parseAndValidateDate(params.period2End);
-    if (p1Start > p1End) throw new Error("period1Start must be before period1End");
-    if (p2Start > p2End) throw new Error("period2Start must be before period2End");
+    if (p1Start > p1End) throw new ValidationError("period1Start must be before period1End");
+    if (p2Start > p2End) throw new ValidationError("period2Start must be before period2End");
 
     const [summary1, summary2] = await Promise.all([
       dashboardService.getDailySummary("custom", p1Start, p1End),
@@ -569,7 +569,7 @@ server.tool(
   async (params) => safeTool(async () => {
     const start = parseAndValidateDate(params.startDate);
     const end = parseAndValidateDate(params.endDate);
-    if (start > end) throw new Error("startDate must be before endDate");
+    if (start > end) throw new ValidationError("startDate must be before endDate");
     const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
 
     const dailyRevenue = await db
@@ -601,7 +601,7 @@ server.tool(
   async (params) => safeTool(async () => {
     const start = parseAndValidateDate(params.startDate);
     const end = parseAndValidateDate(params.endDate);
-    if (start > end) throw new Error("startDate must be before endDate");
+    if (start > end) throw new ValidationError("startDate must be before endDate");
     const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
 
     const { pool } = await import("./db");
@@ -647,7 +647,7 @@ server.tool(
   async (params) => safeTool(async () => {
     const start = parseAndValidateDate(params.startDate);
     const end = parseAndValidateDate(params.endDate);
-    if (start > end) throw new Error("startDate must be before endDate");
+    if (start > end) throw new ValidationError("startDate must be before endDate");
     const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
 
     const { pool } = await import("./db");
@@ -718,7 +718,7 @@ server.tool(
   async (params) => safeTool(async () => {
     const start = parseAndValidateDate(params.startDate);
     const end = parseAndValidateDate(params.endDate);
-    if (start > end) throw new Error("startDate must be before endDate");
+    if (start > end) throw new ValidationError("startDate must be before endDate");
     const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
 
     const { pool } = await import("./db");
@@ -749,7 +749,7 @@ server.tool(
   async (params) => safeTool(async () => {
     const start = parseAndValidateDate(params.startDate);
     const end = parseAndValidateDate(params.endDate);
-    if (start > end) throw new Error("startDate must be before endDate");
+    if (start > end) throw new ValidationError("startDate must be before endDate");
     const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
 
     const { pool } = await import("./db");
@@ -780,7 +780,7 @@ server.tool(
   async (params) => safeTool(async () => {
     const start = parseAndValidateDate(params.startDate);
     const end = parseAndValidateDate(params.endDate);
-    if (start > end) throw new Error("startDate must be before endDate");
+    if (start > end) throw new ValidationError("startDate must be before endDate");
     const { start: utcStart, end: utcEnd } = getEasternDateRange("custom", start, end);
 
     const { pool } = await import("./db");
@@ -825,12 +825,12 @@ server.tool(
       const result = await (async () => {
         const upper = trimmed.toUpperCase().replace(/\s+/g, ' ').trim();
         if (!upper.startsWith('SELECT ') && !upper.startsWith('WITH ')) {
-          throw new Error('Only SELECT queries (or WITH/CTE queries) are allowed.');
+          throw new ValidationError('Only SELECT queries (or WITH/CTE queries) are allowed.');
         }
         const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE', 'COPY', 'EXECUTE', 'CALL'];
         for (const keyword of forbidden) {
           if (upper.match(new RegExp(`\\b${keyword}\\b`))) {
-            throw new Error(`Write operations are not allowed. Found forbidden keyword: ${keyword}`);
+            throw new ValidationError(`Write operations are not allowed. Found forbidden keyword: ${keyword}`);
           }
         }
 

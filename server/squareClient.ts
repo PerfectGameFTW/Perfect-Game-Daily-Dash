@@ -8,13 +8,19 @@
 export async function testConnection(): Promise<{ success: boolean, message: string }> {
  try {
    if (!process.env.SQUARE_ACCESS_TOKEN) {
-     throw new Error('Square access token is not configured');
+     throw new ExternalServiceError(
+       'Square access token is not configured',
+       { code: 'SQUARE_TOKEN_NOT_CONFIGURED' },
+     );
    }
 
    const response = await squareClient.locations.list();
 
    if (!response.locations) {
-     throw new Error('Invalid response from Square API');
+     throw new ExternalServiceError(
+       'Invalid response from Square API',
+       { code: 'SQUARE_INVALID_RESPONSE' },
+     );
    }
 
    console.log('Square API test connection successful:', {
@@ -33,11 +39,16 @@ export async function testConnection(): Promise<{ success: boolean, message: str
      stack: error instanceof Error ? error.stack : undefined
    });
 
-   throw new Error(`Failed to connect to Square API: ${error instanceof Error ? error.message : 'Unknown error'}`);
+   if (error instanceof ExternalServiceError) throw error;
+   throw new ExternalServiceError(
+     `Failed to connect to Square API: ${error instanceof Error ? error.message : 'Unknown error'}`,
+     { code: 'SQUARE_CONNECTION_FAILED' },
+   );
  }
 }
 
 import { pgStorage } from './pgStorage';
+import { ExternalServiceError } from './errors';
 import { SquareClient, SquareEnvironment } from 'square';
 import {
   Transaction, InsertTransaction,
@@ -100,12 +111,18 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     
     if (!process.env.SQUARE_ACCESS_TOKEN) {
       console.error('Square access token is not configured');
-      throw new Error('Square access token is not configured');
+      throw new ExternalServiceError(
+        'Square access token is not configured',
+        { code: 'SQUARE_TOKEN_NOT_CONFIGURED' },
+      );
     }
 
     if (!process.env.SQUARE_LOCATION_ID) {
       console.error('Square location ID is not configured');
-      throw new Error('Square location ID is not configured');
+      throw new ExternalServiceError(
+        'Square location ID is not configured',
+        { code: 'SQUARE_LOCATION_NOT_CONFIGURED' },
+      );
     }
     
     console.log(`Using Square location ID: ${process.env.SQUARE_LOCATION_ID}`);
@@ -181,7 +198,10 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
         stack: apiError instanceof Error ? apiError.stack : undefined
       });
       
-      throw new Error(`Square Orders API error: ${apiError instanceof Error ? apiError.message : 'Unknown error'}`);
+      throw new ExternalServiceError(
+        `Square Orders API error: ${apiError instanceof Error ? apiError.message : 'Unknown error'}`,
+        { code: 'SQUARE_ORDERS_API_ERROR' },
+      );
     }
   } catch (error) {
     console.error('Error in fetchOrders:', {
@@ -205,7 +225,10 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
         type: typeof squareOrder,
         value: squareOrder
       });
-      throw new Error("Invalid Square order data: not an object");
+      throw new ExternalServiceError(
+        'Invalid Square order data: not an object',
+        { code: 'SQUARE_INVALID_ORDER_DATA' },
+      );
     }
     
     // Ensure all required fields are present
@@ -213,7 +236,10 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
       console.error("Square order missing required field: id", {
         orderData: JSON.stringify(safeOrder).substring(0, 500) // Log a portion of the data for debugging
       });
-      throw new Error("Invalid Square order data: missing id");
+      throw new ExternalServiceError(
+        'Invalid Square order data: missing id',
+        { code: 'SQUARE_INVALID_ORDER_DATA' },
+      );
     }
     
     // Check for gift card items in the order with enhanced detection
@@ -473,11 +499,17 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
     });
 
     if (!process.env.SQUARE_ACCESS_TOKEN) {
-      throw new Error('Square access token is not configured');
+      throw new ExternalServiceError(
+        'Square access token is not configured',
+        { code: 'SQUARE_TOKEN_NOT_CONFIGURED' },
+      );
     }
 
     if (!process.env.SQUARE_LOCATION_ID) {
-      throw new Error('Square location ID is not configured');
+      throw new ExternalServiceError(
+        'Square location ID is not configured',
+        { code: 'SQUARE_LOCATION_NOT_CONFIGURED' },
+      );
     }
 
     let allPayments: any[] = [];
@@ -498,7 +530,10 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
       console.log(`Starting to fetch payments page ${pageCount}${pageCount > 1 ? ' (next page)' : ''} at ${new Date(pageStartTime).toISOString()}`);
 
       if (Date.now() - startTime > TIMEOUT) {
-        throw new Error('Sync timeout reached after 5 minutes');
+        throw new ExternalServiceError(
+          'Sync timeout reached after 5 minutes',
+          { code: 'SQUARE_SYNC_TIMEOUT' },
+        );
       }
 
       try {
@@ -516,7 +551,10 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
         const payments = paymentsPage.data || [];
 
         if (!Array.isArray(payments)) {
-          throw new Error(`Invalid response format from Square API: expected array, got ${typeof payments}`);
+          throw new ExternalServiceError(
+            `Invalid response format from Square API: expected array, got ${typeof payments}`,
+            { code: 'SQUARE_INVALID_RESPONSE' },
+          );
         }
 
         // Process each payment
@@ -544,7 +582,10 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
           timeElapsed: Date.now() - startTime
         };
         console.error('Error fetching payments page:', errorDetail);
-        throw new Error(`Failed to fetch page ${pageCount}: ${errorDetail.message}`);
+        throw new ExternalServiceError(
+          `Failed to fetch page ${pageCount}: ${errorDetail.message}`,
+          { code: 'SQUARE_PAYMENTS_API_ERROR' },
+        );
       }
     }
 
@@ -1230,7 +1271,10 @@ export async function fetchRefunds(startDate?: Date, endDate?: Date): Promise<an
     console.log(`Fetching refunds from ${beginTime} to ${endTime}`);
 
     if (!process.env.SQUARE_ACCESS_TOKEN) {
-      throw new Error('Square access token is not configured');
+      throw new ExternalServiceError(
+        'Square access token is not configured',
+        { code: 'SQUARE_TOKEN_NOT_CONFIGURED' },
+      );
     }
 
     let allRefunds: any[] = [];
@@ -1249,7 +1293,10 @@ export async function fetchRefunds(startDate?: Date, endDate?: Date): Promise<an
     while (pageCount < MAX_PAGES) {
       pageCount++;
       if (Date.now() - startTime > TIMEOUT) {
-        throw new Error('Refund sync timeout reached after 5 minutes');
+        throw new ExternalServiceError(
+          'Refund sync timeout reached after 5 minutes',
+          { code: 'SQUARE_SYNC_TIMEOUT' },
+        );
       }
 
       const refundsList = refundsPage.data || [];
