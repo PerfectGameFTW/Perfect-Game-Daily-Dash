@@ -100,26 +100,43 @@ export function ensureMcpReadRole(): Promise<void> {
           `GRANT SELECT ON public.${table} TO ${MCP_READ_ROLE}`
         );
       }
-      // Best-effort REVOKEs against the role for sensitive surfaces.
-      // Postgres grants on system catalogs are typically held by PUBLIC,
-      // and PUBLIC's grants cannot be removed for a single role without
-      // affecting the rest of the application — so the parser/keyword
-      // filter in mcp.ts is the authoritative defense for these. These
-      // REVOKEs at least ensure no direct grant was made to the role
-      // and tighten function execution where possible.
-      const revokeStatements = [
+      // Attempt to revoke PUBLIC's default grants on the sensitive
+      // catalog views and information_schema. These statements succeed
+      // on self-hosted Postgres (where the application role owns the
+      // catalogs) and silently no-op on managed providers like Neon
+      // where PUBLIC's grants are owned by a platform superuser. On
+      // those providers the operator must run
+      // `scripts/setup-mcp-readonly-role.sql` once via a privileged
+      // connection to complete the lockdown — the app cannot do it
+      // itself. `scripts/verify-mcp-hardening.ts` will fail loudly
+      // until that step is done.
+      const publicRevokes = [
+        `REVOKE SELECT ON pg_catalog.pg_user FROM PUBLIC`,
+        `REVOKE SELECT ON pg_catalog.pg_shadow FROM PUBLIC`,
+        `REVOKE SELECT ON pg_catalog.pg_stat_activity FROM PUBLIC`,
+        `REVOKE SELECT ON pg_catalog.pg_settings FROM PUBLIC`,
+        `REVOKE SELECT ON pg_catalog.pg_authid FROM PUBLIC`,
+        `REVOKE USAGE ON SCHEMA information_schema FROM PUBLIC`,
+        `REVOKE SELECT ON ALL TABLES IN SCHEMA information_schema FROM PUBLIC`,
+      ];
+      for (const stmt of publicRevokes) {
+        await client.query(stmt).catch(() => {
+          // Ignore — on managed Postgres without superuser this
+          // cannot succeed; the operator script handles it instead.
+        });
+      }
+      // Defense-in-depth: revoke any direct grants that may have been
+      // attached to the role for these surfaces. NOINHERIT means the
+      // role cannot use grants made to its members either, but this
+      // keeps the role's own ACL clean.
+      const roleRevokes = [
         `REVOKE ALL ON SCHEMA pg_catalog FROM ${MCP_READ_ROLE}`,
         `REVOKE ALL ON SCHEMA information_schema FROM ${MCP_READ_ROLE}`,
         `REVOKE ALL ON ALL TABLES IN SCHEMA information_schema FROM ${MCP_READ_ROLE}`,
-        `REVOKE EXECUTE ON FUNCTION pg_catalog.current_setting(text) FROM ${MCP_READ_ROLE}`,
-        `REVOKE EXECUTE ON FUNCTION pg_catalog.current_setting(text, boolean) FROM ${MCP_READ_ROLE}`,
-        `REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) FROM ${MCP_READ_ROLE}`,
       ];
-      for (const stmt of revokeStatements) {
+      for (const stmt of roleRevokes) {
         await client.query(stmt).catch(() => {
-          // A REVOKE that targets a non-existent grant is a no-op in
-          // intent; ignore so role provisioning stays idempotent across
-          // managed Postgres environments with varying grant defaults.
+          // Idempotent across providers with varying grant defaults.
         });
       }
       console.log(
