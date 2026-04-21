@@ -338,14 +338,21 @@ export function createAuthRouter(): Router {
             details: validation.error.format(),
           });
         }
-        const updated = await authService.updateUserEmail(
-          userId,
-          validation.data.email,
-        );
-        if (!updated) {
-          return res.status(404).json({ error: 'User not found' });
+        try {
+          const updated = await authService.updateUserEmail(
+            userId,
+            validation.data.email,
+          );
+          if (!updated) {
+            return res.status(404).json({ error: 'User not found' });
+          }
+          res.json({ success: true, user: createSafeUser(updated) });
+        } catch (err) {
+          if (err instanceof Error && err.message.includes('already in use')) {
+            return res.status(409).json({ error: err.message });
+          }
+          throw err;
         }
-        res.json({ success: true, user: createSafeUser(updated) });
       } catch (error) {
         console.error('Error updating user email:', error);
         res.status(500).json({ error: 'Internal server error' });

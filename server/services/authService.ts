@@ -108,12 +108,22 @@ export class AuthService {
   async updateUserEmail(userId: number, email: string): Promise<User | null> {
     const normalized = email.trim();
     const valueToWrite = normalized === '' ? null : normalized;
-    const result = await db
-      .update(users)
-      .set({ email: valueToWrite })
-      .where(eq(users.id, userId))
-      .returning();
-    return result[0] ?? null;
+    try {
+      const result = await db
+        .update(users)
+        .set({ email: valueToWrite })
+        .where(eq(users.id, userId))
+        .returning();
+      return result[0] ?? null;
+    } catch (err) {
+      // Postgres raises 23505 when the partial unique index on
+      // LOWER(email) is violated. Surface a domain-specific error so the
+      // route can return a clean 409 instead of a 500.
+      if (err && typeof err === 'object' && (err as any).code === '23505') {
+        throw new AuthError('Email already in use by another account');
+      }
+      throw err;
+    }
   }
 
   /**

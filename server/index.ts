@@ -173,29 +173,41 @@ async function exitWithError(error: unknown) {
       await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_intercard_revenue_date ON intercard_revenue (date)`);
       await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_orders_total_money_source ON orders (total_money, source)`);
 
-      // Auth-recovery schema bootstrap (idempotent). Lives here rather
-      // than in a hand-written migration because the project convention
-      // is to sync via `drizzle-kit push --force`, but that command
-      // currently hangs on a pre-existing interactive prompt about the
-      // refunds_square_refund_id_unique constraint. Until that is fixed
-      // separately, this self-bootstrap guarantees fresh / staging /
-      // production environments come up with the columns + table the
-      // password-reset flow depends on, with no manual DBA step.
-      await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email text`);
-      await db.execute(sql`CREATE TABLE IF NOT EXISTS password_reset_tokens (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        token_hash TEXT NOT NULL UNIQUE,
-        expires_at TIMESTAMPTZ NOT NULL,
-        used_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`);
-      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens (user_id)`);
-
       log('✓ Database indexes verified');
     } catch (indexError) {
       log(`⚠ Warning: Could not create indexes: ${indexError instanceof Error ? indexError.message : 'Unknown error'}`);
     }
+
+    // Auth-recovery schema bootstrap (idempotent). Kept SEPARATE from the
+    // best-effort index block above because these objects are required
+    // by the password-reset flow — if the DDL fails we want startup to
+    // fail loudly rather than silently degrade auth at runtime.
+    //
+    // Lives here rather than in a hand-written migration because the
+    // project convention is to sync via `drizzle-kit push --force`, but
+    // that command currently hangs on a pre-existing interactive prompt
+    // about the refunds_square_refund_id_unique constraint. Until that
+    // is fixed separately, this self-bootstrap guarantees fresh /
+    // staging / production environments come up with the columns + table
+    // the password-reset flow depends on, with no manual DBA step.
+    log('Bootstrapping auth-recovery schema...');
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email text`);
+    // Partial unique index on lower(email) so two accounts can't share a
+    // recovery email (and the requestPasswordReset email lookup is
+    // unambiguous). NULLs are excluded so legacy accounts without an
+    // email don't conflict with each other.
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_lower
+      ON users (LOWER(email)) WHERE email IS NOT NULL`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens (user_id)`);
+    log('✓ Auth-recovery schema verified');
 
     log('Registering routes...');
     const server = await registerRoutes(app);
