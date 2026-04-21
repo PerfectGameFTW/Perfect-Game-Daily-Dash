@@ -215,14 +215,16 @@ async function exitWithError(error: unknown) {
     log('✓ Routes registered successfully');
 
     // Error handling middleware — log full error server-side, return sanitized payload to client.
+    // The sanitizer maps AppError subclasses to their own statusCode and
+    // collapses everything else to a 500 with a generic message.
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-      const status = err?.status || err?.statusCode || 500;
       log(`Error handler caught: ${err?.message ?? err}`, 'error');
       if (err?.stack) {
         log(err.stack, 'error');
       }
       if (!res.headersSent) {
-        res.status(status).json(toSafeErrorResponse(err));
+        const { status, body } = toSafeErrorResponse(err);
+        res.status(status).json(body);
       }
     });
 

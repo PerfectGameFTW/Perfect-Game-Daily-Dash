@@ -24,12 +24,10 @@ function hashResetToken(rawToken: string): string {
   return createHash('sha256').update(rawToken).digest('hex');
 }
 
-class AuthError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AuthError';
-  }
-}
+// AuthError now lives in `server/errors.ts` (see Task #58). Imported (not
+// re-exported) here because nothing else in the project imports it from
+// authService.
+import { AuthError, ConflictError } from '../errors';
 
 // Stable advisory lock key used to serialize bootstrap attempts at the DB level.
 // pg_advisory_xact_lock takes a bigint; this constant is arbitrary but fixed.
@@ -80,7 +78,7 @@ export class AuthService {
     // Check if user already exists
     const existingUser = await this.getUserByUsername(username);
     if (existingUser) {
-      throw new AuthError(`User with username ${username} already exists`);
+      throw new ConflictError(`User with username ${username} already exists`);
     }
 
     // Hash password
@@ -120,7 +118,7 @@ export class AuthService {
       // LOWER(email) is violated. Surface a domain-specific error so the
       // route can return a clean 409 instead of a 500.
       if (err && typeof err === 'object' && (err as any).code === '23505') {
-        throw new AuthError('Email already in use by another account');
+        throw new ConflictError('Email already in use by another account');
       }
       throw err;
     }
@@ -151,7 +149,7 @@ export class AuthService {
         .limit(1);
 
       if (existingAdmins.length > 0) {
-        throw new AuthError('An admin account already exists; refusing to bootstrap a second one.');
+        throw new ConflictError('An admin account already exists; refusing to bootstrap a second one.');
       }
 
       const existingByName = await tx
@@ -161,7 +159,7 @@ export class AuthService {
         .limit(1);
 
       if (existingByName.length > 0) {
-        throw new AuthError(`User with username ${username} already exists`);
+        throw new ConflictError(`User with username ${username} already exists`);
       }
 
       const inserted = await tx

@@ -27,26 +27,14 @@ import {
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
 
-export class OrderError extends Error {
-  constructor(message: string, public readonly code: string, public readonly details?: any) {
-    super(message);
-    this.name = 'OrderError';
-  }
-}
-
-export class OrderNotFoundError extends OrderError {
-  constructor(orderId: string | number) {
-    super(`Order with ID ${orderId} not found`, 'ORDER_NOT_FOUND');
-    this.name = 'OrderNotFoundError';
-  }
-}
-
-export class InvalidOrderDataError extends OrderError {
-  constructor(message: string, details?: any) {
-    super(message, 'INVALID_ORDER_DATA', details);
-    this.name = 'InvalidOrderDataError';
-  }
-}
+// Error classes now live in `server/errors.ts` (see Task #58: centralized
+// error hierarchy). Re-exported here so existing imports keep working.
+export {
+  OrderError,
+  OrderNotFoundError,
+  InvalidOrderDataError,
+} from '../errors';
+import { OrderError, OrderNotFoundError } from '../errors';
 
 export class OrderService {
   /**

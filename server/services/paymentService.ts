@@ -20,26 +20,14 @@ import {
 import { getEasternDateRange, formatHour } from '../dateUtils';
 import { formatInTimeZone } from 'date-fns-tz';
 
-export class PaymentError extends Error {
-  constructor(message: string, public readonly code: string, public readonly details?: any) {
-    super(message);
-    this.name = 'PaymentError';
-  }
-}
-
-export class PaymentNotFoundError extends PaymentError {
-  constructor(paymentId: string | number) {
-    super(`Payment with ID ${paymentId} not found`, 'PAYMENT_NOT_FOUND');
-    this.name = 'PaymentNotFoundError';
-  }
-}
-
-export class InvalidPaymentDataError extends PaymentError {
-  constructor(message: string, details?: any) {
-    super(message, 'INVALID_PAYMENT_DATA', details);
-    this.name = 'InvalidPaymentDataError';
-  }
-}
+// Error classes now live in `server/errors.ts` (see Task #58: centralized
+// error hierarchy). Re-exported here so existing imports keep working.
+export {
+  PaymentError,
+  PaymentNotFoundError,
+  InvalidPaymentDataError,
+} from '../errors';
+import { PaymentError, PaymentNotFoundError, InvalidPaymentDataError } from '../errors';
 
 export class PaymentService {
   /**

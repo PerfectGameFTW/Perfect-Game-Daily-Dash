@@ -23,30 +23,14 @@ import {
 import { getEasternDateRange } from '../dateUtils';
 import { fetchOrdersByIds, fetchGiftCardActivitiesPage } from '../squareClient';
 
-export class GiftCardError extends Error {
-  constructor(message: string, public readonly code: string, public readonly details?: any) {
-    super(message);
-    this.name = 'GiftCardError';
-  }
-}
-
-export class GiftCardNotFoundError extends GiftCardError {
-  constructor(giftCardId: string | number) {
-    super(`Gift card with ID ${giftCardId} not found`, 'GIFT_CARD_NOT_FOUND');
-    this.name = 'GiftCardNotFoundError';
-  }
-}
-
-export class InsufficientBalanceError extends GiftCardError {
-  constructor(giftCardId: string | number, requestedAmount: number, currentBalance: number) {
-    super(
-      `Gift card ${giftCardId} has insufficient balance. Requested: ${requestedAmount}, Available: ${currentBalance}`,
-      'INSUFFICIENT_BALANCE',
-      { requestedAmount, currentBalance }
-    );
-    this.name = 'InsufficientBalanceError';
-  }
-}
+// Error classes now live in `server/errors.ts` (see Task #58: centralized
+// error hierarchy). Re-exported here so existing imports keep working.
+export {
+  GiftCardError,
+  GiftCardNotFoundError,
+  InsufficientBalanceError,
+} from '../errors';
+import { GiftCardError, GiftCardNotFoundError, InsufficientBalanceError } from '../errors';
 
 export class GiftCardService {
   /**

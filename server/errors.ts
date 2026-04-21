@@ -1,79 +1,250 @@
-// Define custom error types for better error handling
-export class OrderError extends Error {
-  constructor(message: string, public readonly code: string, public readonly details?: any) {
-    super(message);
-    this.name = 'OrderError';
-  }
-}
+/**
+ * Centralized error class hierarchy and client-facing error sanitizer.
+ *
+ * Every error class the application throws on purpose extends `AppError`,
+ * which carries:
+ *
+ *   - `statusCode` — the HTTP status the route layer should send.
+ *   - `code`       — a stable machine-readable code for the client.
+ *   - `details`    — optional structured context.
+ *
+ * The route layer (`/api` router error middleware and the global Express
+ * error handler in `server/index.ts`) calls `toSafeErrorResponse(err)` to
+ * get both the status code and a sanitized JSON body in one shot. Anything
+ * that is NOT an `AppError` (Square SDK errors, Postgres errors, generic
+ * `Error`s, etc.) collapses to a 500 with a generic message so we never
+ * leak stack traces, file paths, or upstream library internals.
+ *
+ * Domain-specific subclasses (OrderError, PaymentError, GiftCardError,
+ * SyncError, AuthError) live here too rather than in their respective
+ * service files so that:
+ *   - There is exactly one source of truth.
+ *   - Routes can `instanceof` check them without circular imports.
+ *   - The sanitizer is the only place that decides what's safe to surface.
+ *
+ * The service files re-export the names they used to define locally so
+ * existing `import { OrderError } from './orderService'` keeps working.
+ */
 
-export class InvalidOrderDataError extends OrderError {
-  constructor(message: string, details?: any) {
-    super(message, 'INVALID_ORDER_DATA', details);
-  }
-}
+// ---------------------------------------------------------------------------
+// Public response shape
+// ---------------------------------------------------------------------------
 
-export class OrderNotFoundError extends OrderError {
-  constructor(orderId: string | number) {
-    super(`Order not found: ${orderId}`, 'ORDER_NOT_FOUND');
-  }
-}
-
-export class OrderProcessingError extends OrderError {
-  constructor(message: string, details?: any) {
-    super(message, 'ORDER_PROCESSING_ERROR', details);
-  }
-}
-
-// Error response type for consistent client-facing error payloads.
-// Intentionally minimal: no stack traces, file paths, or raw upstream library
-// messages. Server-side logs still capture the full error.
 export interface ErrorResponse {
   error: string;
   code?: string;
 }
 
-// Names of project-authored error classes whose `message` is safe to surface
-// to clients. We require an exact match (not a substring/regex) so that
-// arbitrary upstream errors with coincidental names (e.g. a third-party
-// "InvalidArgumentError") do NOT pass through.
-const SAFE_ERROR_NAMES: ReadonlySet<string> = new Set([
-  'OrderError',
-  'OrderNotFoundError',
-  'InvalidOrderDataError',
-  'OrderProcessingError',
-  'PaymentError',
-  'PaymentNotFoundError',
-  'InvalidPaymentDataError',
-  'GiftCardError',
-  'GiftCardNotFoundError',
-  'InsufficientBalanceError',
-  'AuthError',
-  'SyncError',
-]);
+export interface SafeErrorResult {
+  status: number;
+  body: ErrorResponse;
+}
 
-function isSafeErrorName(name: string | undefined): boolean {
-  return !!name && SAFE_ERROR_NAMES.has(name);
+// ---------------------------------------------------------------------------
+// Base class
+// ---------------------------------------------------------------------------
+
+export class AppError extends Error {
+  public readonly statusCode: number;
+  public readonly code: string;
+  public readonly details?: unknown;
+  /**
+   * Whether this error's `message` is safe to send to clients verbatim.
+   * Defaults to true for everything that extends AppError (the whole point
+   * of this hierarchy is that messages are author-controlled and reviewed),
+   * but can be flipped off for sub-classes that wrap upstream errors.
+   */
+  public readonly expose: boolean;
+
+  constructor(
+    message: string,
+    opts: {
+      statusCode?: number;
+      code?: string;
+      details?: unknown;
+      expose?: boolean;
+    } = {},
+  ) {
+    super(message);
+    this.name = new.target.name;
+    this.statusCode = opts.statusCode ?? 500;
+    this.code = opts.code ?? 'INTERNAL_ERROR';
+    this.details = opts.details;
+    this.expose = opts.expose ?? true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generic HTTP-shaped subclasses
+// ---------------------------------------------------------------------------
+
+export class ValidationError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(message, { statusCode: 400, code: 'VALIDATION_ERROR', details });
+  }
+}
+
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Unauthorized') {
+    super(message, { statusCode: 401, code: 'UNAUTHORIZED' });
+  }
+}
+
+export class ForbiddenError extends AppError {
+  constructor(message = 'Forbidden') {
+    super(message, { statusCode: 403, code: 'FORBIDDEN' });
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(message = 'Not found') {
+    super(message, { statusCode: 404, code: 'NOT_FOUND' });
+  }
+}
+
+export class ConflictError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(message, { statusCode: 409, code: 'CONFLICT', details });
+  }
+}
+
+export class ExternalServiceError extends AppError {
+  constructor(message: string, details?: unknown) {
+    // 502 Bad Gateway: upstream service failed (Square, SendGrid, etc.).
+    super(message, { statusCode: 502, code: 'EXTERNAL_SERVICE_ERROR', details });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Domain-specific subclasses
+// ---------------------------------------------------------------------------
+
+export class OrderError extends AppError {
+  constructor(message: string, code: string = 'ORDER_ERROR', details?: unknown) {
+    super(message, { statusCode: 500, code, details });
+  }
+}
+
+export class OrderNotFoundError extends OrderError {
+  constructor(orderId: string | number) {
+    super(`Order with ID ${orderId} not found`, 'ORDER_NOT_FOUND');
+    Object.defineProperty(this, 'statusCode', { value: 404, enumerable: true });
+  }
+}
+
+export class InvalidOrderDataError extends OrderError {
+  constructor(message: string, details?: unknown) {
+    super(message, 'INVALID_ORDER_DATA', details);
+    Object.defineProperty(this, 'statusCode', { value: 400, enumerable: true });
+  }
+}
+
+export class OrderProcessingError extends OrderError {
+  constructor(message: string, details?: unknown) {
+    super(message, 'ORDER_PROCESSING_ERROR', details);
+  }
+}
+
+export class PaymentError extends AppError {
+  constructor(message: string, code: string = 'PAYMENT_ERROR', details?: unknown) {
+    super(message, { statusCode: 500, code, details });
+  }
+}
+
+export class PaymentNotFoundError extends PaymentError {
+  constructor(paymentId: string | number) {
+    super(`Payment with ID ${paymentId} not found`, 'PAYMENT_NOT_FOUND');
+    Object.defineProperty(this, 'statusCode', { value: 404, enumerable: true });
+  }
+}
+
+export class InvalidPaymentDataError extends PaymentError {
+  constructor(message: string, details?: unknown) {
+    super(message, 'INVALID_PAYMENT_DATA', details);
+    Object.defineProperty(this, 'statusCode', { value: 400, enumerable: true });
+  }
+}
+
+export class GiftCardError extends AppError {
+  constructor(message: string, code: string = 'GIFT_CARD_ERROR', details?: unknown) {
+    super(message, { statusCode: 500, code, details });
+  }
+}
+
+export class GiftCardNotFoundError extends GiftCardError {
+  constructor(giftCardId: string | number) {
+    super(`Gift card with ID ${giftCardId} not found`, 'GIFT_CARD_NOT_FOUND');
+    Object.defineProperty(this, 'statusCode', { value: 404, enumerable: true });
+  }
+}
+
+export class InsufficientBalanceError extends GiftCardError {
+  constructor(
+    giftCardId: string | number,
+    requestedAmount: number,
+    currentBalance: number,
+  ) {
+    super(
+      `Gift card ${giftCardId} has insufficient balance. Requested: ${requestedAmount}, Available: ${currentBalance}`,
+      'INSUFFICIENT_BALANCE',
+      { requestedAmount, currentBalance },
+    );
+    Object.defineProperty(this, 'statusCode', { value: 409, enumerable: true });
+  }
+}
+
+export class SyncError extends AppError {
+  constructor(message: string, code: string = 'SYNC_ERROR', details?: unknown) {
+    super(message, { statusCode: 500, code, details });
+  }
 }
 
 /**
- * Convert any thrown value into a sanitized client-facing payload.
- * - Known custom errors (OrderError + named validation/not-found errors) keep
- *   their short, user-authored message.
- * - Anything else (Square SDK errors, pg/drizzle errors, generic Errors) is
- *   collapsed to a generic message so we never leak stack traces, filesystem
- *   paths, or upstream library internals.
+ * Authentication / authorization domain error. Default status is 400 because
+ * most call-sites use this for invalid-input style failures
+ * (e.g. "username already exists"). Specific call-sites that mean 401/403/409
+ * should prefer UnauthorizedError / ForbiddenError / ConflictError instead.
  */
-export function toSafeErrorResponse(error: unknown): ErrorResponse {
-  if (error instanceof OrderError) {
-    return { error: error.message, code: error.code };
+export class AuthError extends AppError {
+  constructor(message: string, statusCode = 400, code: string = 'AUTH_ERROR') {
+    super(message, { statusCode, code });
   }
-  if (error instanceof Error && isSafeErrorName(error.name)) {
-    return { error: error.message };
-  }
-  return { error: 'An unexpected error occurred' };
 }
 
-// Backwards-compatible alias. Prefer `toSafeErrorResponse` in new code.
-export function toErrorResponse(error: Error): ErrorResponse {
-  return toSafeErrorResponse(error);
+// ---------------------------------------------------------------------------
+// Sanitizer
+// ---------------------------------------------------------------------------
+
+const GENERIC_MESSAGE = 'An unexpected error occurred';
+
+/**
+ * Convert any thrown value into `{ status, body }` for the route layer.
+ *
+ *   - `AppError` (and subclasses) → its own statusCode + safe message + code.
+ *   - Anything else               → 500 + generic message, no leaked details.
+ *
+ * Server-side logging (full stack, full message) happens elsewhere — this
+ * function deliberately discards everything that isn't pre-blessed.
+ */
+export function toSafeErrorResponse(error: unknown): SafeErrorResult {
+  if (error instanceof AppError && error.expose) {
+    const body: ErrorResponse = { error: error.message };
+    if (error.code) body.code = error.code;
+    return { status: error.statusCode, body };
+  }
+  // AppError with expose=false (or any other Error / non-Error) → generic.
+  const status =
+    error instanceof AppError && typeof error.statusCode === 'number'
+      ? error.statusCode
+      : 500;
+  return { status, body: { error: GENERIC_MESSAGE } };
+}
+
+/**
+ * Backwards-compatible adapter for callers that only want the JSON body.
+ * New code should prefer `toSafeErrorResponse` so the status code is
+ * applied automatically.
+ */
+export function toErrorResponse(error: unknown): ErrorResponse {
+  return toSafeErrorResponse(error).body;
 }

@@ -13,6 +13,7 @@ import {
   adminUpdateUserEmailSchema,
   strongPasswordSchema,
 } from '../../shared/schema';
+import { AuthError, ConflictError } from '../errors';
 import { authLimiter, passwordResetRequestLimiter } from '../middleware/rateLimiter';
 
 // Validation schemas
@@ -293,7 +294,13 @@ export function createAuthRouter(): Router {
           user: createSafeUser(user),
         });
       } catch (err) {
-        if (err instanceof Error && err.message.includes('already exists')) {
+        // authService throws ConflictError for "already exists" cases now,
+        // but fall back to the legacy AuthError + message check for any
+        // path that hasn't been migrated yet.
+        if (err instanceof ConflictError) {
+          return res.status(err.statusCode).json({ error: err.message });
+        }
+        if (err instanceof AuthError && err.message.includes('already exists')) {
           return res.status(409).json({ error: 'Username already exists' });
         }
         throw err;
@@ -348,8 +355,8 @@ export function createAuthRouter(): Router {
           }
           res.json({ success: true, user: createSafeUser(updated) });
         } catch (err) {
-          if (err instanceof Error && err.message.includes('already in use')) {
-            return res.status(409).json({ error: err.message });
+          if (err instanceof ConflictError) {
+            return res.status(err.statusCode).json({ error: err.message });
           }
           throw err;
         }

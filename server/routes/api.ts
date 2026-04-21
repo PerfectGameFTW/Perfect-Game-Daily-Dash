@@ -94,15 +94,14 @@ export function createApiRouter(): Router {
   }
   
   /**
-   * API error handler middleware
+   * API error handler middleware. Uses the centralized error sanitizer
+   * (`server/errors.ts`) which knows the right HTTP status for every
+   * AppError subclass and falls back to a generic 500 for anything else.
    */
   router.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error('API Error:', err);
-
-    const statusCode = err.name?.includes('NotFound') ? 404 :
-                       err.name?.includes('Invalid') ? 400 : 500;
-
-    res.status(statusCode).json(toSafeErrorResponse(err));
+    const { status, body } = toSafeErrorResponse(err);
+    res.status(status).json(body);
   });
   
   /**

@@ -25,12 +25,9 @@ import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
 import { syncCatalog, preloadCatalogCache } from './catalogService';
 
-export class SyncError extends Error {
-  constructor(message: string, public readonly code: string, public readonly details?: any) {
-    super(message);
-    this.name = 'SyncError';
-  }
-}
+// SyncError now lives in `server/errors.ts` (see Task #58). Re-exported.
+export { SyncError } from '../errors';
+import { SyncError } from '../errors';
 
 export class SyncService {
   /** In-memory lock to prevent concurrent backfill runs within a single process */
@@ -369,7 +366,10 @@ export class SyncService {
       const squareOrders = await Promise.race([fetchPromise, timeoutPromise]) as any[];
       
       if (!squareOrders || !Array.isArray(squareOrders)) {
-        throw new Error('Failed to fetch orders: Invalid response format');
+        throw new SyncError(
+          'Failed to fetch orders: Invalid response format',
+          'INVALID_RESPONSE',
+        );
       }
       
       // Set a reasonable limit to prevent processing too many orders at once

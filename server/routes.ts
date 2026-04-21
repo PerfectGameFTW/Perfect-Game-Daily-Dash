@@ -46,7 +46,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(status);
     } catch (err) {
       console.error('[BackfillStatus] Error:', err);
-      res.status(500).json(toSafeErrorResponse(err));
+      { const r = toSafeErrorResponse(err); res.status(r.status).json(r.body); };
     }
   });
 
@@ -86,7 +86,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(202).json({ success: true, message: result.message });
     } catch (err) {
       console.error('[Backfill] Error:', err);
-      res.status(500).json(toSafeErrorResponse(err));
+      { const r = toSafeErrorResponse(err); res.status(r.status).json(r.body); };
     }
   });
 
