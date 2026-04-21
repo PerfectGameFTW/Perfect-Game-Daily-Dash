@@ -15,21 +15,16 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
-const resetSchema = z
-  .object({
-    username: z.string().min(3, 'Username must be at least 3 characters'),
-    newPassword: z
-      .string()
-      .min(12, 'Password must be at least 12 characters')
-      .max(128, 'Password must be at most 128 characters')
-      .refine((p) => /[A-Za-z]/.test(p), 'Password must contain at least one letter')
-      .refine((p) => /[0-9]/.test(p), 'Password must contain at least one digit'),
-    confirmPassword: z.string().min(12, 'Password must be at least 12 characters'),
-  })
-  .refine((data) => data.newPassword === data.confirmPassword, {
-    message: 'Passwords do not match',
-    path: ['confirmPassword'],
-  });
+// Email-verified reset: step 1 only collects an identifier and triggers
+// a one-time link to be emailed to the account owner. The new password
+// is collected on the dedicated /reset page after the user clicks the
+// link, so this form does not ask for a password.
+const resetSchema = z.object({
+  usernameOrEmail: z
+    .string()
+    .min(1, 'Enter your username or email address')
+    .max(254),
+});
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 type ResetFormValues = z.infer<typeof resetSchema>;
@@ -49,7 +44,7 @@ export default function Login() {
 
   const resetForm = useForm<ResetFormValues>({
     resolver: zodResolver(resetSchema),
-    defaultValues: { username: '', newPassword: '', confirmPassword: '' },
+    defaultValues: { usernameOrEmail: '' },
   });
 
   const switchMode = (next: 'login' | 'reset') => {
@@ -81,19 +76,22 @@ export default function Login() {
       setIsSubmitting(true);
       setErrorMessage(null);
       setSuccessMessage(null);
-      const res = await apiRequest('POST', '/api/auth/reset-password', {
-        body: JSON.stringify({ username: data.username, newPassword: data.newPassword }),
+      const res = await apiRequest('POST', '/api/auth/request-reset', {
+        body: JSON.stringify({ usernameOrEmail: data.usernameOrEmail }),
         headers: { 'Content-Type': 'application/json' },
       });
-      if (res?.success) {
-        setSuccessMessage('Password reset successfully. You can now sign in with your new password.');
-        resetForm.reset();
-      } else {
-        setErrorMessage('Unable to reset password. Please check your username and try again.');
-      }
+      // The server always returns the same generic message regardless of
+      // whether the account exists, so we surface that text directly.
+      setSuccessMessage(
+        res?.message ||
+          'If an account matching that username or email exists, a reset link has been sent.',
+      );
+      resetForm.reset();
     } catch (error) {
-      console.error('Reset password error:', error);
-      setErrorMessage('Unable to reset password. Please check your username and try again.');
+      console.error('Request reset error:', error);
+      setErrorMessage(
+        'Unable to send a reset link right now. Please try again in a few minutes.',
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -161,43 +159,25 @@ export default function Login() {
           </form>
         ) : (
           <form onSubmit={resetForm.handleSubmit(onReset)} className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Enter the username or email address on your account and we'll
+              send a one-time link to reset your password. The link expires
+              in 30 minutes.
+            </p>
             <div>
-              <label htmlFor="reset-username" className="block text-sm font-medium text-gray-700">
-                Username
-              </label>
-              <input id="reset-username" type="text" {...resetForm.register('username')} className={inputClass} />
-              {resetForm.formState.errors.username && (
-                <p className="mt-1 text-sm text-red-600">{resetForm.formState.errors.username.message}</p>
-              )}
-            </div>
-
-            <div>
-              <label htmlFor="reset-new-password" className="block text-sm font-medium text-gray-700">
-                New Password
+              <label htmlFor="reset-identifier" className="block text-sm font-medium text-gray-700">
+                Username or email
               </label>
               <input
-                id="reset-new-password"
-                type="password"
-                {...resetForm.register('newPassword')}
+                id="reset-identifier"
+                type="text"
+                {...resetForm.register('usernameOrEmail')}
                 className={inputClass}
               />
-              {resetForm.formState.errors.newPassword && (
-                <p className="mt-1 text-sm text-red-600">{resetForm.formState.errors.newPassword.message}</p>
-              )}
-            </div>
-
-            <div>
-              <label htmlFor="reset-confirm-password" className="block text-sm font-medium text-gray-700">
-                Confirm New Password
-              </label>
-              <input
-                id="reset-confirm-password"
-                type="password"
-                {...resetForm.register('confirmPassword')}
-                className={inputClass}
-              />
-              {resetForm.formState.errors.confirmPassword && (
-                <p className="mt-1 text-sm text-red-600">{resetForm.formState.errors.confirmPassword.message}</p>
+              {resetForm.formState.errors.usernameOrEmail && (
+                <p className="mt-1 text-sm text-red-600">
+                  {resetForm.formState.errors.usernameOrEmail.message}
+                </p>
               )}
             </div>
 
@@ -206,7 +186,7 @@ export default function Login() {
               disabled={isSubmitting}
               className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-blue-400"
             >
-              {isSubmitting ? 'Resetting...' : 'Reset Password'}
+              {isSubmitting ? 'Sending...' : 'Send reset link'}
             </button>
 
             <div className="text-center">

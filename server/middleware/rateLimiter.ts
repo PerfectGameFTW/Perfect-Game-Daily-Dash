@@ -16,6 +16,17 @@ export const authLimiter = rateLimit({
   message: { error: 'Too many login attempts, please try again later.' },
 });
 
+// Password-reset request limiter. Tighter than authLimiter because each
+// successful request triggers an outbound email — we cannot let an
+// attacker spam the inbox of a known account. 3 requests per IP per hour.
+export const passwordResetRequestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many password reset requests, please try again later.' },
+});
+
 export const syncLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 5,

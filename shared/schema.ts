@@ -270,6 +270,11 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   role: text("role").default("user").notNull(),
+  // Account-recovery email. Nullable so existing accounts created before
+  // the email-verified reset flow are not retroactively required to have
+  // one — but if it's null, the password reset flow has nothing to send to
+  // and silently no-ops for that account.
+  email: text("email"),
   // Per-account lockout state. failedLoginCount counts consecutive failed
   // password attempts; it is reset to 0 on a successful login. lockedUntil,
   // when set to a future timestamp, blocks login attempts for the account
@@ -277,6 +282,31 @@ export const users = pgTable("users", {
   failedLoginCount: integer("failed_login_count").default(0).notNull(),
   lockedUntil: timestamp("locked_until", { withTimezone: true }),
 });
+
+// Password reset tokens. Only the SHA-256 hash of the token is stored —
+// the raw token is delivered exactly once via the recovery email and is
+// never persisted. A token is invalid if it doesn't match a row, has
+// already been used (used_at IS NOT NULL), or has expired (expires_at
+// is in the past).
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, {
+    onDelete: 'cascade',
+  }),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+});
+
+export const insertPasswordResetTokenSchema = createInsertSchema(
+  passwordResetTokens,
+).omit({ id: true });
+
+export type InsertPasswordResetToken = z.infer<typeof insertPasswordResetTokenSchema>;
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,

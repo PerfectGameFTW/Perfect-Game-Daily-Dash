@@ -9,7 +9,7 @@ import { authService } from '../services/authService';
 import { createSafeUser, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
 import { adminCreateUserSchema, strongPasswordSchema } from '../../shared/schema';
-import { authLimiter } from '../middleware/rateLimiter';
+import { authLimiter, passwordResetRequestLimiter } from '../middleware/rateLimiter';
 
 // Validation schemas
 //
@@ -23,10 +23,26 @@ const loginSchema = z.object({
   password: z.string().min(1).max(128)
 });
 
-const resetPasswordSchema = z.object({
-  username: z.string().min(3).max(50),
+// Step 1: request a reset link. usernameOrEmail is whatever the user types
+// in the form — we accept either the account's username or its email.
+const requestResetSchema = z.object({
+  usernameOrEmail: z.string().min(1).max(254),
+});
+
+// Step 2: complete the reset. The token is the raw value delivered in the
+// recovery email; the server hashes it and matches against the stored
+// SHA-256. The new password must satisfy the strong-password policy.
+const completeResetSchema = z.object({
+  token: z.string().min(1).max(256),
   newPassword: strongPasswordSchema,
 });
+
+// Generic message returned by /request-reset regardless of whether the
+// account exists. This is the anti-enumeration guarantee: an attacker
+// cannot learn whether a username/email is registered.
+const RESET_REQUEST_GENERIC_MESSAGE =
+  'If an account matching that username or email exists and has a recovery email on file, ' +
+  'a password reset link has been sent. Check your inbox (and spam folder) within a few minutes.';
 
 export function createAuthRouter(): Router {
   const router = Router();
@@ -138,30 +154,99 @@ export function createAuthRouter(): Router {
     }
   });
 
-  // Reset password endpoint
-  router.post('/reset-password', authLimiter, async (req: Request, res: Response) => {
-    try {
-      const validationResult = resetPasswordSchema.safeParse(req.body);
-      if (!validationResult.success) {
-        return res.status(400).json({
-          error: 'Invalid input',
-          details: validationResult.error.format()
+  // Step 1 of the email-verified password reset flow. Always returns a
+  // generic 200 so the endpoint cannot be used to enumerate accounts.
+  // Rate-limited at 3 requests per IP per hour to prevent abuse of the
+  // outbound email channel.
+  router.post(
+    '/request-reset',
+    passwordResetRequestLimiter,
+    async (req: Request, res: Response) => {
+      const validation = requestResetSchema.safeParse(req.body);
+
+      // Resolve the link base URL up front. In production we require an
+      // operator-configured APP_BASE_URL — never trust the Host header,
+      // which would otherwise let an attacker forge the link domain in
+      // the recovery email by sending a poisoned Host header. In dev
+      // (NODE_ENV !== 'production') we fall back to the request host so
+      // the flow works out of the box on localhost / preview URLs.
+      let baseUrl = process.env.APP_BASE_URL;
+      if (!baseUrl) {
+        if (process.env.NODE_ENV === 'production') {
+          console.error(
+            '[auth/request-reset] APP_BASE_URL is not set in production; ' +
+              'refusing to construct reset link from untrusted Host header.',
+          );
+          // Still return the generic message so the failure path is not
+          // an enumeration oracle. The user-facing effect is "no email
+          // arrives" — an operator alarm should fire on the log line.
+          baseUrl = '';
+        } else {
+          baseUrl = `${req.protocol}://${req.get('host')}`;
+        }
+      }
+
+      // Fire-and-forget the actual work so the HTTP response timing is
+      // effectively constant regardless of whether the account exists,
+      // whether we have an email on file, or how slow the email provider
+      // is. Without this, a caller can distinguish "user exists" (extra
+      // SELECT/UPDATE/INSERT + outbound HTTP) from "user does not exist"
+      // (single SELECT) by wall-clock latency, which would re-introduce
+      // the enumeration oracle that the generic response is meant to
+      // close. setImmediate hands control back to the event loop before
+      // any DB or network work begins.
+      if (validation.success && baseUrl) {
+        const identifier = validation.data.usernameOrEmail;
+        setImmediate(() => {
+          authService
+            .requestPasswordReset(identifier, baseUrl as string)
+            .catch((err) =>
+              console.error('Error issuing password reset:', err),
+            );
         });
       }
 
-      const { username, newPassword } = validationResult.data;
-      const success = await authService.resetPassword(username, newPassword);
+      res.json({ message: RESET_REQUEST_GENERIC_MESSAGE });
+    },
+  );
 
-      if (!success) {
-        return res.status(400).json({ error: 'Unable to reset password. Please check your username and try again.' });
+  // Step 2 of the reset flow. Validates the token, marks it consumed,
+  // and updates the password — atomically, so the same token can never
+  // be redeemed twice. authLimiter is applied to slow brute-force token
+  // guessing on top of the 256-bit token entropy.
+  router.post(
+    '/complete-reset',
+    authLimiter,
+    async (req: Request, res: Response) => {
+      try {
+        const validation = completeResetSchema.safeParse(req.body);
+        if (!validation.success) {
+          return res.status(400).json({
+            error: 'Invalid input',
+            details: validation.error.format(),
+          });
+        }
+
+        const { token, newPassword } = validation.data;
+        const success = await authService.completePasswordReset(
+          token,
+          newPassword,
+        );
+
+        if (!success) {
+          return res.status(400).json({
+            error:
+              'This reset link is invalid or has expired. Please request a new one.',
+          });
+        }
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Error completing password reset:', error);
+        res.status(500).json({ error: 'Internal server error' });
       }
-
-      res.json({ success: true });
-    } catch (error) {
-      console.error('Error resetting password:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+    },
+  );
 
   // Logout endpoint
   router.post('/logout', (req: Request & { session?: any }, res: Response) => {

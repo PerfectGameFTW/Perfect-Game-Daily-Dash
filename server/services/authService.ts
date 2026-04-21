@@ -5,9 +5,24 @@
  */
 
 import { compare, hash } from 'bcryptjs';
-import { eq, sql } from 'drizzle-orm';
+import { createHash, randomBytes } from 'crypto';
+import { and, eq, isNull, gt, or, sql } from 'drizzle-orm';
 import { db } from '../db';
-import { users, type InsertUser, type User } from '../../shared/schema';
+import {
+  users,
+  passwordResetTokens,
+  type InsertUser,
+  type User,
+} from '../../shared/schema';
+import { sendEmail } from './emailService';
+
+// Password reset token policy.
+const RESET_TOKEN_BYTES = 32; // 256 bits of entropy in the raw token.
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutes.
+
+function hashResetToken(rawToken: string): string {
+  return createHash('sha256').update(rawToken).digest('hex');
+}
 
 class AuthError extends Error {
   constructor(message: string) {
@@ -249,20 +264,149 @@ export class AuthService {
   }
 
   /**
-   * Reset a user's password by username.
+   * Issue a password-reset link to the account owner.
    *
-   * @param username Username
-   * @param newPassword New plaintext password (will be hashed)
-   * @returns True if password was reset, false if user not found
+   * Looks up the user by either username or email. If a matching account
+   * exists AND has an email on file, a single-use token is generated, its
+   * SHA-256 hash stored with a 30-minute expiry, and the raw token is
+   * delivered to the account's email address. Any pre-existing unused
+   * reset tokens for the same user are invalidated so only the most
+   * recently issued link is valid.
+   *
+   * Returns void unconditionally — the caller cannot tell whether an
+   * account was found or whether an email was sent. This is what
+   * prevents the endpoint from being used to enumerate accounts.
    */
-  async resetPassword(username: string, newPassword: string): Promise<boolean> {
-    const user = await this.getUserByUsername(username);
-    if (!user) {
-      return false;
+  async requestPasswordReset(usernameOrEmail: string, baseUrl: string): Promise<void> {
+    const normalized = usernameOrEmail.trim();
+    if (!normalized) return;
+
+    // Single query that matches by username OR email (case-insensitive on
+    // email since email addresses are not case-sensitive in practice).
+    const found = await db
+      .select()
+      .from(users)
+      .where(
+        or(
+          eq(users.username, normalized),
+          sql`LOWER(${users.email}) = LOWER(${normalized})`,
+        ),
+      )
+      .limit(1);
+    const user = found[0];
+    if (!user || !user.email) {
+      // Either no such account or no email on file. Silently return so
+      // the caller can't distinguish from the success path.
+      return;
     }
-    const hashedPassword = await hash(newPassword, 10);
-    await db.update(users).set({ password: hashedPassword }).where(eq(users.id, user.id));
-    return true;
+
+    // Invalidate any prior unused tokens for this user — at most one
+    // outstanding link at a time.
+    await db
+      .update(passwordResetTokens)
+      .set({ usedAt: new Date() })
+      .where(
+        and(
+          eq(passwordResetTokens.userId, user.id),
+          isNull(passwordResetTokens.usedAt),
+        ),
+      );
+
+    const rawToken = randomBytes(RESET_TOKEN_BYTES).toString('hex');
+    const tokenHash = hashResetToken(rawToken);
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+
+    await db.insert(passwordResetTokens).values({
+      userId: user.id,
+      tokenHash,
+      expiresAt,
+    });
+
+    const resetUrl = `${baseUrl.replace(/\/$/, '')}/reset?token=${rawToken}`;
+    const subject = 'Reset your Perfect Game Sales Dashboard password';
+    const text =
+      `Hi ${user.username},\n\n` +
+      `Someone requested a password reset for your account. ` +
+      `If that was you, click the link below within 30 minutes to set a new password:\n\n` +
+      `${resetUrl}\n\n` +
+      `If you didn't request this, you can safely ignore this email — your password ` +
+      `will not change.\n`;
+    const html =
+      `<p>Hi ${user.username},</p>` +
+      `<p>Someone requested a password reset for your account. If that was you, ` +
+      `click the link below within 30 minutes to set a new password:</p>` +
+      `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
+      `<p>If you didn't request this, you can safely ignore this email — your password ` +
+      `will not change.</p>`;
+
+    try {
+      await sendEmail({ to: user.email, subject, text, html });
+    } catch (err) {
+      // Log but don't surface — we always present a generic response to
+      // the caller. An ops alert from the logs is the right escalation
+      // path; leaking this back to the HTTP client would be an oracle.
+      console.error('[authService] Failed to send reset email:', err);
+    }
+  }
+
+  /**
+   * Complete a password reset using a token previously issued by
+   * requestPasswordReset. The token is validated, marked used, and the
+   * user's password is updated in a single transaction so a token can
+   * never be redeemed twice.
+   *
+   * Returns true on success, false if the token is unknown, expired, or
+   * already consumed.
+   */
+  async completePasswordReset(rawToken: string, newPassword: string): Promise<boolean> {
+    if (!rawToken || typeof rawToken !== 'string') return false;
+    const tokenHash = hashResetToken(rawToken);
+
+    return await db.transaction(async (tx) => {
+      const now = new Date();
+      const rows = await tx
+        .select()
+        .from(passwordResetTokens)
+        .where(
+          and(
+            eq(passwordResetTokens.tokenHash, tokenHash),
+            isNull(passwordResetTokens.usedAt),
+            gt(passwordResetTokens.expiresAt, now),
+          ),
+        )
+        .limit(1);
+
+      const record = rows[0];
+      if (!record) return false;
+
+      // Mark used FIRST so a concurrent request cannot redeem the same
+      // token. The WHERE clause ensures only one transaction wins.
+      const consumed = await tx
+        .update(passwordResetTokens)
+        .set({ usedAt: now })
+        .where(
+          and(
+            eq(passwordResetTokens.id, record.id),
+            isNull(passwordResetTokens.usedAt),
+          ),
+        )
+        .returning({ id: passwordResetTokens.id });
+      if (consumed.length === 0) return false;
+
+      const hashedPassword = await hash(newPassword, 10);
+      await tx
+        .update(users)
+        .set({
+          password: hashedPassword,
+          // Successful recovery: clear any outstanding lockout so the
+          // user can sign in immediately with the new password.
+          failedLoginCount: 0,
+          lockedUntil: null,
+        })
+        .where(eq(users.id, record.userId));
+
+      return true;
+    });
   }
 
   /**

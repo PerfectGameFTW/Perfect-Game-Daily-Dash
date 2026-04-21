@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import ResetPassword from "@/pages/ResetPassword";
 import Admin from "@/pages/Admin";
 import GiftCardTest from "@/pages/GiftCardTest";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -23,10 +24,11 @@ function Router() {
   // Global navigation guard
   useEffect(() => {
     // If not loading and not on login/register page and not authenticated, redirect to login
-    if (!isLoading && 
-        !isAuthenticated && 
-        location !== '/login' && 
-        location !== '/register') {
+    if (!isLoading &&
+        !isAuthenticated &&
+        location !== '/login' &&
+        location !== '/register' &&
+        location !== '/reset') {
       navigate('/login');
     }
   }, [isLoading, isAuthenticated, location, navigate]);
@@ -36,6 +38,7 @@ function Router() {
       {/* Public routes */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
+      <Route path="/reset" component={ResetPassword} />
       
       {/* Protected routes */}
       <Route path="/">
