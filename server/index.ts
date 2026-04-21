@@ -12,6 +12,7 @@ import { validateEnv } from "./validateEnv";
 import { apiLimiter } from "./middleware/rateLimiter";
 import { registerMcpRoutes } from "./mcp";
 import { toSafeErrorResponse, sendError, ForbiddenError } from "./errors";
+import { isAllowedOrigin } from "./security/origin";
 
 // Prevent unhandled async errors from crashing the process.
 // Node.js 15+ exits by default on unhandledRejection — this keeps the server alive.
@@ -141,15 +142,71 @@ app.use(session({
   name: 'pg.sid'
 }));
 
-registerMcpRoutes(app);
+// ----------------------------------------------------------------------------
+// CSRF defense (header check) — mounted BEFORE every router, including
+// `/mcp`. Browsers cannot set a custom `x-requested-with` header on a
+// cross-origin request without first satisfying CORS preflight, so
+// requiring it on every state-changing request blocks classic
+// form-POST CSRF. Applies to both `/api` and `/mcp` because `/mcp` is
+// admin-only and a successful CSRF there can drive arbitrary tool
+// calls (including run_read_query).
+//
+// `text/plain` POSTs (which the MCP JSON-RPC over Streamable HTTP uses
+// when negotiated as text) do not trigger CORS preflight, so an
+// attacker page on another origin could otherwise reach `/mcp` from a
+// logged-in admin's browser. The MCP-specific block below adds a
+// strict `Content-Type: application/json` requirement and an Origin
+// allow-list check on top of the shared CSRF header check.
+// NOTE: any new mutating router added outside `/api` or `/mcp` MUST
+// be added to this list, otherwise it will not inherit CSRF
+// protection. Keep this in sync with the actual route topology.
+const CSRF_PROTECTED_PREFIXES = ['/api', '/mcp'];
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-app.use('/api', (req, res, next) => {
-  const mutatingMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
-  if (mutatingMethods.includes(req.method) && req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+app.use((req, res, next) => {
+  if (!MUTATING_METHODS.has(req.method)) return next();
+  if (!CSRF_PROTECTED_PREFIXES.some((p) => req.path === p || req.path.startsWith(p + '/'))) {
+    return next();
+  }
+  if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
     return sendError(res, new ForbiddenError('Forbidden: missing CSRF header'));
   }
   next();
 });
+
+// MCP-specific hardening. Runs in addition to (not instead of) the
+// CSRF header check above.
+//   - 415 if Content-Type is not strictly application/json. Blocks
+//     the text/plain CSRF vector that bypasses CORS preflight.
+//   - 403 if Origin is present and not on the same-origin /
+//     ALLOWED_ORIGINS allow-list. GET/DELETE are also covered so a
+//     cross-origin probe of an existing session id is rejected.
+app.use('/mcp', (req, res, next) => {
+  if (!isAllowedOrigin(req)) {
+    return sendError(res, new ForbiddenError('Forbidden: disallowed Origin'));
+  }
+  // Strict Content-Type policy on every /mcp request that carries a
+  // body. POST/PUT/PATCH must declare application/json. DELETE is
+  // included: if the client sends a Content-Type at all, it must be
+  // application/json (a body-less DELETE with no Content-Type header
+  // is allowed and is what the MCP client actually sends). GET is
+  // exempt because browsers never send Content-Type on GET.
+  const ct = (req.headers['content-type'] || '').toString().split(';')[0].trim().toLowerCase();
+  const requiresJson = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
+  const ctIsBad = ct.length > 0 && ct !== 'application/json';
+  if (requiresJson ? ct !== 'application/json' : ctIsBad) {
+    res.status(415).json({
+      error: {
+        code: 'UNSUPPORTED_MEDIA_TYPE',
+        message: 'Content-Type must be application/json',
+      },
+    });
+    return;
+  }
+  next();
+});
+
+registerMcpRoutes(app);
 
 // Add startup timestamp and environment check
 const startTime = new Date().toISOString();
