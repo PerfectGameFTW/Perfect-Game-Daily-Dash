@@ -18,6 +18,7 @@ import { sql } from 'drizzle-orm';
 import { eq } from 'drizzle-orm';
 import { syncAudit, syncDailyBudget } from '../../shared/schema';
 import { logger } from '../logger';
+import { recordSquare429ForAlerting } from './squareRateLimitAlert';
 
 /**
  * Maximum number of Square page fetches the historical / backfill paths
@@ -229,5 +230,8 @@ export function logIfSquare429(
     status: 429,
     errorMessage: err instanceof Error ? err.message : String(err),
   });
+  // Feed the in-process alerter so on-call gets paged in real time, even
+  // before the searchable log store / log-based alert rules land.
+  recordSquare429ForAlerting(context.syncType, context.source);
   return true;
 }
