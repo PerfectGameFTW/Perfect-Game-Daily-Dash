@@ -269,36 +269,13 @@ async function exitWithError(error: unknown) {
       log(`⚠ Warning: Could not create indexes: ${indexError instanceof Error ? indexError.message : 'Unknown error'}`);
     }
 
-    // Auth-recovery schema bootstrap (idempotent). Kept SEPARATE from the
-    // best-effort index block above because these objects are required
-    // by the password-reset flow — if the DDL fails we want startup to
-    // fail loudly rather than silently degrade auth at runtime.
-    //
-    // Lives here rather than in a hand-written migration because the
-    // project convention is to sync via `drizzle-kit push --force`, but
-    // that command currently hangs on a pre-existing interactive prompt
-    // about the refunds_square_refund_id_unique constraint. Until that
-    // is fixed separately, this self-bootstrap guarantees fresh /
-    // staging / production environments come up with the columns + table
-    // the password-reset flow depends on, with no manual DBA step.
-    log('Bootstrapping auth-recovery schema...');
-    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email text`);
-    // Partial unique index on lower(email) so two accounts can't share a
-    // recovery email (and the requestPasswordReset email lookup is
-    // unambiguous). NULLs are excluded so legacy accounts without an
-    // email don't conflict with each other.
-    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_lower
-      ON users (LOWER(email)) WHERE email IS NOT NULL`);
-    await db.execute(sql`CREATE TABLE IF NOT EXISTS password_reset_tokens (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      token_hash TEXT NOT NULL UNIQUE,
-      expires_at TIMESTAMPTZ NOT NULL,
-      used_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )`);
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens (user_id)`);
-    log('✓ Auth-recovery schema verified');
+    // Auth-recovery schema (users.email, uniq_users_email_lower,
+    // password_reset_tokens) is now defined in shared/schema.ts and
+    // applied via the standard `npm run db:push` flow. The startup
+    // bootstrap that lived here was a workaround for Task #50 while
+    // db:push was blocked on an interactive prompt — Task #62 fixed
+    // that, so the workaround is gone. Add new schema objects to
+    // shared/schema.ts instead of in this file.
 
     // MCP read-query audit log. Persists every `run_read_query` call so
     // admins can review who ran what query without shell access. Same
