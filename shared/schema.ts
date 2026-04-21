@@ -9,6 +9,7 @@ import {
   jsonb,
   foreignKey,
   primaryKey,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -265,23 +266,35 @@ export type InsertIntercardRevenue = z.infer<typeof insertIntercardRevenueSchema
 export type IntercardRevenue = typeof intercardRevenue.$inferSelect;
 
 // Keep the users table for authentication
-export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-  role: text("role").default("user").notNull(),
-  // Account-recovery email. Nullable so existing accounts created before
-  // the email-verified reset flow are not retroactively required to have
-  // one — but if it's null, the password reset flow has nothing to send to
-  // and silently no-ops for that account.
-  email: text("email"),
-  // Per-account lockout state. failedLoginCount counts consecutive failed
-  // password attempts; it is reset to 0 on a successful login. lockedUntil,
-  // when set to a future timestamp, blocks login attempts for the account
-  // regardless of source IP (see authService.loginUser).
-  failedLoginCount: integer("failed_login_count").default(0).notNull(),
-  lockedUntil: timestamp("locked_until", { withTimezone: true }),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: serial("id").primaryKey(),
+    username: text("username").notNull().unique(),
+    password: text("password").notNull(),
+    role: text("role").default("user").notNull(),
+    // Account-recovery email. Nullable so existing accounts created before
+    // the email-verified reset flow are not retroactively required to have
+    // one — but if it's null, the password reset flow has nothing to send to
+    // and silently no-ops for that account.
+    email: text("email"),
+    // Per-account lockout state. failedLoginCount counts consecutive failed
+    // password attempts; it is reset to 0 on a successful login. lockedUntil,
+    // when set to a future timestamp, blocks login attempts for the account
+    // regardless of source IP (see authService.loginUser).
+    failedLoginCount: integer("failed_login_count").default(0).notNull(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  },
+  (table) => ({
+    // Case-insensitive uniqueness on the recovery email so two accounts
+    // can't share `Foo@x.com` vs `foo@x.com` and the password-reset email
+    // lookup is unambiguous. Partial (WHERE email IS NOT NULL) so legacy
+    // accounts without an email don't collide with each other.
+    emailLowerUnique: uniqueIndex("uniq_users_email_lower")
+      .on(sql`LOWER(${table.email})`)
+      .where(sql`${table.email} IS NOT NULL`),
+  }),
+);
 
 // Password reset tokens. Only the SHA-256 hash of the token is stored —
 // the raw token is delivered exactly once via the recovery email and is

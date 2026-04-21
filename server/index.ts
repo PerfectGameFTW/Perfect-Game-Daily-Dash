@@ -278,10 +278,12 @@ async function exitWithError(error: unknown) {
     // shared/schema.ts instead of in this file.
 
     // MCP read-query audit log. Persists every `run_read_query` call so
-    // admins can review who ran what query without shell access. Same
-    // self-bootstrap pattern as the auth-recovery block above — see the
-    // long comment there for the rationale (drizzle-kit push currently
-    // hangs on an interactive prompt).
+    // admins can review who ran what query without shell access. This is
+    // an idempotent self-bootstrap rather than a Drizzle migration so a
+    // freshly-deployed environment that hasn't run `npm run db:push`
+    // yet still gets the table the MCP audit middleware writes to. Once
+    // every environment is on the post-Task-#54 schema, fold this into
+    // shared/schema.ts the same way the auth-recovery block was.
     log('Bootstrapping MCP audit schema...');
     await db.execute(sql`CREATE TABLE IF NOT EXISTS mcp_query_audit (
       id SERIAL PRIMARY KEY,
