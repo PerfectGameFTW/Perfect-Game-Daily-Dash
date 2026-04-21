@@ -517,6 +517,37 @@ export const syncDailyBudget = pgTable("sync_daily_budget", {
 
 export type SyncDailyBudget = typeof syncDailyBudget.$inferSelect;
 
+// Generic per-deployment runtime settings persisted as JSON. Values
+// here are read by services on demand so admins can tune them from
+// the UI without redeploying. Today this is just the Square 429
+// alerter thresholds; new keys can be added without schema churn.
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+});
+
+export type AppSetting = typeof appSettings.$inferSelect;
+
+// Tunable thresholds for the Square HTTP 429 in-process alerter
+// (server/services/squareRateLimitAlert.ts). The webhook URL itself
+// is intentionally NOT exposed here — it's a credential and stays in
+// the deployment env. These bounds keep silly inputs (e.g. a 1ms
+// window) from disabling the alerter entirely.
+export const squareRateLimitAlertSettingsSchema = z.object({
+  threshold: z.number().int().min(1).max(1000),
+  windowMs: z.number().int().min(60_000).max(24 * 60 * 60 * 1000),
+  cooldownMs: z.number().int().min(60_000).max(24 * 60 * 60 * 1000),
+});
+
+export type SquareRateLimitAlertSettings = z.infer<
+  typeof squareRateLimitAlertSettingsSchema
+>;
+
+export const SQUARE_RATE_LIMIT_ALERT_SETTING_KEY = 'square_rate_limit_alert' as const;
+
 // Add Order Summary type for dashboard
 export interface OrderSummary {
   totalOrders: number;

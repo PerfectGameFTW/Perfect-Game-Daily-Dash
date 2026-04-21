@@ -595,6 +595,19 @@ async function exitWithError(error: unknown) {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_mcp_query_audit_created_at ON mcp_query_audit (created_at)`);
     log('✓ MCP audit schema verified');
 
+    // Generic per-deployment runtime settings (Task #94). Backs the
+    // tunable Square 429 alert thresholds in the admin UI. Same
+    // self-bootstrap pattern as mcp_query_audit so a freshly-deployed
+    // environment without a `db:push` still serves the GET/PUT
+    // endpoints instead of 500ing on a missing relation.
+    log('Bootstrapping app settings schema...');
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    log('✓ App settings schema verified');
+
     log('Registering routes...');
     const server = await registerRoutes(app);
     httpServer = server;
@@ -657,6 +670,27 @@ async function exitWithError(error: unknown) {
       };
       pruneMcpAudit();
       setInterval(pruneMcpAudit, 24 * 60 * 60 * 1000).unref();
+
+      // Hydrate the in-process Square 429 alerter from any persisted
+      // admin-tuned override. Failures are non-fatal: the alerter
+      // already has working env-derived defaults loaded at module
+      // init time, so a missing/unavailable DB just means the
+      // override is ignored until the next boot.
+      void (async () => {
+        try {
+          const { loadSquareRateLimitAlertOverride } = await import(
+            './services/squareRateLimitAlertSettings'
+          );
+          await loadSquareRateLimitAlertOverride();
+        } catch (err) {
+          log(
+            `[alerts] failed to hydrate rate-limit alert override: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            'error'
+          );
+        }
+      })();
     });
 
   } catch (error) {

@@ -3,7 +3,7 @@ import { sql, eq, and, desc } from 'drizzle-orm';
 import { 
   users, transactions, giftCards, giftCardRedemptions, 
   orders, orderLineItems, orderModifiers, orderDiscounts, syncState,
-  mcpQueryAudit,
+  mcpQueryAudit, appSettings,
   DateRange, TransactionStatus, Order, OrderLineItem, OrderModifier, OrderDiscount,
   InsertUser, User, InsertTransaction, Transaction,
   InsertGiftCard, GiftCard, InsertGiftCardRedemption, GiftCardRedemption,
@@ -418,6 +418,29 @@ class PgStorage implements IStorage {
       WHERE created_at < NOW() - (${maxAgeDays} || ' days')::interval
     `);
     return result.rowCount ?? 0;
+  }
+
+  // Generic per-deployment runtime settings. The JSON is returned
+  // exactly as stored; callers must validate before use.
+  async getAppSetting(key: string): Promise<unknown | undefined> {
+    const rows = await db
+      .select({ value: appSettings.value })
+      .from(appSettings)
+      .where(eq(appSettings.key, key));
+    return rows[0]?.value;
+  }
+
+  async setAppSetting(key: string, value: unknown): Promise<void> {
+    // Upsert keeps the table at most one row per key. updated_at is
+    // refreshed on every write so admins can audit when a setting last
+    // changed via DB inspection.
+    await db
+      .insert(appSettings)
+      .values({ key, value: value as object })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: { value: value as object, updatedAt: sql`CURRENT_TIMESTAMP` },
+      });
   }
 }
 

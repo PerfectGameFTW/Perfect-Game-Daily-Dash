@@ -7,7 +7,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
-import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { formatDistanceToNow, format } from 'date-fns';
@@ -118,7 +120,7 @@ export default function Admin() {
         </Card>
 
         <Tabs defaultValue="users" value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6 grid w-full grid-cols-1 md:w-auto md:grid-cols-2">
+          <TabsList className="mb-6 grid w-full grid-cols-1 md:w-auto md:grid-cols-3">
             <TabsTrigger value="users" className="flex items-center">
               <Users className="mr-2 h-4 w-4" />
               <span>Users</span>
@@ -126,6 +128,10 @@ export default function Admin() {
             <TabsTrigger value="sync" className="flex items-center">
               <RefreshCw className="mr-2 h-4 w-4" />
               <span>Sync</span>
+            </TabsTrigger>
+            <TabsTrigger value="alerts" className="flex items-center">
+              <Bell className="mr-2 h-4 w-4" />
+              <span>Alerts</span>
             </TabsTrigger>
           </TabsList>
 
@@ -221,8 +227,181 @@ export default function Admin() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="alerts" className="mt-0 space-y-6">
+            <SquareRateLimitAlertSettingsCard />
+          </TabsContent>
         </Tabs>
       </div>
     </div>
+  );
+}
+
+interface AlertSettingsResponse {
+  threshold: number;
+  windowMs: number;
+  cooldownMs: number;
+  webhookConfigured: boolean;
+}
+
+const ALERT_SETTINGS_KEY = ['/api/admin/alerts/square-rate-limit'] as const;
+
+/**
+ * Settings card for the in-process Square 429 alerter. Lets on-call
+ * tune sensitivity (count + rolling window) and quiet-period without
+ * a deploy. The webhook URL itself stays in the deployment env and
+ * is intentionally never round-tripped through the UI; we only show
+ * a "configured / not configured" indicator.
+ */
+function SquareRateLimitAlertSettingsCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError, error, refetch } = useQuery<AlertSettingsResponse>({
+    queryKey: ALERT_SETTINGS_KEY,
+  });
+
+  // Local form state — the inputs are minute-based to match how
+  // operators reason about quiet hours, but the API speaks ms.
+  const [threshold, setThreshold] = useState('');
+  const [windowMin, setWindowMin] = useState('');
+  const [cooldownMin, setCooldownMin] = useState('');
+
+  useEffect(() => {
+    if (!data) return;
+    setThreshold(String(data.threshold));
+    setWindowMin(String(Math.round(data.windowMs / 60000)));
+    setCooldownMin(String(Math.round(data.cooldownMs / 60000)));
+  }, [data]);
+
+  const mutation = useMutation({
+    mutationFn: (body: { threshold: number; windowMs: number; cooldownMs: number }) =>
+      apiRequest('PUT', '/api/admin/alerts/square-rate-limit', {
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      toast({ title: 'Alert thresholds updated', description: 'Changes are live immediately.' });
+      queryClient.invalidateQueries({ queryKey: ALERT_SETTINGS_KEY });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Could not save alert settings.';
+      toast({ title: 'Update failed', description: message, variant: 'destructive' });
+    },
+  });
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = Number.parseInt(threshold, 10);
+    const w = Number.parseInt(windowMin, 10);
+    const c = Number.parseInt(cooldownMin, 10);
+    if (!Number.isFinite(t) || !Number.isFinite(w) || !Number.isFinite(c)) {
+      toast({
+        title: 'Invalid values',
+        description: 'All fields must be whole numbers.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    mutation.mutate({
+      threshold: t,
+      windowMs: w * 60_000,
+      cooldownMs: c * 60_000,
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Bell className="h-5 w-5 text-muted-foreground" />
+          Square Rate-Limit (HTTP 429) Alert
+        </CardTitle>
+        <CardDescription>
+          When Square throttles us, the server fires a webhook alert if enough 429s land in the
+          rolling window. Use these knobs to quiet noisy periods or tighten sensitivity after an
+          incident — changes take effect immediately, no restart required.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="h-4 w-4" />
+            <span>Loading current settings...</span>
+          </div>
+        ) : isError || !data ? (
+          // Surface load failures explicitly (e.g. missing app_settings
+          // table on an env that hasn't bootstrapped yet) so admins
+          // see an actionable error instead of an indefinite spinner.
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-medium">Could not load alert settings.</p>
+                <p className="text-xs opacity-80">
+                  {error instanceof Error ? error.message : 'Please try again.'}
+                </p>
+              </div>
+            </div>
+            <Button type="button" variant="outline" onClick={() => refetch()} className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={onSubmit} className="space-y-4 max-w-md">
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+              Webhook URL:{' '}
+              <span className={data.webhookConfigured ? 'font-medium text-green-700' : 'font-medium text-amber-700'}>
+                {data.webhookConfigured ? 'configured' : 'not configured (alerts will not fire)'}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="alert-threshold">Threshold (events)</Label>
+                <Input
+                  id="alert-threshold"
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={threshold}
+                  onChange={(e) => setThreshold(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="alert-window">Window (minutes)</Label>
+                <Input
+                  id="alert-window"
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={windowMin}
+                  onChange={(e) => setWindowMin(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="alert-cooldown">Cooldown (minutes)</Label>
+                <Input
+                  id="alert-cooldown"
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={cooldownMin}
+                  onChange={(e) => setCooldownMin(e.target.value)}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Fires when at least <strong>threshold</strong> Square 429s land within the rolling{' '}
+              <strong>window</strong>; then waits <strong>cooldown</strong> before firing again.
+            </p>
+            <div className="flex justify-end">
+              <Button type="submit" disabled={mutation.isPending} className="gap-2">
+                {mutation.isPending ? <Spinner className="h-4 w-4" /> : null}
+                {mutation.isPending ? 'Saving...' : 'Save alert thresholds'}
+              </Button>
+            </div>
+          </form>
+        )}
+      </CardContent>
+    </Card>
   );
 }

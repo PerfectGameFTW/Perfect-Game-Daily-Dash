@@ -40,6 +40,14 @@ export interface AlertConfig {
   cooldownMs: number;
 }
 
+/** Subset of `AlertConfig` admins can tune at runtime. The webhook
+ *  URL is deliberately excluded — it's a credential and stays in env. */
+export interface AlertTunableConfig {
+  threshold: number;
+  windowMs: number;
+  cooldownMs: number;
+}
+
 function intFromEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -47,7 +55,7 @@ function intFromEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-function loadConfig(): AlertConfig {
+function loadEnvBaseline(): AlertConfig {
   return {
     webhookUrl: process.env.SQUARE_RATE_LIMIT_ALERT_WEBHOOK_URL || null,
     threshold: intFromEnv('SQUARE_RATE_LIMIT_ALERT_THRESHOLD', 1),
@@ -80,9 +88,50 @@ async function defaultNotifier(url: string, payload: { text: string }): Promise<
 class RateLimitAlerter {
   private events: RateLimitEvent[] = [];
   private lastAlertAt: number | null = null;
-  private config: AlertConfig = loadConfig();
+  // `envBaseline` is the env-derived defaults (webhook URL + initial
+  // threshold/window/cooldown). `runtimeOverride` is the admin-tuned
+  // subset that takes precedence when present. Effective config is
+  // `envBaseline` merged with `runtimeOverride` and is recomputed on
+  // every `record()` so updates from `setRuntimeOverride()` apply
+  // without restarting the server.
+  private envBaseline: AlertConfig = loadEnvBaseline();
+  private runtimeOverride: AlertTunableConfig | null = null;
   private notifier: Notifier | null = null;
   private now: () => number = () => Date.now();
+
+  private effectiveConfig(): AlertConfig {
+    const o = this.runtimeOverride;
+    if (!o) return this.envBaseline;
+    return {
+      webhookUrl: this.envBaseline.webhookUrl,
+      threshold: o.threshold,
+      windowMs: o.windowMs,
+      cooldownMs: o.cooldownMs,
+    };
+  }
+
+  /** Returns a snapshot of the currently effective config. Used by
+   *  the admin API to render the settings UI. */
+  getEffectiveConfig(): AlertConfig {
+    return this.effectiveConfig();
+  }
+
+  /** Returns just the admin-tunable subset of the effective config. */
+  getTunable(): AlertTunableConfig {
+    const c = this.effectiveConfig();
+    return { threshold: c.threshold, windowMs: c.windowMs, cooldownMs: c.cooldownMs };
+  }
+
+  /** Apply (or clear) an admin-supplied override. Takes effect
+   *  immediately on the next event recorded. Pass `null` to fall
+   *  back to env defaults. */
+  setRuntimeOverride(next: AlertTunableConfig | null): void {
+    this.runtimeOverride = next;
+    // Drop the cooldown timer when config changes so a freshly-tuned
+    // threshold isn't masked by a stale cooldown from the previous
+    // (potentially much-laxer) settings.
+    this.lastAlertAt = null;
+  }
 
   /** Test-only: override config, notifier, and clock. */
   reconfigure(opts: {
@@ -90,7 +139,7 @@ class RateLimitAlerter {
     notifier?: Notifier | null;
     now?: () => number;
   }): void {
-    if (opts.config) this.config = { ...this.config, ...opts.config };
+    if (opts.config) this.envBaseline = { ...this.envBaseline, ...opts.config };
     if (opts.notifier !== undefined) this.notifier = opts.notifier;
     if (opts.now) this.now = opts.now;
   }
@@ -99,25 +148,27 @@ class RateLimitAlerter {
   reset(): void {
     this.events = [];
     this.lastAlertAt = null;
-    this.config = loadConfig();
+    this.envBaseline = loadEnvBaseline();
+    this.runtimeOverride = null;
     this.notifier = null;
     this.now = () => Date.now();
   }
 
   record(syncType: string, source: string): void {
     const t = this.now();
+    const cfg = this.effectiveConfig();
     this.events.push({ ts: t, syncType, source });
-    const cutoff = t - this.config.windowMs;
+    const cutoff = t - cfg.windowMs;
     while (this.events.length > 0 && this.events[0].ts < cutoff) {
       this.events.shift();
     }
-    this.maybeFire(t);
+    this.maybeFire(t, cfg);
   }
 
-  private maybeFire(now: number): void {
-    if (this.events.length < this.config.threshold) return;
-    if (this.lastAlertAt !== null && now - this.lastAlertAt < this.config.cooldownMs) return;
-    if (!this.config.webhookUrl && !this.notifier) return;
+  private maybeFire(now: number, cfg: AlertConfig): void {
+    if (this.events.length < cfg.threshold) return;
+    if (this.lastAlertAt !== null && now - this.lastAlertAt < cfg.cooldownMs) return;
+    if (!cfg.webhookUrl && !this.notifier) return;
 
     this.lastAlertAt = now;
 
@@ -133,13 +184,13 @@ class RateLimitAlerter {
       .map(([k, v]) => `${k}=${v}`)
       .join(', ');
 
-    const windowMin = Math.round(this.config.windowMs / 60000);
+    const windowMin = Math.round(cfg.windowMs / 60000);
     const text =
       `:rotating_light: Square rate-limit (HTTP 429): ${this.events.length} ` +
       `event${this.events.length === 1 ? '' : 's'} in the last ${windowMin}m — ${breakdown}`;
 
     const send = this.notifier ?? ((p: { text: string }) =>
-      defaultNotifier(this.config.webhookUrl!, p));
+      defaultNotifier(cfg.webhookUrl!, p));
 
     // Fire-and-forget; webhook failures are logged inside the notifier.
     void send({ text });

@@ -695,6 +695,69 @@ export function createApiRouter(): Router {
     }
   });
 
+  // Admin: read/update the in-process Square 429 alerter thresholds.
+  // GET returns the currently effective tunable config (env defaults
+  // merged with any persisted override). PUT validates, persists to
+  // app_settings, and pushes the new values into the live alerter so
+  // the change applies without a server restart.
+  router.get(
+    '/admin/alerts/square-rate-limit',
+    requireAdmin,
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { squareRateLimitAlerter } = await import(
+          '../services/squareRateLimitAlert'
+        );
+        const tunable = squareRateLimitAlerter.getTunable();
+        const effective = squareRateLimitAlerter.getEffectiveConfig();
+        res.json({
+          ...tunable,
+          // `webhookConfigured` lets the UI tell admins whether a
+          // webhook is wired up at all without leaking the URL itself.
+          webhookConfigured: effective.webhookUrl !== null,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  router.put(
+    '/admin/alerts/square-rate-limit',
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { squareRateLimitAlertSettingsSchema } = await import(
+          '@shared/schema'
+        );
+        const parsed = squareRateLimitAlertSettingsSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({
+            error: 'Invalid alert settings',
+            issues: parsed.error.issues.map((i) => ({
+              path: i.path.join('.'),
+              message: i.message,
+            })),
+          });
+        }
+        const { applyAndPersistSquareRateLimitAlertOverride } = await import(
+          '../services/squareRateLimitAlertSettings'
+        );
+        await applyAndPersistSquareRateLimitAlertOverride(parsed.data);
+        const { squareRateLimitAlerter } = await import(
+          '../services/squareRateLimitAlert'
+        );
+        const effective = squareRateLimitAlerter.getEffectiveConfig();
+        res.json({
+          ...squareRateLimitAlerter.getTunable(),
+          webhookConfigured: effective.webhookUrl !== null,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // NOTE: do NOT attach the error middleware here — `server/routes.ts`
   // adds more routes to this router AFTER createApiRouter() returns,
   // and Express won't dispatch an error middleware to a route that was

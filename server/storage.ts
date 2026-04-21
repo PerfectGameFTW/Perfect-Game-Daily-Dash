@@ -69,6 +69,13 @@ export interface IStorage {
   // MCP read-query audit log
   recordMcpQueryAudit(entry: InsertMcpQueryAudit): Promise<void>;
   pruneMcpQueryAudit(maxAgeDays: number): Promise<number>;
+
+  // Generic per-deployment runtime settings (app_settings table). Values
+  // are JSON-typed and intentionally untyped at the storage layer; each
+  // caller is responsible for validating with its own zod schema before
+  // using the result.
+  getAppSetting(key: string): Promise<unknown | undefined>;
+  setAppSetting(key: string, value: unknown): Promise<void>;
 }
 
 // No MemStorage implementation - we now exclusively use PgStorage for all data storage
