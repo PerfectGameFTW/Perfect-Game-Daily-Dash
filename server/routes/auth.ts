@@ -8,18 +8,24 @@ import { Router, Request, Response } from 'express';
 import { authService } from '../services/authService';
 import { createSafeUser, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
-import { adminCreateUserSchema } from '../../shared/schema';
+import { adminCreateUserSchema, strongPasswordSchema } from '../../shared/schema';
 import { authLimiter } from '../middleware/rateLimiter';
 
 // Validation schemas
+//
+// Login intentionally accepts any non-empty password up to a sane upper
+// bound. The strong-password policy applies to *creating or changing* a
+// password (registration, reset), not to logging in with an existing one,
+// so legacy accounts with shorter passwords can still sign in and then
+// rotate their password.
 const loginSchema = z.object({
   username: z.string().min(3).max(50),
-  password: z.string().min(6).max(100)
+  password: z.string().min(1).max(128)
 });
 
 const resetPasswordSchema = z.object({
   username: z.string().min(3).max(50),
-  newPassword: z.string().min(6).max(100)
+  newPassword: strongPasswordSchema,
 });
 
 export function createAuthRouter(): Router {

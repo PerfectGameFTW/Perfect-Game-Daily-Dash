@@ -40,8 +40,12 @@ async function main() {
     process.exit(2);
   }
 
-  if (password.length < 8) {
-    console.error('Password must be at least 8 characters for the bootstrap admin.');
+  if (password.length < 12) {
+    console.error('Password must be at least 12 characters for the bootstrap admin.');
+    process.exit(2);
+  }
+  if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    console.error('Password must contain at least one letter and one digit.');
     process.exit(2);
   }
 

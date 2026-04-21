@@ -14,8 +14,13 @@ const loginSchema = z.object({
 const resetSchema = z
   .object({
     username: z.string().min(3, 'Username must be at least 3 characters'),
-    newPassword: z.string().min(6, 'Password must be at least 6 characters'),
-    confirmPassword: z.string().min(6, 'Password must be at least 6 characters'),
+    newPassword: z
+      .string()
+      .min(12, 'Password must be at least 12 characters')
+      .max(128, 'Password must be at most 128 characters')
+      .refine((p) => /[A-Za-z]/.test(p), 'Password must contain at least one letter')
+      .refine((p) => /[0-9]/.test(p), 'Password must contain at least one digit'),
+    confirmPassword: z.string().min(12, 'Password must be at least 12 characters'),
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
     message: 'Passwords do not match',

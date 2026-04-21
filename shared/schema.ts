@@ -270,6 +270,12 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   role: text("role").default("user").notNull(),
+  // Per-account lockout state. failedLoginCount counts consecutive failed
+  // password attempts; it is reset to 0 on a successful login. lockedUntil,
+  // when set to a future timestamp, blocks login attempts for the account
+  // regardless of source IP (see authService.loginUser).
+  failedLoginCount: integer("failed_login_count").default(0).notNull(),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -278,16 +284,34 @@ export const insertUserSchema = createInsertSchema(users).pick({
   role: true,
 });
 
+// Strong password policy applied to anything that *creates or changes* a
+// password (registration, admin-create, password reset). The login schema
+// stays permissive so existing accounts with shorter passwords can still
+// sign in and rotate their password later.
+//
+// Policy: 12-128 chars, must contain at least one letter and at least one
+// digit. Intentionally simple; we do not require symbols or mixed case.
+export const strongPasswordSchema = z
+  .string()
+  .min(12, 'Password must be at least 12 characters')
+  .max(128, 'Password must be at most 128 characters')
+  .refine((p) => /[A-Za-z]/.test(p), {
+    message: 'Password must contain at least one letter',
+  })
+  .refine((p) => /[0-9]/.test(p), {
+    message: 'Password must contain at least one digit',
+  });
+
 // Public self-registration: role is never accepted from the request.
 export const selfRegisterSchema = z.object({
   username: z.string().min(3).max(50),
-  password: z.string().min(6).max(100),
+  password: strongPasswordSchema,
 });
 
 // Admin-create: an authenticated admin may choose the new user's role.
 export const adminCreateUserSchema = z.object({
   username: z.string().min(3).max(50),
-  password: z.string().min(6).max(100),
+  password: strongPasswordSchema,
   role: z.enum(['user', 'admin']).default('user'),
 });
 

@@ -262,6 +262,12 @@ The script wraps a check-and-insert in a transaction guarded by a Postgres advis
 
 The public registration path no longer exists. The admin-create schema (`adminCreateUserSchema` in `shared/schema.ts`) is the only way `role` can be set, and it is server-side validated; values from the request body are otherwise ignored / coerced to `'user'`.
 
+## Auth Policy
+- **Password strength (creation/change)**: New passwords (registration, admin-create, password reset) must be 12-128 characters and contain at least one letter and one digit. Login intentionally allows shorter legacy passwords through so existing accounts can still sign in and rotate via the reset flow. Schema lives in `shared/schema.ts → strongPasswordSchema`.
+- **Per-account lockout**: `users` table carries `failed_login_count` and `locked_until`. After 5 consecutive failed password attempts on the same username, the account is locked for 15 minutes regardless of source IP — defeats IP-rotating credential-stuffing botnets that the per-IP rate limiter cannot stop. A successful login resets the counter and clears the lock. Counter increment + threshold check happen in a single atomic UPDATE.
+- **Lockout is unobservable**: A locked account returns the same 401 / `Invalid username or password` body as a wrong password, and `loginUser` always runs exactly one `bcrypt.compare` (against either the real hash or a constant dummy hash) so the three failure paths — unknown user, locked account, wrong password — are indistinguishable by status, body, and wall-clock time.
+- **Session fixation**: Login regenerates the session ID before any authenticated state is attached (`req.session.regenerate`), invalidating any cookie planted before login.
+
 ## Security Hardening
 - **Rate limiting**: All `/api` routes limited to 100 req/min; login limited to 10 attempts per 15 min; sync endpoints limited to 5 req/min
 - **Auth on API routes**: All data-fetching routes require authenticated session (except `/api/health` and `/api/sync/status`)

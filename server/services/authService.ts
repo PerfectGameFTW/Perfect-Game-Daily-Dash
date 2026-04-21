@@ -31,6 +31,12 @@ const BOOTSTRAP_ADVISORY_LOCK_KEY = BigInt('8472619341205310');
 const DUMMY_BCRYPT_HASH =
   '$2b$10$CwTycUXWue0Thq9StjUM0uJ8K8tQy2j8XaQjvs8R0p4U6Ww2X0o7C';
 
+// Per-account lockout policy. After LOCKOUT_THRESHOLD consecutive failed
+// password attempts, the account is locked for LOCKOUT_WINDOW_MS regardless
+// of the source IP. A successful login clears the counter.
+const LOCKOUT_THRESHOLD = 5;
+const LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
+
 export class AuthService {
   /**
    * Register a new user
@@ -116,18 +122,53 @@ export class AuthService {
    * @returns User if authentication successful, null otherwise
    */
   async loginUser(username: string, password: string): Promise<User | null> {
-    // Look up the user. If the username does not exist, we still run a real
-    // bcrypt.compare against a constant dummy hash so the response time of
-    // this code path is indistinguishable from the "user exists, wrong
-    // password" path. This prevents an attacker from enumerating valid
-    // usernames by measuring login latency.
+    // Look up the user. We always run exactly one bcrypt.compare so that
+    // the response time is indistinguishable across the three failure
+    // paths (no such user, locked account, wrong password). The dummy hash
+    // is used whenever we don't have — or won't trust — the real hash.
     const user = await this.getUserByUsername(username);
-    const hashToCompare = user ? user.password : DUMMY_BCRYPT_HASH;
+    const now = new Date();
+    const isLocked = !!(user && user.lockedUntil && user.lockedUntil > now);
+
+    const hashToCompare =
+      user && !isLocked ? user.password : DUMMY_BCRYPT_HASH;
 
     const passwordMatch = await compare(password, hashToCompare);
 
-    if (!user || !passwordMatch) {
+    // Unknown username or locked account: indistinguishable from a wrong
+    // password to the caller. We deliberately do NOT increment any counter
+    // here — for unknown usernames there is nothing to count, and for
+    // already-locked accounts further increments would just push the
+    // unlock time around without revealing anything new.
+    if (!user || isLocked) {
       return null;
+    }
+
+    if (!passwordMatch) {
+      // Atomically increment the failure counter. If the new value crosses
+      // the threshold, set lockedUntil = now + window in the same UPDATE
+      // so the transition is race-free even under concurrent attempts.
+      const lockUntil = new Date(Date.now() + LOCKOUT_WINDOW_MS);
+      await db.execute(sql`
+        UPDATE users
+        SET failed_login_count = failed_login_count + 1,
+            locked_until = CASE
+              WHEN failed_login_count + 1 >= ${LOCKOUT_THRESHOLD}
+                THEN ${lockUntil.toISOString()}::timestamptz
+              ELSE locked_until
+            END
+        WHERE id = ${user.id}
+      `);
+      return null;
+    }
+
+    // Successful login: reset the failure counter and clear any prior lock.
+    // (If neither was set, skip the write to avoid an unnecessary round trip.)
+    if (user.failedLoginCount > 0 || user.lockedUntil) {
+      await db
+        .update(users)
+        .set({ failedLoginCount: 0, lockedUntil: null })
+        .where(eq(users.id, user.id));
     }
 
     return user;
