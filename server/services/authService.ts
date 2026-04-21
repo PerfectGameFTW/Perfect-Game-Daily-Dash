@@ -13,7 +13,7 @@ import { compare, hash, getRounds } from 'bcryptjs';
 // current cost (see loginUser).
 export const BCRYPT_COST = 12;
 import { createHash, randomBytes } from 'crypto';
-import { and, eq, isNull, gt, or, sql } from 'drizzle-orm';
+import { and, count, eq, isNull, gt, or, sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
   users,
@@ -315,8 +315,11 @@ export class AuthService {
    * @returns The count of users
    */
   async getUsersCount(): Promise<number> {
-    const result = await db.select().from(users);
-    return result.length;
+    // Use SELECT count(*) instead of pulling every user row (including
+    // password hashes) through the ORM. The bootstrap check only needs
+    // a "do any users exist?" boolean, so we never need the rows.
+    const result = await db.select({ value: count() }).from(users);
+    return Number(result[0]?.value ?? 0);
   }
 
   /**
