@@ -8,7 +8,11 @@ import { apiRequest } from '@/lib/queryClient';
 
 const loginSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  // Login validation is intentionally permissive (matches the server's
+  // login schema) so legacy accounts created before the strong-password
+  // policy can still sign in. Strong-password rules apply to the reset
+  // form below.
+  password: z.string().min(1, 'Password is required'),
 });
 
 const resetSchema = z
