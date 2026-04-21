@@ -163,6 +163,22 @@ export function initWebSocket(server: Server): void {
   });
 }
 
+export function closeWebSocket(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!wss) return resolve();
+    const server = wss;
+    wss = null;
+    for (const client of Array.from(server.clients)) {
+      try {
+        client.terminate();
+      } catch {
+        // ignore — best effort during shutdown
+      }
+    }
+    server.close(() => resolve());
+  });
+}
+
 export function broadcast(event: string, data?: Record<string, unknown>): void {
   if (!wss) return;
   const message = JSON.stringify({ type: event, ...data });

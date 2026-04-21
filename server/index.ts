@@ -2,7 +2,9 @@ import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { db, sql, ensureMcpReadRole } from "./db";
+import type { Server as HttpServer } from "http";
+import { db, sql, pool, ensureMcpReadRole } from "./db";
+import { closeWebSocket } from "./ws";
 import { sessionMiddleware, legacyCookieCompatMiddleware } from "./session";
 import { pgStorage } from "./pgStorage";
 import { authService } from "./services/authService";
@@ -14,14 +16,86 @@ import { toSafeErrorResponse, sendError, ForbiddenError } from "./errors";
 import { isAllowedOrigin } from "./security/origin";
 import { SESSION_ABSOLUTE_MS } from "./sessionConfig";
 
-// Prevent unhandled async errors from crashing the process.
-// Node.js 15+ exits by default on unhandledRejection — this keeps the server alive.
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled promise rejection (caught by global handler):', reason);
-});
+// Track the live HTTP server so the fatal-error shutdown routine can
+// stop accepting new connections before the process exits. Populated
+// once `server.listen()` is invoked below.
+let httpServer: HttpServer | null = null;
+
+// Graceful shutdown on fatal, non-recoverable errors.
+//
+// Per the Node docs, after `uncaughtException` the process is in an
+// undefined state — open transactions, advisory locks, and other
+// resource handles cannot be trusted. For a financial dashboard the
+// only safe response is to stop accepting new work, give in-flight
+// requests a brief grace period to finish, release the DB pool (which
+// drops any held Postgres locks), and exit non-zero so Replit's
+// supervisor restarts the workflow into a clean process.
+//
+// `unhandledRejection` is treated as equally fatal: a promise whose
+// rejection nobody handled is, by definition, an unanticipated error
+// path, and Node 15+ would itself exit by default. We route it
+// through the same shutdown so cleanup is consistent either way.
+const SHUTDOWN_GRACE_MS = 5000; // wait for in-flight requests
+const SHUTDOWN_HARD_TIMEOUT_MS = 10000; // hard cap so a stuck close can't hang forever
+let shuttingDown = false;
+
+async function fatalShutdown(label: string, err: unknown): Promise<void> {
+  if (shuttingDown) {
+    // A second fatal during shutdown means cleanup itself is broken.
+    // Skip straight to a hard exit so we don't get stuck in a loop.
+    console.error(`[shutdown] second fatal during shutdown (${label}):`, err);
+    process.exit(1);
+  }
+  shuttingDown = true;
+  console.error(`[shutdown] ${label}:`, err);
+
+  // Hard cap: if any close hangs (a stuck DB query, a wedged socket),
+  // force-exit so the supervisor can restart us.
+  const hardTimer = setTimeout(() => {
+    console.error('[shutdown] hard timeout reached, force-exiting');
+    process.exit(1);
+  }, SHUTDOWN_HARD_TIMEOUT_MS);
+  hardTimer.unref();
+
+  try {
+    // 1. Stop accepting new HTTP connections. Existing requests get
+    //    a short grace period to drain.
+    if (httpServer) {
+      await new Promise<void>((resolve) => {
+        const drainTimer = setTimeout(resolve, SHUTDOWN_GRACE_MS);
+        httpServer!.close(() => {
+          clearTimeout(drainTimer);
+          resolve();
+        });
+      });
+    }
+
+    // 2. Tear down the WebSocket server and terminate live clients
+    //    so /ws subscribers see a clean disconnect.
+    await closeWebSocket().catch((e) => {
+      console.error('[shutdown] websocket close failed:', e);
+    });
+
+    // 3. Drain the Postgres pool. Ending the pool closes every
+    //    connection, which in turn releases any session-scoped
+    //    advisory locks or open transactions held by sync work.
+    await pool.end().catch((e) => {
+      console.error('[shutdown] pg pool end failed:', e);
+    });
+  } catch (cleanupErr) {
+    console.error('[shutdown] cleanup error:', cleanupErr);
+  } finally {
+    clearTimeout(hardTimer);
+    process.exit(1);
+  }
+}
 
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception (caught by global handler):', err);
+  void fatalShutdown('uncaughtException', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  void fatalShutdown('unhandledRejection', reason);
 });
 
 validateEnv();
@@ -380,6 +454,7 @@ async function exitWithError(error: unknown) {
 
     log('Registering routes...');
     const server = await registerRoutes(app);
+    httpServer = server;
     log('✓ Routes registered successfully');
 
     // Error handling middleware — log full error server-side, return sanitized payload to client.
