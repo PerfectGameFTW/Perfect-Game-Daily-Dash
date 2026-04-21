@@ -434,6 +434,49 @@ export function createApiRouter(): Router {
       next(error);
     }
   });
+
+  /**
+   * Fix a single gift card's activation amount
+   * POST /api/fix-gift-card/:id
+   *
+   * Operator-facing endpoint to retry the activation-amount link for one
+   * specific gift card by internal ID. Re-homed here from the deleted
+   * `server/api/giftCardFixer.ts` (the rest of that router was duplicate
+   * dead code shadowed by the handlers above).
+   */
+  router.post('/fix-gift-card/:id', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const giftCardId = parseInt(req.params.id, 10);
+      if (isNaN(giftCardId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid gift card ID',
+          error: 'ID must be a number',
+        });
+      }
+
+      const { fixNewGiftCardActivationAmount } = await import('../services/enhancedGiftCardFix');
+      const result = await fixNewGiftCardActivationAmount(giftCardId);
+
+      if (result.updated) {
+        res.json({
+          success: true,
+          message: `Successfully fixed gift card #${giftCardId} with activation amount $${result.activationAmount}.`,
+          source: result.source,
+          result,
+        });
+      } else {
+        res.json({
+          success: false,
+          message: `Could not fix gift card #${giftCardId}: ${result.error || 'Unknown error'}`,
+          source: result.source,
+          result,
+        });
+      }
+    } catch (error) {
+      next(error);
+    }
+  });
   
   /**
    * Sync Status API
