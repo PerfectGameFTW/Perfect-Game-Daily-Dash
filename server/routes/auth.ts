@@ -31,6 +31,7 @@ import {
 } from '../errors';
 import { authLimiter, passwordResetRequestLimiter } from '../middleware/rateLimiter';
 import { SESSION_COOKIE_NAME } from '../sessionConfig';
+import { pool } from '../db';
 
 // Validation schemas
 //
@@ -387,6 +388,30 @@ export function createAuthRouter(): Router {
         if (!deleted) {
           throw new NotFoundError('User not found');
         }
+
+        // Invalidate any active sessions belonging to the deleted user
+        // so the cookie they're holding stops working immediately.
+        // The connect-pg-simple `sessions` table stores the session
+        // payload as JSON in `sess`. Compare the `userId` field as a
+        // string ($1::text) so a malformed/non-numeric payload from
+        // an unrelated session can't blow up the DELETE with a cast
+        // error and cause us to skip the purge entirely.
+        try {
+          await pool.query(
+            `DELETE FROM sessions WHERE sess->>'userId' = $1::text`,
+            [userId],
+          );
+        } catch (sessionErr) {
+          // Don't fail the request — the user row is already gone, so
+          // the next authenticated request will be rejected by
+          // requireAuth's user re-fetch anyway. Log so an operator can
+          // investigate the session-store hiccup.
+          console.error(
+            'Failed to purge sessions for deleted user:',
+            sessionErr,
+          );
+        }
+
         res.json({ success: true });
       } catch (error) {
         console.error('Error deleting user:', error);
