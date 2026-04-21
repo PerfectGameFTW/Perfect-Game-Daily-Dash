@@ -8,7 +8,11 @@ import { Router, Request, Response } from 'express';
 import { authService } from '../services/authService';
 import { createSafeUser, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
-import { adminCreateUserSchema, strongPasswordSchema } from '../../shared/schema';
+import {
+  adminCreateUserSchema,
+  adminUpdateUserEmailSchema,
+  strongPasswordSchema,
+} from '../../shared/schema';
 import { authLimiter, passwordResetRequestLimiter } from '../middleware/rateLimiter';
 
 // Validation schemas
@@ -280,10 +284,10 @@ export function createAuthRouter(): Router {
         });
       }
 
-      const { username, password, role } = validationResult.data;
+      const { username, password, role, email } = validationResult.data;
 
       try {
-        const user = await authService.registerUser(username, password, role);
+        const user = await authService.registerUser(username, password, role, email);
         res.json({
           success: true,
           user: createSafeUser(user),
@@ -312,6 +316,42 @@ export function createAuthRouter(): Router {
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // Set or clear the recovery email on a user account (admin only). The
+  // password-reset flow needs an email on file to deliver a one-time
+  // link, so this is the entry point operators use to enroll existing
+  // accounts (or correct a typo) in account recovery.
+  router.patch(
+    '/users/:id/email',
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = parseInt(req.params.id, 10);
+        if (isNaN(userId)) {
+          return res.status(400).json({ error: 'Invalid user ID' });
+        }
+        const validation = adminUpdateUserEmailSchema.safeParse(req.body);
+        if (!validation.success) {
+          return res.status(400).json({
+            error: 'Invalid input',
+            details: validation.error.format(),
+          });
+        }
+        const updated = await authService.updateUserEmail(
+          userId,
+          validation.data.email,
+        );
+        if (!updated) {
+          return res.status(404).json({ error: 'User not found' });
+        }
+        res.json({ success: true, user: createSafeUser(updated) });
+      } catch (error) {
+        console.error('Error updating user email:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    },
+  );
 
   // Delete user (admin only)
   router.delete('/users/:id', requireAuth, requireAdmin, async (req: Request & { session?: { userId?: number } }, res: Response) => {

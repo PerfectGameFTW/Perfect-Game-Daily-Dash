@@ -71,7 +71,12 @@ export class AuthService {
    * @param role User role (default: 'user')
    * @returns Created user
    */
-  async registerUser(username: string, password: string, role: 'user' | 'admin' = 'user'): Promise<User> {
+  async registerUser(
+    username: string,
+    password: string,
+    role: 'user' | 'admin' = 'user',
+    email?: string,
+  ): Promise<User> {
     // Check if user already exists
     const existingUser = await this.getUserByUsername(username);
     if (existingUser) {
@@ -82,14 +87,33 @@ export class AuthService {
     const hashedPassword = await hash(password, 10);
 
     // Create user with validated role (defaults to 'user' for any unexpected value)
-    const userData: InsertUser = {
+    const userData: InsertUser & { email?: string } = {
       username,
       password: hashedPassword,
       role: role === 'admin' ? 'admin' : 'user',
+      ...(email ? { email } : {}),
     };
 
     const result = await db.insert(users).values(userData).returning();
     return result[0];
+  }
+
+  /**
+   * Set or clear the recovery email on an existing user. Pass an empty
+   * string to clear the email (which disables password recovery for
+   * that account).
+   *
+   * @returns The updated user, or null if no row matched.
+   */
+  async updateUserEmail(userId: number, email: string): Promise<User | null> {
+    const normalized = email.trim();
+    const valueToWrite = normalized === '' ? null : normalized;
+    const result = await db
+      .update(users)
+      .set({ email: valueToWrite })
+      .where(eq(users.id, userId))
+      .returning();
+    return result[0] ?? null;
   }
 
   /**

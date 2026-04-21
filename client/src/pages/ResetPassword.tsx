@@ -68,12 +68,13 @@ export default function ResetPassword() {
             'This reset link is invalid or has expired. Please request a new one.',
         );
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Complete reset error:', error);
-      setErrorMessage(
-        error?.message ||
-          'This reset link is invalid or has expired. Please request a new one.',
-      );
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'This reset link is invalid or has expired. Please request a new one.';
+      setErrorMessage(msg);
     } finally {
       setIsSubmitting(false);
     }

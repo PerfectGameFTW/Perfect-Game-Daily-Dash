@@ -338,12 +338,33 @@ export const selfRegisterSchema = z.object({
   password: strongPasswordSchema,
 });
 
-// Admin-create: an authenticated admin may choose the new user's role.
+// Admin-create: an authenticated admin may choose the new user's role
+// and (optionally) the recovery email address that the password-reset
+// flow will deliver one-time links to. Email is optional so the existing
+// admin-create UI keeps working unchanged, but accounts created without
+// an email cannot recover their password until one is added (see
+// adminUpdateUserEmailSchema below).
 export const adminCreateUserSchema = z.object({
   username: z.string().min(3).max(50),
   password: strongPasswordSchema,
   role: z.enum(['user', 'admin']).default('user'),
+  email: z.string().trim().email().max(254).optional(),
 });
+
+// Admin-only: set or update the recovery email on an existing account.
+// Accepts an empty string to clear the email (which disables password
+// recovery for that account).
+export const adminUpdateUserEmailSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .max(254)
+    .refine((v) => v === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), {
+      message: 'Must be a valid email address or empty to clear',
+    }),
+});
+
+export type AdminUpdateUserEmailInput = z.infer<typeof adminUpdateUserEmailSchema>;
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type SelfRegisterInput = z.infer<typeof selfRegisterSchema>;
