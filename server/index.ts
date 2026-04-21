@@ -49,31 +49,54 @@ app.disable('etag');
 // HSTS is intentionally OFF in development so a local http://localhost
 // session never gets pinned to https in the browser.
 const isProd = process.env.NODE_ENV === 'production';
+
+// Production CSP: strict same-origin with the bare minimum third-party
+// allowances (Google Fonts) and no inline scripts / no eval.
+const prodCspDirectives = {
+  defaultSrc: ["'self'"],
+  scriptSrc: ["'self'"],
+  // shadcn/Tailwind ship runtime styles, and client/index.html pulls
+  // the Inter font stylesheet from fonts.googleapis.com.
+  styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+  imgSrc: ["'self'", 'data:', 'blob:'],
+  // Inter webfont files are served from fonts.gstatic.com.
+  fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+  // Same-origin XHR + same-origin /ws WebSocket. 'self' covers both
+  // http(s) and ws(s) on the same origin per CSP3.
+  connectSrc: ["'self'"],
+  objectSrc: ["'none'"],
+  frameAncestors: ["'none'"],
+  baseUri: ["'self'"],
+  formAction: ["'self'"],
+  upgradeInsecureRequests: [],
+};
+
+// Development CSP: permissive enough to keep Vite's HMR working
+// (inline scripts/styles, eval-based fast refresh, the HMR WebSocket,
+// blob: workers) while still defending against clickjacking and
+// off-origin script injection. Same-origin only — no third-party
+// scripts allowed even in dev.
+const devCspDirectives = {
+  defaultSrc: ["'self'"],
+  scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'blob:'],
+  styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+  imgSrc: ["'self'", 'data:', 'blob:'],
+  fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+  // ws: covers Vite's HMR socket on http://localhost.
+  connectSrc: ["'self'", 'ws:', 'wss:'],
+  workerSrc: ["'self'", 'blob:'],
+  objectSrc: ["'none'"],
+  frameAncestors: ["'none'"],
+  baseUri: ["'self'"],
+  formAction: ["'self'"],
+};
+
 app.use(
   helmet({
-    contentSecurityPolicy: isProd
-      ? {
-          useDefaults: true,
-          directives: {
-            defaultSrc: ["'self'"],
-            scriptSrc: ["'self'"],
-            // shadcn/Tailwind ship runtime styles, and client/index.html
-            // pulls the Inter font stylesheet from fonts.googleapis.com.
-            styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-            imgSrc: ["'self'", 'data:', 'blob:'],
-            // Inter webfont files are served from fonts.gstatic.com.
-            fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
-            // Same-origin XHR + same-origin /ws WebSocket. 'self' covers
-            // both http(s) and ws(s) on the same origin per CSP3.
-            connectSrc: ["'self'"],
-            objectSrc: ["'none'"],
-            frameAncestors: ["'none'"],
-            baseUri: ["'self'"],
-            formAction: ["'self'"],
-            upgradeInsecureRequests: [],
-          },
-        }
-      : false, // Vite dev server needs inline scripts + eval; CSP off in dev.
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: isProd ? prodCspDirectives : devCspDirectives,
+    },
     strictTransportSecurity: isProd
       ? { maxAge: 31536000, includeSubDomains: true, preload: true }
       : false,
