@@ -10,7 +10,7 @@ import { pgStorage } from "./pgStorage";
 import { authService } from "./services/authService";
 import { startScheduler } from "./services/schedulerService";
 import { validateEnv } from "./validateEnv";
-import { apiLimiter } from "./middleware/rateLimiter";
+import { apiLimiter, mcpLimiter } from "./middleware/rateLimiter";
 import { registerMcpRoutes } from "./mcp";
 import { toSafeErrorResponse, sendError, ForbiddenError } from "./errors";
 import { isAllowedOrigin } from "./security/origin";
@@ -195,7 +195,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 app.use('/api', apiLimiter);
-app.use('/mcp', apiLimiter);
+// /mcp gets the global apiLimiter PLUS a tighter mcpLimiter (20/min)
+// because each MCP call may execute a SQL query against the read role.
+app.use('/mcp', apiLimiter, mcpLimiter);
 
 // Session middleware (shared with the WebSocket upgrade handler in
 // server/ws.ts so /ws can authenticate the same session cookie).

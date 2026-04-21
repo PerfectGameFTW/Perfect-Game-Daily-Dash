@@ -16,7 +16,12 @@ import { paymentService } from '../services/paymentService';
 import { DateRange, dateRangeSchema } from '../../shared/schema';
 import { broadcast } from '../ws';
 import { requireAuth, requireAdmin } from '../middleware/auth';
-import { syncLimiter } from '../middleware/rateLimiter';
+import {
+  syncLimiter,
+  heavyReadLimiter,
+  statusPollLimiter,
+  analysisLimiter,
+} from '../middleware/rateLimiter';
 import { toSafeErrorResponse } from '../errors';
 import { logger, errorContext } from '../logger';
 
@@ -105,7 +110,7 @@ export function createApiRouter(): Router {
    * Dashboard Summary API
    * GET /api/summary
    */
-  router.get('/summary', async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/summary', heavyReadLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const summary = await dashboardService.getDailySummary(dateRange, startDate, endDate);
@@ -145,14 +150,14 @@ export function createApiRouter(): Router {
       next(error);
     }
   };
-  router.get('/category-revenue', categoryRevenueHandler);
-  router.get('/revenue-by-category', categoryRevenueHandler);
+  router.get('/category-revenue', heavyReadLimiter, categoryRevenueHandler);
+  router.get('/revenue-by-category', heavyReadLimiter, categoryRevenueHandler);
   
   /**
    * Hourly Revenue API
    * GET /api/hourly-revenue
    */
-  router.get('/hourly-revenue', async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/hourly-revenue', heavyReadLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const hourlyRevenue = await dashboardService.getHourlyRevenue(dateRange, startDate, endDate);
@@ -166,7 +171,7 @@ export function createApiRouter(): Router {
    * Gift Card Summary API
    * GET /api/gift-card-summary
    */
-  router.get('/gift-card-summary', async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/gift-card-summary', heavyReadLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const giftCardSummary = await dashboardService.getGiftCardSummary(dateRange, startDate, endDate);
@@ -180,7 +185,7 @@ export function createApiRouter(): Router {
    * Detailed Transactions API
    * GET /api/detailed-transactions
    */
-  router.get('/detailed-transactions', async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/detailed-transactions', heavyReadLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
       const detailedTransactions = await dashboardService.getDetailedTransactionBreakdown(
@@ -198,7 +203,7 @@ export function createApiRouter(): Router {
    * Sync Progress API
    * GET /api/sync-progress
    */
-  router.get('/sync-progress', async (_req: Request, res: Response, next: NextFunction) => {
+  router.get('/sync-progress', statusPollLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const progress = await syncService.getSyncProgress();
       res.json(progress);
@@ -401,7 +406,7 @@ export function createApiRouter(): Router {
    * and their linking to original orders, including detailed statistics for monitoring
    * the health of the gift card system.
    */
-  router.get('/analyze-gift-cards', async (_req: Request, res: Response, next: NextFunction) => {
+  router.get('/analyze-gift-cards', analysisLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       // Import the enhanced gift card analysis service
       const { analyzeGiftCardLinkingStatus } = await import('../services/enhancedGiftCardFix');
@@ -470,7 +475,7 @@ export function createApiRouter(): Router {
    * Returns the most recent sync timestamps for every sync type so the UI can
    * display a "last synced" indicator.
    */
-  router.get('/sync/status', async (_req: Request, res: Response, next: NextFunction) => {
+  router.get('/sync/status', statusPollLimiter, async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const { db } = await import('../db');
       const { syncState } = await import('../../shared/schema');
