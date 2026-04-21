@@ -16,6 +16,7 @@ import * as squareClient from "./squareClient";
 const squareSDK = squareClient.squareClient;
 import { syncService } from "./services/syncService";
 import { requireAuth, requireAdmin } from "./middleware/auth";
+import { toSafeErrorResponse } from "./errors";
 
 // Import the router creators
 import { createApiRouter } from './routes/api';
@@ -47,8 +48,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Square API connection test failed:", error);
       res.status(500).json({
         success: false,
-        error: "Failed to connect to Square API",
-        message: error instanceof Error ? error.message : "Unknown error"
+        ...toSafeErrorResponse(error),
       });
     }
   });
@@ -109,8 +109,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error testing Square Orders API:", error);
       res.status(500).json({
         success: false,
-        message: error instanceof Error ? error.message : "Unknown error",
-        errorDetails: error instanceof Error ? error.stack : undefined
+        ...toSafeErrorResponse(error),
       });
     }
   });
@@ -123,7 +122,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(status);
     } catch (err) {
       console.error('[BackfillStatus] Error:', err);
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json(toSafeErrorResponse(err));
     }
   });
 
@@ -163,7 +162,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(202).json({ success: true, message: result.message });
     } catch (err) {
       console.error('[Backfill] Error:', err);
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json(toSafeErrorResponse(err));
     }
   });
 

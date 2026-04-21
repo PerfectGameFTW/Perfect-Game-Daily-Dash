@@ -17,6 +17,7 @@ import { giftCardFixerRouter } from '../api/giftCardFixer';
 import { broadcast } from '../ws';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { syncLimiter } from '../middleware/rateLimiter';
+import { toSafeErrorResponse } from '../errors';
 
 export function createApiRouter(): Router {
   const router = Router();
@@ -97,14 +98,11 @@ export function createApiRouter(): Router {
    */
   router.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error('API Error:', err);
-    
-    const statusCode = err.name.includes('NotFound') ? 404 :
-                       err.name.includes('Invalid') ? 400 : 500;
-    
-    res.status(statusCode).json({
-      error: err.name,
-      message: err.message
-    });
+
+    const statusCode = err.name?.includes('NotFound') ? 404 :
+                       err.name?.includes('Invalid') ? 400 : 500;
+
+    res.status(statusCode).json(toSafeErrorResponse(err));
   });
   
   /**

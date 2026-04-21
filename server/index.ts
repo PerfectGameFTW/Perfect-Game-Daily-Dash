@@ -9,6 +9,7 @@ import { startScheduler } from "./services/schedulerService";
 import { validateEnv } from "./validateEnv";
 import { apiLimiter } from "./middleware/rateLimiter";
 import { registerMcpRoutes } from "./mcp";
+import { toSafeErrorResponse } from "./errors";
 
 // Prevent unhandled async errors from crashing the process.
 // Node.js 15+ exits by default on unhandledRejection — this keeps the server alive.
@@ -213,13 +214,15 @@ async function exitWithError(error: unknown) {
     const server = await registerRoutes(app);
     log('✓ Routes registered successfully');
 
-    // Error handling middleware
+    // Error handling middleware — log full error server-side, return sanitized payload to client.
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-      const status = err.status || err.statusCode || 500;
-      const message = err.message || "Internal Server Error";
-      log(`Error handler caught: ${err.message}`, 'error');
+      const status = err?.status || err?.statusCode || 500;
+      log(`Error handler caught: ${err?.message ?? err}`, 'error');
+      if (err?.stack) {
+        log(err.stack, 'error');
+      }
       if (!res.headersSent) {
-        res.status(status).json({ message });
+        res.status(status).json(toSafeErrorResponse(err));
       }
     });
 
