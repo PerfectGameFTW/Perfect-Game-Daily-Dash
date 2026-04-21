@@ -133,10 +133,24 @@ export class ServiceUnavailableError extends AppError {
   }
 }
 
+export interface ExternalServiceErrorOptions {
+  /**
+   * Stable machine-readable code identifying the specific upstream
+   * failure (e.g. 'SQUARE_TOKEN_NOT_CONFIGURED', 'SQUARE_SYNC_TIMEOUT').
+   * Defaults to 'EXTERNAL_SERVICE_ERROR' for callers that don't care.
+   */
+  code?: string;
+  details?: unknown;
+}
+
 export class ExternalServiceError extends AppError {
-  constructor(message: string, details?: unknown) {
+  constructor(message: string, opts: ExternalServiceErrorOptions = {}) {
     // 502 Bad Gateway: upstream service failed (Square, SendGrid, etc.).
-    super(message, { statusCode: 502, code: 'EXTERNAL_SERVICE_ERROR', details });
+    super(message, {
+      statusCode: 502,
+      code: opts.code ?? 'EXTERNAL_SERVICE_ERROR',
+      details: opts.details,
+    });
   }
 }
 
