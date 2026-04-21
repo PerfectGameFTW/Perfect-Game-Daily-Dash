@@ -149,6 +149,23 @@ export class AuthService {
   }
 
   /**
+   * Reset a user's password by username.
+   *
+   * @param username Username
+   * @param newPassword New plaintext password (will be hashed)
+   * @returns True if password was reset, false if user not found
+   */
+  async resetPassword(username: string, newPassword: string): Promise<boolean> {
+    const user = await this.getUserByUsername(username);
+    if (!user) {
+      return false;
+    }
+    const hashedPassword = await hash(newPassword, 10);
+    await db.update(users).set({ password: hashedPassword }).where(eq(users.id, user.id));
+    return true;
+  }
+
+  /**
    * Delete a user by ID
    * 
    * @param id User ID to delete

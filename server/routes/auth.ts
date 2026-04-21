@@ -16,6 +16,11 @@ const loginSchema = z.object({
   password: z.string().min(6).max(100)
 });
 
+const resetPasswordSchema = z.object({
+  username: z.string().min(3).max(50),
+  newPassword: z.string().min(6).max(100)
+});
+
 const registerSchema = z.object({
   username: z.string().min(3).max(50),
   password: z.string().min(6).max(100),
@@ -124,6 +129,31 @@ export function createAuthRouter(): Router {
       });
     } catch (error) {
       console.error('Error during login:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Reset password endpoint
+  router.post('/reset-password', authLimiter, async (req: Request, res: Response) => {
+    try {
+      const validationResult = resetPasswordSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({
+          error: 'Invalid input',
+          details: validationResult.error.format()
+        });
+      }
+
+      const { username, newPassword } = validationResult.data;
+      const success = await authService.resetPassword(username, newPassword);
+
+      if (!success) {
+        return res.status(400).json({ error: 'Unable to reset password. Please check your username and try again.' });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error resetting password:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
