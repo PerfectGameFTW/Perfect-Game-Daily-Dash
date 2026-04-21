@@ -474,6 +474,49 @@ export const insertMcpQueryAuditSchema = createInsertSchema(mcpQueryAudit).omit(
 export type InsertMcpQueryAudit = z.infer<typeof insertMcpQueryAuditSchema>;
 export type McpQueryAudit = typeof mcpQueryAudit.$inferSelect;
 
+// Audit log of every historical/backfill sync trigger. Records who started
+// the run (or null for system/scheduler-triggered runs), what parameters
+// they passed, when it ran, and how it ended. Surfaces who is responsible
+// for runaway syncs that would otherwise saturate the shared Square API.
+export const syncAudit = pgTable("sync_audit", {
+  id: serial("id").primaryKey(),
+  syncType: text("sync_type").notNull(),
+  action: text("action").notNull(),
+  actorUserId: integer("actor_user_id"),
+  actorIp: text("actor_ip"),
+  params: jsonb("params").$type<Record<string, unknown>>(),
+  status: text("status").notNull().default("started"),
+  errorMessage: text("error_message"),
+  result: jsonb("result").$type<Record<string, unknown>>(),
+  pagesUsed: integer("pages_used").default(0).notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
+export const insertSyncAuditSchema = createInsertSchema(syncAudit).omit({
+  id: true,
+  startedAt: true,
+});
+
+export type InsertSyncAudit = z.infer<typeof insertSyncAuditSchema>;
+export type SyncAudit = typeof syncAudit.$inferSelect;
+
+// Per-UTC-day Square page-fetch budget shared across every backfill /
+// historical sync run. A single compromised admin can no longer hammer
+// Square indefinitely — once the daily cap is hit the sync loop pauses
+// cleanly until the next UTC day.
+export const syncDailyBudget = pgTable("sync_daily_budget", {
+  day: text("day").primaryKey(),
+  pagesUsed: integer("pages_used").default(0).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+});
+
+export type SyncDailyBudget = typeof syncDailyBudget.$inferSelect;
+
 // Add Order Summary type for dashboard
 export interface OrderSummary {
   totalOrders: number;

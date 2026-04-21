@@ -24,6 +24,23 @@ import { orderService } from './orderService';
 import { paymentService } from './paymentService';
 import { giftCardService } from './giftCardService';
 import { syncCatalog, preloadCatalogCache } from './catalogService';
+import {
+  tryAcquireSyncLock,
+  recordAuditStart,
+  recordAuditFinish,
+  consumeDailyBudget,
+  logIfSquare429,
+  type SyncLock,
+} from './syncLocks';
+
+/** Audit/actor metadata accepted by the user-triggered backfill paths. */
+export interface SyncTriggerContext {
+  actorUserId?: number | null;
+  actorIp?: string | null;
+}
+
+/** Approximate Square page-fetch cost charged per orders/payments chunk. */
+const BACKFILL_BUDGET_PER_CHUNK = 10;
 
 // SyncError now lives in `server/errors.ts` (see Task #58). Re-exported.
 export { SyncError } from '../errors';
@@ -1182,13 +1199,14 @@ export class SyncService {
    * This is the fix for the March 9-20 gap: those 228 cards live in pages that were
    * never reached before a server restart when using listGiftCards.
    */
-  async syncGiftCardsHistoricalBackfill(): Promise<{
+  async syncGiftCardsHistoricalBackfill(ctx: SyncTriggerContext & { skipLock?: boolean } = {}): Promise<{
     processed: number;
     created: number;
     updated: number;
     failed: number;
     pagesProcessed: number;
     finished: boolean;
+    rejected?: 'already_running' | 'daily_budget_exceeded';
   }> {
     const SYNC_TYPE = 'giftCards_historical';
     let processed = 0;
@@ -1197,22 +1215,51 @@ export class SyncService {
     let failed = 0;
     let pagesProcessed = 0;
 
-    let state = await this.getSyncState(SYNC_TYPE);
-
-    // Concurrency guard: allow 3 minutes for a run to complete before treating it as stuck.
-    // (Each call completes in <1 min with the pre-loaded card map — 30 min was too long,
-    //  and would block the startup loop for ages after a server restart.)
-    if (state?.status === 'in_progress') {
-      const elapsed = state.lastSyncedAt ? Date.now() - new Date(state.lastSyncedAt).getTime() : Infinity;
-      if (elapsed < 3 * 60 * 1000) {
-        console.log('[HistoricalGiftCardBackfill] Previous run still in progress — skipping');
-        return { processed: 0, created: 0, updated: 0, failed: 0, pagesProcessed: 0, finished: false };
-      }
-      console.log('[HistoricalGiftCardBackfill] Previous run appears stuck — restarting');
+    // DB-level concurrency: a Postgres advisory lock guarantees only one
+    // historical gift-card backfill runs cluster-wide, regardless of which
+    // process / instance triggers it.
+    const lock = ctx.skipLock ? { release: async () => {} } : await tryAcquireSyncLock(SYNC_TYPE);
+    if (!lock) {
+      console.log('[HistoricalGiftCardBackfill] Advisory lock held — another run is in progress');
+      // Audit the rejected trigger so repeated/abusive attempts are visible
+      const rejectedAuditId = await recordAuditStart({
+        syncType: SYNC_TYPE,
+        action: 'gift_cards_historical_backfill',
+        actorUserId: ctx.actorUserId ?? null,
+        actorIp: ctx.actorIp ?? null,
+        params: { rejectedReason: 'already_running' },
+      });
+      await recordAuditFinish(rejectedAuditId, {
+        status: 'rejected',
+        result: { reason: 'already_running' },
+      });
+      return { processed: 0, created: 0, updated: 0, failed: 0, pagesProcessed: 0, finished: false, rejected: 'already_running' };
     }
 
-    // Read saved cursor from errorMessage field (repurposed as a checkpoint store)
+    let auditId: number;
+    try {
+      auditId = await recordAuditStart({
+        syncType: SYNC_TYPE,
+        action: 'gift_cards_historical_backfill',
+        actorUserId: ctx.actorUserId ?? null,
+        actorIp: ctx.actorIp ?? null,
+        params: null,
+      });
+    } catch (err) {
+      await lock.release();
+      throw err;
+    }
+
+    let state: SyncState | undefined;
     let savedCursor: string | undefined = undefined;
+    let currentCursor: string | undefined;
+    let finished = false;
+    let budgetExceeded = false;
+
+    try {
+    state = await this.getSyncState(SYNC_TYPE);
+
+    // Read saved cursor from errorMessage field (repurposed as a checkpoint store)
     if (state?.errorMessage?.startsWith('cursor:')) {
       savedCursor = state.errorMessage.slice('cursor:'.length) || undefined;
       console.log(`[HistoricalGiftCardBackfill] Resuming from saved cursor (${savedCursor?.slice(0, 20)}...)`);
@@ -1255,16 +1302,30 @@ export class SyncService {
     const existingRows = await db.select({ squareId: giftCards.squareId }).from(giftCards);
     const existingSquareIds = new Set(existingRows.map(r => r.squareId));
 
-    let currentCursor = savedCursor;
-    let finished = false;
+    currentCursor = savedCursor;
 
-    try {
       // Process up to 20 pages per call (1,000 activities) to keep response times reasonable.
       // The endpoint will be called again to continue from where we left off.
       const MAX_PAGES_PER_CALL = 20;
 
       for (let page = 0; page < MAX_PAGES_PER_CALL; page++) {
-        const { activities, nextCursor } = await squareClient.fetchGiftCardActivitiesPage(currentCursor, 'ASC');
+        // Per-day Square page budget — stop cleanly when exceeded so a
+        // runaway loop cannot saturate the shared Square API for the day.
+        const budget = await consumeDailyBudget(1);
+        if (!budget.ok) {
+          budgetExceeded = true;
+          console.warn(`[HistoricalGiftCardBackfill] Daily Square page budget exhausted (${budget.used}/${budget.cap}) — pausing run`);
+          break;
+        }
+
+        let activities: Awaited<ReturnType<typeof squareClient.fetchGiftCardActivitiesPage>>['activities'];
+        let nextCursor: string | undefined;
+        try {
+          ({ activities, nextCursor } = await squareClient.fetchGiftCardActivitiesPage(currentCursor, 'ASC'));
+        } catch (fetchErr) {
+          logIfSquare429(fetchErr, { syncType: SYNC_TYPE, source: 'fetchGiftCardActivitiesPage' });
+          throw fetchErr;
+        }
         pagesProcessed++;
 
         console.log(`[HistoricalGiftCardBackfill] Page ${page + 1}: ${activities.length} ACTIVATE events (cursor: ${currentCursor?.slice(0, 20) ?? 'start'})`);
@@ -1345,26 +1406,52 @@ export class SyncService {
         });
         console.log(`[HistoricalGiftCardBackfill] COMPLETE — processed=${processed} created=${created} updated=${updated} failed=${failed}`);
       } else {
+        const pausedReason = budgetExceeded
+          ? 'paused — daily Square budget exhausted, retry tomorrow'
+          : `paused — call again to continue (${pagesProcessed} pages this run)`;
         await this.updateSyncState(state.id, {
           isComplete: false,
-          status: `paused — call again to continue (${pagesProcessed} pages this run)`,
+          status: pausedReason,
           lastSyncedAt: new Date(),
           processedCount: (state.processedCount || 0) + processed,
           // errorMessage already updated with cursor above
         });
-        console.log(`[HistoricalGiftCardBackfill] Paused after ${pagesProcessed} pages — cursor saved, call again to continue`);
+        console.log(`[HistoricalGiftCardBackfill] ${pausedReason}`);
       }
 
-      return { processed, created, updated, failed, pagesProcessed, finished };
+      await recordAuditFinish(auditId, {
+        status: finished ? 'completed' : (budgetExceeded ? 'rejected' : 'partial'),
+        result: { processed, created, updated, failed, pagesProcessed, finished, budgetExceeded },
+        pagesUsed: pagesProcessed,
+      });
+
+      return {
+        processed,
+        created,
+        updated,
+        failed,
+        pagesProcessed,
+        finished,
+        ...(budgetExceeded ? { rejected: 'daily_budget_exceeded' as const } : {}),
+      };
     } catch (error) {
       // Save current cursor so we can resume from last successful page
-      await this.updateSyncState(state.id, {
-        isComplete: false,
-        status: 'error — will resume from checkpoint on next call',
-        errorMessage: currentCursor ? `cursor:${currentCursor}` : (savedCursor ? `cursor:${savedCursor}` : null)
+      if (state) {
+        await this.updateSyncState(state.id, {
+          isComplete: false,
+          status: 'error — will resume from checkpoint on next call',
+          errorMessage: currentCursor ? `cursor:${currentCursor}` : (savedCursor ? `cursor:${savedCursor}` : null)
+        });
+      }
+      await recordAuditFinish(auditId, {
+        status: 'failed',
+        errorMessage: error instanceof Error ? error.message : String(error),
+        pagesUsed: pagesProcessed,
       });
       console.error('[HistoricalGiftCardBackfill] Error:', error);
       throw error;
+    } finally {
+      await lock.release();
     }
   }
 
@@ -1382,32 +1469,52 @@ export class SyncService {
   async startHistoricalOrdersPaymentsBackfill(
     startDate: Date,
     endDate: Date,
-    chunkDays: number = 30
+    chunkDays: number = 30,
+    ctx: SyncTriggerContext = {}
   ): Promise<{ alreadyRunning: boolean; message: string }> {
     const SYNC_TYPE = 'orders_payments_backfill';
 
-    // Primary lock: in-memory flag guards against concurrent starts within this process
-    if (this._ordersPaymentsBackfillRunning) {
-      console.log('[HistoricalBackfill] Already in progress (in-memory lock) — skipping duplicate start');
+    // DB-level concurrency: a Postgres advisory lock guarantees only one
+    // historical backfill runs cluster-wide. Replaces the previous
+    // in-memory flag (lost across restarts) and the wall-clock "stuck"
+    // heuristic (which let a second admin race in after 10 minutes).
+    const lock = await tryAcquireSyncLock(SYNC_TYPE);
+    if (!lock) {
+      console.log('[HistoricalBackfill] Advisory lock held — backfill already running');
+      // Audit the rejected trigger so repeated/abusive attempts are visible
+      const rejectedAuditId = await recordAuditStart({
+        syncType: SYNC_TYPE,
+        action: 'orders_payments_historical_backfill',
+        actorUserId: ctx.actorUserId ?? null,
+        actorIp: ctx.actorIp ?? null,
+        params: {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          chunkDays,
+          rejectedReason: 'already_running',
+        },
+      });
+      await recordAuditFinish(rejectedAuditId, {
+        status: 'rejected',
+        result: { reason: 'already_running' },
+      });
       return { alreadyRunning: true, message: 'Backfill is already running' };
     }
 
-    const existingState = await this.getSyncState(SYNC_TYPE);
-
-    // Secondary guard: DB state can flag a run stuck in a previous process instance
-    if (existingState && !existingState.isComplete) {
-      const elapsed = existingState.lastSyncedAt
-        ? Date.now() - new Date(existingState.lastSyncedAt).getTime()
-        : Infinity;
-      if (elapsed < 10 * 60 * 1000) {
-        console.log('[HistoricalBackfill] Previous run active in DB (< 10 min old) — treating as already running');
-        return { alreadyRunning: true, message: 'Backfill is already running' };
-      }
-      console.log('[HistoricalBackfill] Previous run appears stuck (> 10 min) — restarting');
-    }
+    // Setup phase — runs synchronously before we hand off to the background
+    // loop. Any throw here MUST release the advisory lock, otherwise it
+    // would stay held until the process restarts.
+    let existingState: SyncState | undefined;
+    let auditId: number;
+    let state: SyncState;
+    let chunks: Array<{ start: Date; end: Date }>;
+    let resumeFromChunk = 0;
+    let initialCheckpoint: Record<string, unknown>;
+    try {
+      existingState = await this.getSyncState(SYNC_TYPE);
 
     // Build ordered list of chunk intervals
-    const chunks: Array<{ start: Date; end: Date }> = [];
+    chunks = [];
     let cursor = new Date(startDate);
     while (cursor < endDate) {
       const chunkEnd = new Date(Math.min(
@@ -1419,7 +1526,6 @@ export class SyncService {
     }
 
     // Determine resume point from stored checkpoint — only if params match exactly
-    let resumeFromChunk = 0;
     const savedCheckpoint = existingState?.lastCheckpoint as any;
     if (savedCheckpoint) {
       const cpStart = savedCheckpoint.startDate ?? '';
@@ -1444,7 +1550,7 @@ export class SyncService {
       }
     }
 
-    const initialCheckpoint = {
+    initialCheckpoint = {
       startDate: startDate.toISOString(),
       endDate: endDate.toISOString(),
       chunkDays,
@@ -1454,7 +1560,6 @@ export class SyncService {
       lastCompletedDate: resumeFromChunk > 0 ? chunks[resumeFromChunk - 1].end.toISOString() : null,
     };
 
-    let state: SyncState;
     if (existingState) {
       await this.updateSyncState(existingState.id, {
         isComplete: false,
@@ -1482,12 +1587,38 @@ export class SyncService {
     // Acquire in-memory lock immediately (before setImmediate so any concurrent call is blocked)
     this._ordersPaymentsBackfillRunning = true;
 
+    // Audit row — written here so it appears even if the background loop
+    // never gets a chance to start (e.g. process restart between dispatch
+    // and the setImmediate callback).
+      auditId = await recordAuditStart({
+        syncType: SYNC_TYPE,
+        action: 'orders_payments_historical_backfill',
+        actorUserId: ctx.actorUserId ?? null,
+        actorIp: ctx.actorIp ?? null,
+        params: {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          chunkDays,
+          totalChunks: chunks.length,
+          resumeFromChunk,
+        },
+      });
+    } catch (setupErr) {
+      // Any failure in synchronous setup must release the advisory lock
+      // so a subsequent admin trigger can proceed.
+      this._ordersPaymentsBackfillRunning = false;
+      await lock.release();
+      throw setupErr;
+    }
+
     // Fire background loop — non-blocking
     setImmediate(async () => {
       console.log(`[HistoricalBackfill] Starting: ${chunks.length} chunks of ${chunkDays} days each, resuming from chunk ${resumeFromChunk}`);
       let totalOrders = 0;
       let totalPayments = 0;
       let failedChunks = 0;
+      let chunksProcessed = 0;
+      let budgetExceeded = false;
       const cappedPaymentChunks: Array<{ start: Date; end: Date; chunkIndex: number }> = [];
 
       // nextChunkToProcess tracks the LOWEST chunk index that has not been confirmed
@@ -1499,11 +1630,24 @@ export class SyncService {
 
       for (let i = resumeFromChunk; i < chunks.length; i++) {
         const { start, end } = chunks[i];
+
+        // Per-day shared Square page budget — stop cleanly when exceeded
+        // so a runaway / hostile backfill can't hammer Square indefinitely.
+        const budget = await consumeDailyBudget(BACKFILL_BUDGET_PER_CHUNK);
+        if (!budget.ok) {
+          budgetExceeded = true;
+          console.warn(`[HistoricalBackfill] Daily Square budget exhausted (${budget.used}/${budget.cap}) — pausing at chunk ${i + 1}/${chunks.length}`);
+          break;
+        }
+
         console.log(`[HistoricalBackfill] Chunk ${i + 1}/${chunks.length}: ${start.toISOString().slice(0, 10)} → ${end.toISOString().slice(0, 10)}`);
 
         try {
           // --- Orders (batch upsert) ---
-          const squareOrders = await squareClient.fetchOrders(start, end);
+          const squareOrders = await squareClient.fetchOrders(start, end).catch((err) => {
+            logIfSquare429(err, { syncType: SYNC_TYPE, source: 'fetchOrders' });
+            throw err;
+          });
           const orderRows: any[] = [];
           const squareOrderMap = new Map<string, any>();
 
@@ -1570,7 +1714,11 @@ export class SyncService {
           console.log(`[HistoricalBackfill] Chunk ${i + 1} orders: ${chunkOrdersUpserted} upserted from ${squareOrders.length} fetched`);
 
           // --- Payments (batch upsert) ---
-          const paymentResult = await squareClient.fetchPayments(start, end, { returnMeta: true });
+          const paymentResult = await squareClient.fetchPayments(start, end, { returnMeta: true })
+            .catch((err) => {
+              logIfSquare429(err, { syncType: SYNC_TYPE, source: 'fetchPayments' });
+              throw err;
+            });
           const squarePayments = paymentResult.payments;
           if (paymentResult.hitPageCap) {
             cappedPaymentChunks.push({ start, end, chunkIndex: i });
@@ -1639,6 +1787,7 @@ export class SyncService {
         if (i === nextChunkToProcess) {
           nextChunkToProcess = i + 1;
         }
+        chunksProcessed++;
 
         // Checkpoint saved after each successful chunk
         const checkpoint = {
@@ -1767,10 +1916,12 @@ export class SyncService {
       }
 
       // isComplete only when every chunk was processed without failure
-      const allSucceeded = failedChunks === 0 && nextChunkToProcess >= chunks.length;
+      const allSucceeded = !budgetExceeded && failedChunks === 0 && nextChunkToProcess >= chunks.length;
       const finalStatus = allSucceeded
         ? 'completed'
-        : `partial_complete — ${failedChunks} chunk(s) failed; resume to retry from chunk ${nextChunkToProcess + 1}`;
+        : budgetExceeded
+          ? `partial_complete — daily Square budget exhausted at chunk ${nextChunkToProcess + 1}; resume after UTC midnight`
+          : `partial_complete — ${failedChunks} chunk(s) failed; resume to retry from chunk ${nextChunkToProcess + 1}`;
       await this.updateSyncState(state.id, {
         isComplete: allSucceeded,
         status: finalStatus,
@@ -1794,6 +1945,22 @@ export class SyncService {
       } else {
         console.warn(`[HistoricalBackfill] PARTIAL — ${failedChunks} chunk(s) failed; ${totalOrders} orders + ${totalPayments} payments processed`);
       }
+
+      await recordAuditFinish(auditId, {
+        status: budgetExceeded
+          ? 'rejected'
+          : (allSucceeded ? 'completed' : 'partial'),
+        result: {
+          totalOrders,
+          totalPayments,
+          chunksProcessed,
+          failedChunks,
+          budgetExceeded,
+          nextChunkToProcess,
+          totalChunks: chunks.length,
+        },
+        pagesUsed: chunksProcessed * BACKFILL_BUDGET_PER_CHUNK,
+      });
       } catch (fatalErr) {
         console.error('[HistoricalBackfill] Fatal error in background loop:', fatalErr);
         try {
@@ -1802,8 +1969,15 @@ export class SyncService {
             errorMessage: fatalErr instanceof Error ? fatalErr.message : String(fatalErr),
           });
         } catch { /* ignore secondary error */ }
+        await recordAuditFinish(auditId, {
+          status: 'failed',
+          errorMessage: fatalErr instanceof Error ? fatalErr.message : String(fatalErr),
+          pagesUsed: chunksProcessed * BACKFILL_BUDGET_PER_CHUNK,
+          result: { totalOrders, totalPayments, chunksProcessed, failedChunks, budgetExceeded },
+        });
       } finally {
         this._ordersPaymentsBackfillRunning = false;
+        await lock.release();
       }
     });
 

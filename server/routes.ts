@@ -77,7 +77,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       console.log(`[Backfill] Received request: ${start.toISOString()} → ${end.toISOString()}, chunkDays=${chunk}`);
-      const result = await syncService.startHistoricalOrdersPaymentsBackfill(start, end, chunk);
+      const result = await syncService.startHistoricalOrdersPaymentsBackfill(start, end, chunk, {
+        actorUserId: (req as any).session?.userId ?? null,
+        actorIp: req.ip ?? null,
+      });
 
       if (result.alreadyRunning) {
         throw new ConflictError(result.message);

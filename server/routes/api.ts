@@ -11,6 +11,7 @@ import { dashboardService } from '../services/dashboardService';
 import { pgStorage } from '../pgStorage';
 import { giftCardService } from '../services/giftCardService';
 import { syncService } from '../services/syncService';
+import { tryAcquireSyncLock, recordAuditStart, recordAuditFinish } from '../services/syncLocks';
 import { paymentService } from '../services/paymentService';
 import { DateRange, dateRangeSchema } from '../../shared/schema';
 import { broadcast } from '../ws';
@@ -262,7 +263,10 @@ export function createApiRouter(): Router {
         case 'gift_cards':
           // Route to the canonical Activities-API-based full reconciliation
           // (resumable, cursor-checkpointed) instead of the legacy listGiftCards path
-          result = await syncService.syncGiftCardsHistoricalBackfill();
+          result = await syncService.syncGiftCardsHistoricalBackfill({
+            actorUserId: (req as any).session?.userId ?? null,
+            actorIp: req.ip ?? null,
+          });
           break;
         case 'gift_card_redemptions':
           console.log('Starting gift card redemption synchronization');
@@ -289,10 +293,14 @@ export function createApiRouter(): Router {
           console.log(`Payment reconciliation completed: ${result.processed} processed, ${result.created} created`);
           break;
         case 'all':
+          const actorCtx = {
+            actorUserId: (req as any).session?.userId ?? null,
+            actorIp: req.ip ?? null,
+          };
           const [ordersResult, paymentsResult, giftCardsResult, redemptionsResult, refundsResult] = await Promise.all([
             syncService.syncOrders(startDate, endDate),
             syncService.syncPayments(startDate, endDate),
-            syncService.syncGiftCardsHistoricalBackfill(),
+            syncService.syncGiftCardsHistoricalBackfill(actorCtx),
             syncService.syncGiftCardRedemptions(startDate, endDate),
             syncService.syncRefunds(startDate, endDate)
           ]);
@@ -524,16 +532,69 @@ export function createApiRouter(): Router {
         }
       }
 
+      // DB-level concurrency: a single shared advisory lock guards every
+      // historical/backfill flow so concurrent admin triggers cannot
+      // double-up on the shared Square API.
+      const lock = await tryAcquireSyncLock('historical_sync');
+      const actorCtx = {
+        actorUserId: (req as any).session?.userId ?? null,
+        actorIp: req.ip ?? null,
+      };
+      if (!lock) {
+        const rejectedAuditId = await recordAuditStart({
+          syncType: 'historical_sync',
+          action: 'historical_sync',
+          ...actorCtx,
+          params: { startDate: startDate.toISOString(), rejectedReason: 'already_running' },
+        });
+        await recordAuditFinish(rejectedAuditId, {
+          status: 'rejected',
+          result: { reason: 'already_running' },
+        });
+        res.status(409).json({
+          success: false,
+          message: 'Historical sync is already running',
+        });
+        return;
+      }
+
+      let auditId: number;
+      try {
+        auditId = await recordAuditStart({
+          syncType: 'historical_sync',
+          action: 'historical_sync',
+          ...actorCtx,
+          params: { startDate: startDate.toISOString() },
+        });
+      } catch (err) {
+        await lock.release();
+        throw err;
+      }
+
       res.status(202).json({
         success: true,
         message: `Historical sync started from ${startDate.toISOString().slice(0, 10)}. This runs in the background — check server logs for progress.`,
         startDate: startDate.toISOString(),
       });
 
-      // Run in background — no await so the HTTP response is sent first
-      runHistoricalSync(startDate).catch(err => {
-        console.error('[HistoricalSync] Unhandled error:', err);
-      });
+      // Run in background — no await so the HTTP response is sent first.
+      // The lock is released and the audit row finalised inside the
+      // background promise so concurrent triggers see the lock as held
+      // until the run actually completes.
+      runHistoricalSync(startDate)
+        .then(async () => {
+          await recordAuditFinish(auditId, { status: 'completed' });
+        })
+        .catch(async (err) => {
+          console.error('[HistoricalSync] Unhandled error:', err);
+          await recordAuditFinish(auditId, {
+            status: 'failed',
+            errorMessage: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(async () => {
+          await lock.release();
+        });
     } catch (error) {
       next(error);
     }
@@ -552,9 +613,12 @@ export function createApiRouter(): Router {
    * Call repeatedly (each call processes up to 20 pages / 1,000 events) until the
    * response shows `finished: true`.
    */
-  async function handleGiftCardFullSync(_req: Request, res: Response, next: NextFunction) {
+  async function handleGiftCardFullSync(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await syncService.syncGiftCardsHistoricalBackfill();
+      const result = await syncService.syncGiftCardsHistoricalBackfill({
+        actorUserId: (req as any).session?.userId ?? null,
+        actorIp: req.ip ?? null,
+      });
       res.json({
         success: true,
         message: result.finished
@@ -681,7 +745,9 @@ async function runHistoricalSync(startDate: Date): Promise<void> {
   // checkpointing after each page so restarts resume mid-scan.
   console.log(`${label} Syncing all gift cards via Activities API (resumable)...`);
   try {
-    const gcResult = await syncService.syncGiftCardsHistoricalBackfill();
+    // Nested call: parent runHistoricalSync already holds the shared
+    // historical advisory lock, so skip the lock here to avoid self-deadlock.
+    const gcResult = await syncService.syncGiftCardsHistoricalBackfill({ skipLock: true });
     console.log(`${label} Gift cards: processed=${gcResult.processed} created=${gcResult.created} updated=${gcResult.updated} failed=${gcResult.failed} pages=${gcResult.pagesProcessed} finished=${gcResult.finished}`);
   } catch (err) {
     console.error(`${label} Gift card sync error:`, err);

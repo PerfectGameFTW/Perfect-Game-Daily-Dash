@@ -15,6 +15,13 @@
       "when": 1774583736229,
       "tag": "0001_motionless_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776791727885,
+      "tag": "0002_fuzzy_micromax",
+      "breakpoints": true
     }
   ]
 }
