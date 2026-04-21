@@ -17,6 +17,7 @@ import { broadcast } from '../ws';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { syncLimiter } from '../middleware/rateLimiter';
 import { toSafeErrorResponse } from '../errors';
+import { logger, errorContext } from '../logger';
 
 /**
  * Router-level error middleware. Exported so that `server/routes.ts` can
@@ -25,8 +26,8 @@ import { toSafeErrorResponse } from '../errors';
  * registered after the route that called `next(err)`.
  */
 export function attachApiErrorMiddleware(router: Router) {
-  router.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-    console.error('API Error:', err);
+  router.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+    logger.error('api.error', { path: req.path, method: req.method, ...errorContext(err) });
     if (!res.headersSent) {
       const { status, body } = toSafeErrorResponse(err);
       res.status(status).json(body);
@@ -37,10 +38,8 @@ export function attachApiErrorMiddleware(router: Router) {
 export function createApiRouter(): Router {
   const router = Router();
   
-  router.use((req, _res, next) => {
-    console.log(`${new Date().toISOString()} [${req.method}] ${req.url}`);
-    next();
-  });
+  // Per-request access logs are emitted by the structured request logger
+  // in server/index.ts (allow-listed fields only). Don't double-log here.
 
   router.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -80,29 +79,18 @@ export function createApiRouter(): Router {
       if (req.query.startDate && typeof req.query.startDate === 'string') {
         try {
           startDate = new Date(req.query.startDate);
-          
-          // Log parsed dates
-          console.log(`Hourly Revenue API - Parsing dates: {
-  startDateStr: '${req.query.startDate}',
-  endDateStr: '${req.query.endDate}'
-}`);
-        } catch (error) {
-          console.error('Invalid start date:', req.query.startDate);
+        } catch {
+          logger.warn('api.invalid_start_date');
         }
       }
-      
+
       if (req.query.endDate && typeof req.query.endDate === 'string') {
         try {
           endDate = new Date(req.query.endDate);
-        } catch (error) {
-          console.error('Invalid end date:', req.query.endDate);
+        } catch {
+          logger.warn('api.invalid_end_date');
         }
       }
-      
-      console.log(`Hourly Revenue API - Parsed dates: {
-  startDate: '${startDate?.toISOString() || 'undefined'}',
-  endDate: '${endDate?.toISOString() || 'undefined'}'
-}`);
     }
     
     return { dateRange, startDate, endDate };
@@ -119,17 +107,6 @@ export function createApiRouter(): Router {
   router.get('/summary', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { dateRange, startDate, endDate } = extractDateRange(req);
-      
-      console.log(`Summary API - Using predefined date range: { dateRange: '${dateRange}' }`);
-      
-      if (dateRange === 'today') {
-        console.log('🔍 SERVER: Processing TODAY request with no custom dates');
-      } else if (dateRange === 'yesterday') {
-        console.log('🔍 SERVER: Processing YESTERDAY request with no custom dates');
-      } else if (dateRange === 'custom') {
-        console.log(`🔍 SERVER: Processing CUSTOM request with dates: ${startDate} to ${endDate}`);
-      }
-      
       const summary = await dashboardService.getDailySummary(dateRange, startDate, endDate);
       res.json(summary);
     } catch (error) {

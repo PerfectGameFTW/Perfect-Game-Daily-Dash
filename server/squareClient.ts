@@ -23,21 +23,14 @@ export async function testConnection(): Promise<{ success: boolean, message: str
      );
    }
 
-   console.log('Square API test connection successful:', {
-     locationCount: response.locations.length,
-     locationIds: response.locations.map(l => l.id)
-   });
+   logger.info('square.test_connection.ok', { count: response.locations.length });
 
    return {
      success: true,
      message: 'Successfully connected to Square API'
    };
  } catch (error) {
-   console.error('Square API connection test failed:', {
-     error,
-     message: error instanceof Error ? error.message : 'Unknown error',
-     stack: error instanceof Error ? error.stack : undefined
-   });
+   logger.error('square.test_connection.failed', errorContext(error));
 
    if (error instanceof ExternalServiceError) throw error;
    throw new ExternalServiceError(
@@ -49,6 +42,7 @@ export async function testConnection(): Promise<{ success: boolean, message: str
 
 import { pgStorage } from './pgStorage';
 import { ExternalServiceError } from './errors';
+import { logger, errorContext } from './logger';
 import { SquareClient, SquareEnvironment } from 'square';
 import {
   Transaction, InsertTransaction,
@@ -80,7 +74,7 @@ function processSafeSquareData(data: any): any {
     // Then parse back to ensure we have a clean object
     return JSON.parse(stringified);
   } catch (error) {
-    console.error('Error processing Square data:', error);
+    logger.error('square.process_data.failed', errorContext(error));
     // Return a safe version of the data
     return {
       id: data.id || 'unknown',
@@ -107,10 +101,9 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     const startTime = start.toISOString();
     const endTime = end.toISOString();
 
-    console.log(`Fetching orders from ${startTime} to ${endTime}`);
-    
+    logger.info('square.fetchOrders.start');
+
     if (!process.env.SQUARE_ACCESS_TOKEN) {
-      console.error('Square access token is not configured');
       throw new ExternalServiceError(
         'Square access token is not configured',
         { code: 'SQUARE_TOKEN_NOT_CONFIGURED' },
@@ -118,14 +111,11 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
     }
 
     if (!process.env.SQUARE_LOCATION_ID) {
-      console.error('Square location ID is not configured');
       throw new ExternalServiceError(
         'Square location ID is not configured',
         { code: 'SQUARE_LOCATION_NOT_CONFIGURED' },
       );
     }
-    
-    console.log(`Using Square location ID: ${process.env.SQUARE_LOCATION_ID}`);
 
     // Create a search request for orders
     const searchRequest = {
@@ -151,8 +141,6 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
       limit: 200
     };
     
-    console.log('Orders search request:', JSON.stringify(searchRequest, null, 2));
-
     // Make API request to Square Orders API with cursor-based pagination
     try {
       const allOrders: any[] = [];
@@ -167,7 +155,7 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
         const response = await squareClient.orders.search(request);
 
         if (!response.orders || !Array.isArray(response.orders)) {
-          if (page === 1) console.warn('No orders found in Square API response');
+          if (page === 1) logger.warn('square.fetchOrders.empty_response');
           break;
         }
 
@@ -175,40 +163,22 @@ export async function fetchOrders(startDate?: Date, endDate?: Date): Promise<any
         allOrders.push(...pageOrders);
         cursor = response.cursor ?? undefined;
 
-        console.log(`Orders page ${page}: ${pageOrders.length} orders (cursor: ${cursor ? 'yes' : 'none'})`);
+        logger.info('square.fetchOrders.page', { page, count: pageOrders.length });
       } while (cursor);
 
-      console.log(`Found ${allOrders.length} total orders from Square API (${page} page${page !== 1 ? 's' : ''})`);
-
-      if (allOrders.length > 0) {
-        const firstOrder = allOrders[0];
-        console.log('Sample order data structure:', JSON.stringify({
-          id: firstOrder.id || 'missing',
-          state: firstOrder.state || 'missing',
-          createdAt: firstOrder.createdAt || 'missing',
-          lineItemCount: firstOrder.lineItems?.length || 0
-        }, null, 2));
-      }
+      logger.info('square.fetchOrders.done', { count: allOrders.length, pageCount: page });
 
       return allOrders;
     } catch (apiError) {
-      console.error('Square Orders API error:', {
-        error: apiError,
-        message: apiError instanceof Error ? apiError.message : 'Unknown error',
-        stack: apiError instanceof Error ? apiError.stack : undefined
-      });
-      
+      logger.error('square.fetchOrders.api_error', errorContext(apiError));
+
       throw new ExternalServiceError(
         `Square Orders API error: ${apiError instanceof Error ? apiError.message : 'Unknown error'}`,
         { code: 'SQUARE_ORDERS_API_ERROR' },
       );
     }
   } catch (error) {
-    console.error('Error in fetchOrders:', {
-      error,
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined
-    });
+    logger.error('square.fetchOrders.failed', errorContext(error));
     throw error;
   }
 }
@@ -221,21 +191,16 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
     
     // Enhanced validation with detailed logging
     if (!safeOrder || typeof safeOrder !== 'object') {
-      console.error("Invalid Square order data: not an object", {
-        type: typeof squareOrder,
-        value: squareOrder
-      });
+      logger.error('square.invalid_order.not_object');
       throw new ExternalServiceError(
         'Invalid Square order data: not an object',
         { code: 'SQUARE_INVALID_ORDER_DATA' },
       );
     }
-    
+
     // Ensure all required fields are present
     if (!safeOrder.id) {
-      console.error("Square order missing required field: id", {
-        orderData: JSON.stringify(safeOrder).substring(0, 500) // Log a portion of the data for debugging
-      });
+      logger.error('square.invalid_order.missing_id');
       throw new ExternalServiceError(
         'Invalid Square order data: missing id',
         { code: 'SQUARE_INVALID_ORDER_DATA' },
@@ -282,17 +247,10 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
       });
       
       if (giftCardItems.length > 0) {
-        console.log(`Found gift card purchase in order ${safeOrder.id}`);
         hasGiftCardItems = true;
-        
-        // Log the gift card items for verification
-        giftCardItems.forEach((item: any, index: number) => {
-          console.log(`Gift card item ${index + 1}:`, {
-            name: item.name,
-            quantity: item.quantity,
-            totalMoney: item.totalMoney ? Number(item.totalMoney.amount) / 100 : 0,
-            giftCardAmount: item.giftCardAmount || 0
-          });
+        logger.info('square.order.gift_card_items', {
+          orderId: safeOrder.id,
+          count: giftCardItems.length,
         });
       }
     }
@@ -316,7 +274,7 @@ export function convertSquareOrderToOrder(squareOrder: any): InsertOrder {
       }
     };
   } catch (error) {
-    console.error("Error in convertSquareOrderToOrder:", error);
+    logger.error('square.convert_order.failed', errorContext(error));
     throw error;
   }
 }
@@ -350,7 +308,7 @@ export async function fetchOrdersByIds(orderIds: string[]): Promise<InsertOrder[
         }
       }
     } catch (error) {
-      console.error(`[fetchOrdersByIds] Error fetching batch starting at ${i}:`, error);
+      logger.error('square.fetchOrdersByIds.batch_error', { count: batch.length, ...errorContext(error) });
     }
   }
 
@@ -371,7 +329,9 @@ export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: num
       // Fallback name for any unnamed item
       itemName = 'Unnamed Item';
     }
-    console.log(`Found line item with missing name, using fallback: ${itemName}`, safeLineItem);
+    // Note: do NOT log the raw line item — `note` may contain customer
+    // PII (party names, contact info) entered by staff at the register.
+    logger.debug('square.line_item.missing_name');
   }
 
   // Detect if this is a gift card item
@@ -387,7 +347,7 @@ export function convertSquareLineItemToOrderLineItem(lineItem: any, orderId: num
     const basePrice = safeLineItem.basePriceMoney ? Number(safeLineItem.basePriceMoney.amount) / 100 : 0;
     const finalPrice = safeLineItem.totalMoney ? Number(safeLineItem.totalMoney.amount) / 100 : 0;
     
-    console.log(`Found gift card line item: ${itemName} with base price: $${basePrice}, final price: $${finalPrice}`);
+    logger.debug('square.line_item.gift_card');
     
     // Add gift card metadata to the squareData
     safeLineItem.isGiftCard = true;
@@ -469,7 +429,7 @@ export function isGiftCardRedemption(payment: any): boolean {
 
     return isGiftCard;
   } catch (error) {
-    console.error('Error checking gift card redemption:', error);
+    logger.error('square.gift_card_redemption_check.failed', errorContext(error));
     return false;
   }
 }
@@ -492,11 +452,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
     const beginTime = start.toISOString();
     const endTime = end.toISOString();
 
-    console.log(`Starting payment fetch from Square API:`, {
-      startDate: beginTime,
-      endDate: endTime,
-      locationId: process.env.SQUARE_LOCATION_ID
-    });
+    logger.info('square.fetchPayments.start');
 
     if (!process.env.SQUARE_ACCESS_TOKEN) {
       throw new ExternalServiceError(
@@ -527,7 +483,7 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
     while (pageCount < MAX_PAGES) {
       pageCount++;
       const pageStartTime = Date.now();
-      console.log(`Starting to fetch payments page ${pageCount}${pageCount > 1 ? ' (next page)' : ''} at ${new Date(pageStartTime).toISOString()}`);
+      logger.debug('square.fetchPayments.page_start', { page: pageCount });
 
       if (Date.now() - startTime > TIMEOUT) {
         throw new ExternalServiceError(
@@ -541,11 +497,10 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
         const pageEndTime = Date.now();
         const pageProcessingTime = pageEndTime - pageStartTime;
 
-        console.log('Square API Response:', {
+        logger.info('square.fetchPayments.page', {
           page: pageCount,
-          hasMore: paymentsPage.hasNextPage(),
-          paymentCount: paymentsPage.data?.length || 0,
-          processingTimeMs: pageProcessingTime
+          count: paymentsPage.data?.length || 0,
+          durationMs: pageProcessingTime,
         });
 
         const payments = paymentsPage.data || [];
@@ -561,11 +516,11 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
         for (const payment of payments) {
           try {
             if (isGiftCardRedemption(payment)) {
-              console.log(`Processing gift card redemption payment: ${payment.id}`);
+              logger.debug('square.payment.gift_card_redemption', { paymentId: payment.id });
             }
             allPayments.push(payment);
           } catch (paymentError) {
-            console.error(`Error processing payment ${payment.id}:`, paymentError);
+            logger.error('square.payment.process_failed', { paymentId: payment.id, ...errorContext(paymentError) });
           }
         }
 
@@ -574,16 +529,13 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
         await new Promise(resolve => setTimeout(resolve, 100));
         paymentsPage = await paymentsPage.getNextPage();
       } catch (pageError) {
-        const errorDetail = {
-          error: pageError,
-          message: pageError instanceof Error ? pageError.message : 'Unknown error',
-          stack: pageError instanceof Error ? pageError.stack : undefined,
+        logger.error('square.fetchPayments.page_error', {
           page: pageCount,
-          timeElapsed: Date.now() - startTime
-        };
-        console.error('Error fetching payments page:', errorDetail);
+          durationMs: Date.now() - startTime,
+          ...errorContext(pageError),
+        });
         throw new ExternalServiceError(
-          `Failed to fetch page ${pageCount}: ${errorDetail.message}`,
+          `Failed to fetch page ${pageCount}: ${pageError instanceof Error ? pageError.message : 'Unknown error'}`,
           { code: 'SQUARE_PAYMENTS_API_ERROR' },
         );
       }
@@ -592,20 +544,18 @@ export async function fetchPayments(startDate?: Date, endDate?: Date, opts?: { r
     const totalTime = Date.now() - startTime;
     const hitPageCap = pageCount >= MAX_PAGES;
     if (hitPageCap) {
-      console.warn(`Reached maximum page limit (${MAX_PAGES}). Some payments may be missing. Total time: ${totalTime}ms`);
+      logger.warn('square.fetchPayments.page_cap', { pageCount: MAX_PAGES, durationMs: totalTime, hitPageCap: true });
     }
 
-    console.log(`Successfully fetched ${allPayments.length} payments from Square API in ${totalTime}ms`);
+    logger.info('square.fetchPayments.done', { count: allPayments.length, durationMs: totalTime });
     if (opts?.returnMeta) {
       return { payments: allPayments, hitPageCap };
     }
     return allPayments;
   } catch (error) {
-    console.error('Error in fetchPayments:', {
-      error,
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      totalTimeMs: Date.now() - startTime
+    logger.error('square.fetchPayments.failed', {
+      durationMs: Date.now() - startTime,
+      ...errorContext(error),
     });
     throw error;
   }
@@ -659,11 +609,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   }
 
   if (paidWithGiftCard) {
-    console.log(`Payment USING gift card detected:`, {
-      paymentId: payment.id,
-      amount: amount,
-      sourceId: payment.sourceId || payment.cardDetails?.card?.id
-    });
+    logger.debug('square.payment.paid_with_gift_card', { paymentId: payment.id });
 
     if (catalogCategory) {
       category = catalogCategory;
@@ -689,11 +635,11 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
 
           if (giftCardItems.length > 0) {
             isGiftCardPurchase = true;
-            console.log(`Found gift card purchase in order ${payment.orderId}`);
+            logger.debug('square.payment.gift_card_purchase', { orderId: payment.orderId });
           }
         }
       } catch (error) {
-        console.error(`Error checking order data for gift cards:`, error);
+        logger.error('square.payment.order_check_failed', errorContext(error));
       }
     }
 
@@ -709,7 +655,7 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
   // Parse and convert the timestamp
   let timestamp: Date = new Date(payment.createdAt);
   if (isNaN(timestamp.getTime())) {
-    console.warn(`Invalid timestamp for payment ${payment.id}, using current date`);
+    logger.warn('square.payment.invalid_timestamp', { paymentId: payment.id });
     timestamp = new Date();
   }
 
@@ -731,15 +677,9 @@ export function convertSquarePaymentToTransaction(payment: Record<string, any>):
     }
   };
 
-  // Log transaction creation for gift card payments
+  // Log transaction creation for gift card payments — IDs only.
   if (payment.isGiftCardRedemption) {
-    console.log(`Created transaction from gift card payment:`, {
-      squareId: transaction.squareId,
-      amount: transaction.amount,
-      isGiftCardRedemption: (transaction.squareData as any)?.isGiftCardRedemption,
-      redemptionAmount: (transaction.squareData as any)?.redemptionAmount,
-      sourceId: (transaction.squareData as any)?.sourceId
-    });
+    logger.debug('square.transaction.created_from_gift_card', { squareId: transaction.squareId });
   }
 
   return transaction;
@@ -762,7 +702,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>, a
     // Validate the date
     if (isNaN(utcPurchaseDate.getTime())) {
       // If invalid, use current date
-      console.warn(`Invalid purchase date for gift card ${safeGiftCard.id}, using current date instead`);
+      logger.warn('square.gift_card.invalid_date', { giftCardId: safeGiftCard.id });
       purchaseDate = new Date();
     } else {
       // Store the raw UTC timestamp directly.
@@ -774,7 +714,7 @@ export function convertSquareGiftCardToGiftCard(giftCard: Record<string, any>, a
       purchaseDate = utcPurchaseDate;
     }
   } catch (error) {
-    console.warn(`Error processing purchase date for gift card ${safeGiftCard.id}, using current date instead:`, error);
+    logger.warn('square.gift_card.date_error', { giftCardId: safeGiftCard.id, ...errorContext(error) });
     purchaseDate = new Date();
   }
 
@@ -851,14 +791,14 @@ export async function fetchGiftCardActivitiesMap(): Promise<Map<string, number>>
   const activationMap = new Map<string, number>();
 
   if (!process.env.SQUARE_LOCATION_ID) {
-    console.error('Square location ID is not configured, cannot fetch gift card activities');
+    logger.error('square.gift_card_activities.no_location');
     return activationMap;
   }
 
   let pageCount = 0;
   const MAX_PAGES = 200;
 
-  console.log('Fetching ACTIVATE gift card activities from Square...');
+  logger.info('square.gift_card_activities.start');
 
   let activitiesPage = await squareClient.giftCards.activities.list({
     type: 'ACTIVATE',
@@ -883,19 +823,19 @@ export async function fetchGiftCardActivitiesMap(): Promise<Map<string, number>>
       }
     }
 
-    console.log(`Gift card activities page ${pageCount}: ${activities.length} ACTIVATE events (total mapped: ${activationMap.size})`);
+    logger.debug('square.gift_card_activities.page', { page: pageCount, count: activities.length });
 
     if (!activitiesPage.hasNextPage()) break;
 
     try {
       activitiesPage = await activitiesPage.getNextPage();
     } catch (error) {
-      console.error(`Error fetching gift card activities page ${pageCount}:`, error);
+      logger.error('square.gift_card_activities.page_error', { page: pageCount, ...errorContext(error) });
       break;
     }
   }
 
-  console.log(`fetchGiftCardActivitiesMap complete: ${activationMap.size} cards with activation amounts`);
+  logger.info('square.gift_card_activities.done', { count: activationMap.size });
   return activationMap;
 }
 
@@ -916,7 +856,7 @@ export async function fetchGiftCardActivitiesPage(
   nextCursor: string | undefined;
 }> {
   if (!process.env.SQUARE_LOCATION_ID) {
-    console.error('[GiftCardActivitiesPage] Square location ID is not configured');
+    logger.error('square.gift_card_activities_page.no_location');
     return { activities: [], nextCursor: undefined };
   }
 
@@ -951,7 +891,7 @@ export async function fetchGiftCardActivitiesPage(
 
     return { activities, nextCursor };
   } catch (error) {
-    console.error('[GiftCardActivitiesPage] Error fetching page:', error);
+    logger.error('square.gift_card_activities_page.error', errorContext(error));
     throw error;
   }
 }
@@ -970,13 +910,13 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
   const results: Array<{ giftCardId: string; activationAmountDollars: number; createdAt: Date; squareOrderId?: string }> = [];
 
   if (!process.env.SQUARE_LOCATION_ID) {
-    console.error('[IncrementalGiftCardSync] Square location ID is not configured');
+    logger.error('square.gift_card_incremental.no_location');
     return results;
   }
 
   let pageCount = 0;
 
-  console.log(`[IncrementalGiftCardSync] Fetching ACTIVATE activities since ${since.toISOString()} (newest-first, stopping at cutoff)`);
+  logger.info('square.gift_card_incremental.start');
 
   let activitiesPage = await squareClient.giftCards.activities.list({
     type: 'ACTIVATE',
@@ -1014,19 +954,19 @@ export async function fetchRecentGiftCardActivations(since: Date): Promise<Array
       });
     }
 
-    console.log(`[IncrementalGiftCardSync] Page ${pageCount}: ${activities.length} events scanned, ${results.length} new since cutoff${reachedCutoff ? ' (cutoff reached)' : ''}`);
+    logger.debug('square.gift_card_incremental.page', { page: pageCount, count: results.length });
 
     if (!activitiesPage.hasNextPage() || activities.length === 0) break;
 
     try {
       activitiesPage = await activitiesPage.getNextPage();
     } catch (error) {
-      console.error(`[IncrementalGiftCardSync] Error on page ${pageCount}:`, error);
+      logger.error('square.gift_card_incremental.page_error', { page: pageCount, ...errorContext(error) });
       break;
     }
   }
 
-  console.log(`[IncrementalGiftCardSync] Found ${results.length} ACTIVATE events since ${since.toISOString()} (${pageCount} page${pageCount !== 1 ? 's' : ''} scanned)`);
+  logger.info('square.gift_card_incremental.done', { count: results.length, pageCount });
   return results;
 }
 
@@ -1038,13 +978,13 @@ export async function fetchRecentGiftCardRedemptions(since: Date): Promise<{ eve
   const results: Array<{ giftCardId: string; amountDollars: number; createdAt: Date }> = [];
 
   if (!process.env.SQUARE_LOCATION_ID) {
-    console.error('[RedeemMonitor] Square location ID is not configured');
+    logger.error('square.redeem_monitor.no_location');
     return { events: results, complete: true };
   }
 
   let pageCount = 0;
 
-  console.log(`[RedeemMonitor] Fetching REDEEM activities since ${since.toISOString()} (newest-first, stopping at cutoff)`);
+  logger.info('square.redeem_monitor.start');
 
   let activitiesPage = await squareClient.giftCards.activities.list({
     type: 'REDEEM',
@@ -1083,13 +1023,12 @@ export async function fetchRecentGiftCardRedemptions(since: Date): Promise<{ eve
     try {
       activitiesPage = await activitiesPage.getNextPage();
     } catch (error) {
-      console.error(`[RedeemMonitor] Error on page ${pageCount}:`, error);
-      console.log(`[RedeemMonitor] Found ${results.length} REDEEM events since ${since.toISOString()} (${pageCount} page${pageCount !== 1 ? 's' : ''} scanned, INCOMPLETE)`);
+      logger.error('square.redeem_monitor.page_error', { page: pageCount, count: results.length, ...errorContext(error) });
       return { events: results, complete: false };
     }
   }
 
-  console.log(`[RedeemMonitor] Found ${results.length} REDEEM events since ${since.toISOString()} (${pageCount} page${pageCount !== 1 ? 's' : ''} scanned)`);
+  logger.info('square.redeem_monitor.done', { count: results.length, pageCount });
   return { events: results, complete: true };
 }
 
@@ -1104,7 +1043,7 @@ export async function fetchGiftCardRedeemActivities(
   const results: Array<{ giftCardId: string; amountDollars: number; createdAt: string }> = [];
 
   if (!process.env.SQUARE_LOCATION_ID) {
-    console.error('[RedeemActivities] Square location ID is not configured');
+    logger.error('square.redeem_activities.no_location');
     return results;
   }
 
@@ -1140,12 +1079,12 @@ export async function fetchGiftCardRedeemActivities(
     try {
       activitiesPage = await activitiesPage.getNextPage();
     } catch (error) {
-      console.error(`[RedeemActivities] Error on page ${pageCount}:`, error);
+      logger.error('square.redeem_activities.page_error', { page: pageCount, ...errorContext(error) });
       break;
     }
   }
 
-  console.log(`[RedeemActivities] Found ${results.length} REDEEM events between ${beginTime} and ${endTime}`);
+  logger.info('square.redeem_activities.done', { count: results.length });
   return results;
 }
 
@@ -1169,7 +1108,7 @@ export async function fetchGiftCardActivateActivity(
       squareOrderId: activity.activateActivityDetails?.orderId ?? undefined,
     };
   } catch (error) {
-    console.error(`[ActivateActivity] Error fetching for ${giftCardId}:`, error);
+    logger.error('square.activate_activity.error', { giftCardId, ...errorContext(error) });
     return null;
   }
 }
@@ -1187,7 +1126,7 @@ export async function fetchGiftCardById(squareId: string): Promise<any | null> {
     const err = error as Record<string, unknown>;
     const status = err?.statusCode ?? err?.status ?? (err?.response as Record<string, unknown>)?.status;
     if (status === 404) {
-      console.log(`[GiftCardFetch] Card ${squareId} not found (404) — likely deleted`);
+      logger.debug('square.gift_card_fetch.not_found', { squareId });
       return null;
     }
     throw error;
@@ -1206,7 +1145,7 @@ export async function fetchGiftCards(): Promise<{ cards: any[]; complete: boolea
       pageCount++;
 
       if (!giftCardsPage.data || giftCardsPage.data.length === 0) {
-        if (pageCount === 1) console.log('No gift cards found in response');
+        if (pageCount === 1) logger.warn('square.gift_cards.empty_response');
         break;
       }
 
@@ -1214,7 +1153,7 @@ export async function fetchGiftCards(): Promise<{ cards: any[]; complete: boolea
         try {
           return processSafeSquareData(card);
         } catch (error) {
-          console.error(`Error processing gift card:`, error);
+          logger.error('square.gift_cards.process_error', errorContext(error));
           return null;
         }
       }).filter(card => card !== null);
@@ -1227,16 +1166,16 @@ export async function fetchGiftCards(): Promise<{ cards: any[]; complete: boolea
         await new Promise(resolve => setTimeout(resolve, 100));
         giftCardsPage = await giftCardsPage.getNextPage();
       } catch (error) {
-        console.error('Error fetching gift cards page:', error);
+        logger.error('square.gift_cards.page_error', errorContext(error));
         paginationFailed = true;
         break;
       }
     }
 
-    console.log(`Completed fetching ${allGiftCards.length} total gift cards (complete=${!paginationFailed})`);
+    logger.info('square.gift_cards.done', { count: allGiftCards.length });
     return { cards: allGiftCards, complete: !paginationFailed };
   } catch (error) {
-    console.error('Error fetching gift cards:', error);
+    logger.error('square.gift_cards.failed', errorContext(error));
     throw error;
   }
 }
@@ -1268,7 +1207,7 @@ export async function fetchRefunds(startDate?: Date, endDate?: Date): Promise<an
     const beginTime = (startDate || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)).toISOString();
     const endTime = (endDate || new Date()).toISOString();
 
-    console.log(`Fetching refunds from ${beginTime} to ${endTime}`);
+    logger.info('square.fetchRefunds.start');
 
     if (!process.env.SQUARE_ACCESS_TOKEN) {
       throw new ExternalServiceError(
@@ -1308,15 +1247,15 @@ export async function fetchRefunds(startDate?: Date, endDate?: Date): Promise<an
         await new Promise(resolve => setTimeout(resolve, 100));
         refundsPage = await refundsPage.getNextPage();
       } catch (pageError) {
-        console.error(`Error fetching refunds page ${pageCount}:`, pageError instanceof Error ? pageError.message : pageError);
+        logger.error('square.fetchRefunds.page_error', { page: pageCount, ...errorContext(pageError) });
         throw pageError;
       }
     }
 
-    console.log(`Successfully fetched ${allRefunds.length} refunds from Square API in ${Date.now() - startTime}ms`);
+    logger.info('square.fetchRefunds.done', { count: allRefunds.length, durationMs: Date.now() - startTime });
     return allRefunds;
   } catch (error) {
-    console.error('Error in fetchRefunds:', error instanceof Error ? error.message : error);
+    logger.error('square.fetchRefunds.failed', errorContext(error));
     throw error;
   }
 }
@@ -1387,10 +1326,10 @@ export async function searchCatalogForGiftCards(): Promise<any[]> {
       );
     });
 
-    console.log(`Found ${giftCardItems.length} gift card items in catalog`);
+    logger.info('square.catalog.gift_card_items', { count: giftCardItems.length });
     return giftCardItems;
   } catch (error) {
-    console.error('Error searching catalog for gift cards:', error);
+    logger.error('square.catalog.search_error', errorContext(error));
     return [];
   }
 }
@@ -1415,11 +1354,11 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
       });
     }
 
-    console.log(`Starting orders sync from ${startDate?.toISOString() || '30 days ago'} to ${endDate?.toISOString() || 'now'}`);
+    logger.info('sync.orders.start');
 
     // Fetch orders from Square
     const orders = await fetchOrders(startDate, endDate);
-    console.log(`Fetched ${orders.length} orders from Square`);
+    logger.info('sync.orders.fetched', { count: orders.length });
 
     // Process each order
     let successCount = 0;
@@ -1432,7 +1371,7 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
 
         // Create order in database
         const savedOrder = await pgStorage.createOrder(insertOrder);
-        console.log(`Saved order ${order.id} to database with internal ID ${savedOrder.id}`);
+        logger.debug('sync.orders.saved', { squareId: order.id });
 
         // Process line items
         if (order.lineItems && Array.isArray(order.lineItems)) {
@@ -1440,7 +1379,8 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
             try {
               const insertLineItem = convertSquareLineItemToOrderLineItem(lineItem, savedOrder.id);
               const savedLineItem = await pgStorage.createOrderItem(insertLineItem);
-              console.log(`Saved line item for order ${order.id}: ${lineItem.name}`);
+              // Don't log line-item names — staff sometimes encode customer
+              // info into them (e.g. "John's birthday cake").
 
               // Process modifiers for this line item
               if (lineItem.modifiers && Array.isArray(lineItem.modifiers)) {
@@ -1449,12 +1389,12 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
                     const insertModifier = convertSquareModifierToOrderModifier(modifier, savedLineItem.id);
                     await pgStorage.createOrderModifier(insertModifier);
                   } catch (modifierError) {
-                    console.error(`Error processing modifier for line item ${lineItem.name}:`, modifierError);
+                    logger.error('sync.orders.modifier_error', { orderId: order.id, ...errorContext(modifierError) });
                   }
                 }
               }
             } catch (lineItemError) {
-              console.error(`Error processing line item for order ${order.id}:`, lineItemError);
+              logger.error('sync.orders.line_item_error', { orderId: order.id, ...errorContext(lineItemError) });
             }
           }
         }
@@ -1466,7 +1406,7 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
               const insertDiscount = convertSquareDiscountToOrderDiscount(discount, savedOrder.id);
               await pgStorage.createOrderDiscount(insertDiscount);
             } catch (discountError) {
-              console.error(`Error processing discount for order ${order.id}:`, discountError);
+              logger.error('sync.orders.discount_error', { orderId: order.id, ...errorContext(discountError) });
             }
           }
         }
@@ -1482,7 +1422,7 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
         });
       } catch (error) {
         errorCount++;
-        console.error(`Failed to process order ${order.id}:`, error);
+        logger.error('sync.orders.process_failed', { orderId: order.id, ...errorContext(error) });
       }
     }
 
@@ -1496,9 +1436,9 @@ export async function syncOrders(startDate?: Date, endDate?: Date): Promise<void
       lastSyncedAt: new Date()
     });
 
-    console.log(`Completed orders sync. Success: ${successCount}, Errors: ${errorCount}`);
+    logger.info('sync.orders.done', { processed: successCount, failed: errorCount });
   } catch (error) {
-    console.error('Error during orders sync:', error);
+    logger.error('sync.orders.failed', errorContext(error));
     throw error;
   }
 }

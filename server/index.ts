@@ -15,6 +15,7 @@ import { registerMcpRoutes } from "./mcp";
 import { toSafeErrorResponse, sendError, ForbiddenError } from "./errors";
 import { isAllowedOrigin } from "./security/origin";
 import { SESSION_ABSOLUTE_MS } from "./sessionConfig";
+import { logger, newRequestId, errorContext } from "./logger";
 
 // Track the live HTTP server so the fatal-error shutdown routine can
 // stop accepting new connections before the process exits. Populated
@@ -43,16 +44,16 @@ async function fatalShutdown(label: string, err: unknown): Promise<void> {
   if (shuttingDown) {
     // A second fatal during shutdown means cleanup itself is broken.
     // Skip straight to a hard exit so we don't get stuck in a loop.
-    console.error(`[shutdown] second fatal during shutdown (${label}):`, err);
+    logger.error('shutdown.second_fatal', { label, ...errorContext(err) });
     process.exit(1);
   }
   shuttingDown = true;
-  console.error(`[shutdown] ${label}:`, err);
+  logger.error(`shutdown.${label}`, errorContext(err));
 
   // Hard cap: if any close hangs (a stuck DB query, a wedged socket),
   // force-exit so the supervisor can restart us.
   const hardTimer = setTimeout(() => {
-    console.error('[shutdown] hard timeout reached, force-exiting');
+    logger.error('shutdown.hard_timeout');
     process.exit(1);
   }, SHUTDOWN_HARD_TIMEOUT_MS);
   hardTimer.unref();
@@ -73,17 +74,17 @@ async function fatalShutdown(label: string, err: unknown): Promise<void> {
     // 2. Tear down the WebSocket server and terminate live clients
     //    so /ws subscribers see a clean disconnect.
     await closeWebSocket().catch((e) => {
-      console.error('[shutdown] websocket close failed:', e);
+      logger.error('shutdown.websocket_close_failed', errorContext(e));
     });
 
     // 3. Drain the Postgres pool. Ending the pool closes every
     //    connection, which in turn releases any session-scoped
     //    advisory locks or open transactions held by sync work.
     await pool.end().catch((e) => {
-      console.error('[shutdown] pg pool end failed:', e);
+      logger.error('shutdown.pg_pool_end_failed', errorContext(e));
     });
   } catch (cleanupErr) {
-    console.error('[shutdown] cleanup error:', cleanupErr);
+    logger.error('shutdown.cleanup_error', errorContext(cleanupErr));
   } finally {
     clearTimeout(hardTimer);
     process.exit(1);
@@ -225,7 +226,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
     if (Date.now() - sess.createdAt > SESSION_ABSOLUTE_MS) {
       sess.destroy((err: Error | null) => {
         if (err) {
-          console.error('Error destroying expired session:', err);
+          logger.error('session.destroy_failed', errorContext(err));
         }
         // Leave it to the next request to issue a new (anonymous)
         // session cookie. Clearing here would require knowing the
@@ -306,41 +307,49 @@ app.use('/mcp', (req, res, next) => {
 
 registerMcpRoutes(app);
 
-// Add startup timestamp and environment check
-const startTime = new Date().toISOString();
-log(`Starting application at ${startTime}`);
-log('Environment check:');
-console.log({
-  NODE_ENV: process.env.NODE_ENV,
-  DATABASE_URL: process.env.DATABASE_URL ? '[PRESENT]' : '[MISSING]',
-  PORT: process.env.PORT || 5000
+// Startup environment summary. Only allow-listed presence flags are logged
+// — never the actual values of DATABASE_URL or other secrets.
+logger.info('startup', {
+  nodeEnv: process.env.NODE_ENV ?? 'development',
+  hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+  port: Number(process.env.PORT || 5000),
 });
 
-// Add request logging middleware
+// Structured request logger. Captures only allow-listed fields:
+//   { method, path, status, durationMs, requestId }
+// Crucially, response bodies are NOT captured. The previous logger
+// echoed the JSON response (truncated at 80 chars) for every /api
+// path except /api/auth — that leaked customer names, payment notes,
+// gift-card numbers, and other PII into Replit workspace logs.
+//
+// A request id is generated (or read from an inbound `x-request-id`
+// header) and echoed back so the client can correlate failures with
+// server-side logs without us having to log the payload.
 app.use((req, res, next) => {
   const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+  const inbound = req.headers['x-request-id'];
+  const requestId =
+    typeof inbound === 'string' && inbound.length > 0 && inbound.length <= 128
+      ? inbound
+      : newRequestId();
+  res.setHeader('x-request-id', requestId);
+  (req as any).requestId = requestId;
 
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse && !path.startsWith("/api/auth")) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
+  res.on('finish', () => {
+    if (!req.path.startsWith('/api')) return;
+    const ctx = {
+      requestId,
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      durationMs: Date.now() - start,
+    };
+    if (res.statusCode >= 500) {
+      logger.error('request', ctx);
+    } else if (res.statusCode >= 400) {
+      logger.warn('request', ctx);
+    } else {
+      logger.info('request', ctx);
     }
   });
 
@@ -460,11 +469,13 @@ async function exitWithError(error: unknown) {
     // Error handling middleware — log full error server-side, return sanitized payload to client.
     // The sanitizer maps AppError subclasses to their own statusCode and
     // collapses everything else to a 500 with a generic message.
-    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-      log(`Error handler caught: ${err?.message ?? err}`, 'error');
-      if (err?.stack) {
-        log(err.stack, 'error');
-      }
+    app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+      logger.error('unhandled_error', {
+        requestId: (req as any).requestId,
+        path: req.path,
+        method: req.method,
+        ...errorContext(err),
+      });
       if (!res.headersSent) {
         const { status, body } = toSafeErrorResponse(err);
         res.status(status).json(body);
