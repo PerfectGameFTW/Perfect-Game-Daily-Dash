@@ -4,14 +4,17 @@
  * Provides authentication and user management functionality.
  */
 
-import { compare, hash, getRounds } from 'bcryptjs';
+import {
+  hashPassword,
+  verifyPassword,
+  needsRehash,
+  getDummyHash,
+} from './passwordHash';
 
-// Centralized bcrypt cost factor. Bumped from 10 to 12 to slow offline
-// cracking if the user table is ever leaked. All password-hashing call
-// sites in this service must use this constant. On successful login,
-// stored hashes below this cost are transparently re-hashed at the
-// current cost (see loginUser).
-export const BCRYPT_COST = 12;
+// Re-exported for any external caller that historically imported the
+// bcrypt cost from here. New code should not reference this — the
+// password-hash module is the single source of truth for parameters.
+export { LEGACY_BCRYPT_COST as BCRYPT_COST } from './passwordHash';
 import { createHash, randomBytes } from 'crypto';
 import { and, count, eq, isNull, gt, or, sql } from 'drizzle-orm';
 import { db } from '../db';
@@ -58,17 +61,10 @@ import { AuthError, ConflictError } from '../errors';
 // pg_advisory_xact_lock takes a bigint; this constant is arbitrary but fixed.
 const BOOTSTRAP_ADVISORY_LOCK_KEY = BigInt('8472619341205310');
 
-// Dummy bcrypt hash used so the "user not found" branch of loginUser still
-// runs a real bcrypt.compare and takes the same wall-clock time as the
-// "user exists, wrong password" branch. This prevents username enumeration
-// via response-time timing.
-//
-// The cleartext for this hash is intentionally a long random string that is
-// not a valid password and can never be matched. Generated with bcryptjs
-// at the current BCRYPT_COST so the wall-clock time of a "no such user"
-// compare matches a real cost-BCRYPT_COST compare.
-const DUMMY_BCRYPT_HASH =
-  '$2b$12$NEe1aT5JJJcWsq/ctTUR8uRb7Rti3YR/PPPeIEk0xbg6E2pn9gLYK';
+// Per-process dummy hash now lives in `./passwordHash` (`getDummyHash`).
+// It's an argon2id hash generated at first use with the SAME params as
+// hashPassword(), so the "no such user" branch's verify cost tracks the
+// real verify cost as parameters are tuned over time.
 
 // Per-account lockout policy. After LOCKOUT_THRESHOLD consecutive failed
 // password attempts, the account is locked for LOCKOUT_WINDOW_MS regardless
@@ -107,8 +103,8 @@ export class AuthService {
       throw new ConflictError(`User with username ${username} already exists`);
     }
 
-    // Hash password
-    const hashedPassword = await hash(password, BCRYPT_COST);
+    // Hash password (argon2id via the central abstraction)
+    const hashedPassword = await hashPassword(password);
 
     // Create user with validated role (defaults to 'user' for any unexpected value)
     const userData: InsertUser & { email?: string } = {
@@ -162,7 +158,7 @@ export class AuthService {
    * from an unauthenticated HTTP request.
    */
   async bootstrapInitialAdmin(username: string, password: string): Promise<User> {
-    const hashedPassword = await hash(password, BCRYPT_COST);
+    const hashedPassword = await hashPassword(password);
 
     return await db.transaction(async (tx) => {
       // Serialize all bootstrap attempts at the DB level.
@@ -213,18 +209,20 @@ export class AuthService {
    * cookie.
    */
   async loginUser(username: string, password: string): Promise<User | null> {
-    // Look up the user. We always run exactly one bcrypt.compare so that
-    // the response time is indistinguishable across the three failure
-    // paths (no such user, locked account, wrong password). The dummy hash
-    // is used whenever we don't have — or won't trust — the real hash.
+    // Look up the user. We always run exactly one password verification
+    // so that the response time is indistinguishable across the three
+    // failure paths (no such user, locked account, wrong password). The
+    // dummy hash is used whenever we don't have — or won't trust — the
+    // real hash. verifyPassword auto-dispatches to argon2id or legacy
+    // bcrypt based on the stored hash prefix.
     const user = await this.getUserByUsername(username);
     const now = new Date();
     const isLocked = !!(user && user.lockedUntil && user.lockedUntil > now);
 
     const hashToCompare =
-      user && !isLocked ? user.password : DUMMY_BCRYPT_HASH;
+      user && !isLocked ? user.password : await getDummyHash();
 
-    const passwordMatch = await compare(password, hashToCompare);
+    const passwordMatch = await verifyPassword(password, hashToCompare);
 
     // Unknown username: we have no row to update, but to keep timing
     // parity with the "wrong password against an existing user" path
@@ -275,25 +273,25 @@ export class AuthService {
         .where(eq(users.id, user.id));
     }
 
-    // Transparent rehash: if the stored hash was produced at a cost
-    // below the current BCRYPT_COST, we have the plaintext in hand and
-    // can upgrade the stored hash without forcing the user to reset.
-    // Wrapped in try/catch so a malformed hash (or rehash failure)
-    // never breaks an otherwise valid login.
+    // Transparent rehash: if the stored hash is bcrypt (legacy) OR an
+    // argon2id hash with weaker-than-current parameters, upgrade it
+    // now that we have the plaintext in hand. The user is never asked
+    // to reset — the migration is invisible from their perspective and
+    // self-heals as users log in. Wrapped in try/catch so a malformed
+    // hash (or rehash failure) never breaks an otherwise valid login.
     try {
-      const currentRounds = getRounds(user.password);
-      if (currentRounds < BCRYPT_COST) {
-        const upgraded = await hash(password, BCRYPT_COST);
+      if (needsRehash(user.password)) {
+        const upgraded = await hashPassword(password);
         await db
           .update(users)
           .set({ password: upgraded })
           .where(eq(users.id, user.id));
       }
     } catch (rehashErr) {
-      // Ignore — login still succeeds at the existing cost. Emit a
-      // warning so operators can spot a stuck rehash migration
+      // Ignore — login still succeeds against the existing hash. Emit
+      // a warning so operators can spot a stuck rehash migration
       // without it ever blocking authentication.
-      logger.warn('bcrypt transparent rehash failed', {
+      logger.warn('password transparent rehash failed', {
         userId: user.id,
         ...errorContext(rehashErr),
       });
@@ -492,7 +490,7 @@ export class AuthService {
         .returning({ id: passwordResetTokens.id });
       if (consumed.length === 0) return false;
 
-      const hashedPassword = await hash(newPassword, BCRYPT_COST);
+      const hashedPassword = await hashPassword(newPassword);
       await tx
         .update(users)
         .set({

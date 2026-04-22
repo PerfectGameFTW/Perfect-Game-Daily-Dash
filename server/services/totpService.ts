@@ -13,9 +13,10 @@
  *     enrollment except via the otpauth URL handed back to the
  *     enrollment UI. The DB only ever stores the encrypted envelope.
  *   - Recovery codes are presented exactly once at enrollment. We store
- *     bcrypt hashes only, so a leaked DB row cannot be used to enrol
- *     in a fresh authenticator — only to attempt brute force against
- *     the bcrypt hashes.
+ *     argon2id hashes only (legacy bcrypt hashes still verify), so a
+ *     leaked DB row cannot be used to enrol in a fresh authenticator —
+ *     only to attempt brute force against the password-hash work
+ *     factor.
  *   - The TOTP step at login is rate-limited at the route layer; we
  *     additionally rely on the existing per-account password lockout
  *     (separate counter) to bound damage from a stolen password +
@@ -23,13 +24,17 @@
  */
 
 import { Secret, TOTP } from 'otpauth';
-import { hash, compare } from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { users, type User } from '../../shared/schema';
 import { encryptTotpSecret, decryptTotpSecret } from './totpCrypto';
-import { BCRYPT_COST } from './authService';
+// Recovery codes use the same hashing primitive as user passwords so
+// the codebase has a single hash policy. The verifyPassword helper
+// auto-dispatches between argon2id and any legacy bcrypt-hashed code,
+// so existing recovery codes generated before the argon2 migration
+// keep working until the next code is consumed.
+import { hashPassword, verifyPassword } from './passwordHash';
 
 const ISSUER = process.env.TOTP_ISSUER || 'Perfect Game Sales Dashboard';
 
@@ -132,7 +137,7 @@ export class TotpService {
       generateRecoveryCode(),
     );
     const hashedCodes = await Promise.all(
-      plaintextCodes.map((c) => hash(c.replace('-', ''), BCRYPT_COST)),
+      plaintextCodes.map((c) => hashPassword(c.replace('-', ''))),
     );
     await db
       .update(users)
@@ -173,7 +178,7 @@ export class TotpService {
       // Strip the dash before comparing — we hash without the
       // formatting separator so a user who omits the dash still works.
       // eslint-disable-next-line no-await-in-loop
-      const ok = await compare(cleaned, h);
+      const ok = await verifyPassword(cleaned, h);
       if (ok) {
         const remaining = stored.filter((x) => x !== h);
         await db

@@ -299,7 +299,8 @@ export const users = pgTable(
     // rotation can recognise the version. totpEnabled flips to true only
     // after the user has verified their first 6-digit code; until then
     // the secret is stored but ignored at login. totpRecoveryCodes is an
-    // array of bcrypt hashes — each one-time recovery code is consumed
+    // array of argon2id hashes (legacy bcrypt still accepted on verify)
+    // — each one-time recovery code is consumed
     // by removing its hash from the array. Non-admin accounts may also
     // enrol but only admin login currently requires the second factor.
     totpSecretEncrypted: text("totp_secret_encrypted"),
