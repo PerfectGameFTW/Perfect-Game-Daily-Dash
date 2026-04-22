@@ -3,7 +3,7 @@ import { sql, eq, and, desc } from 'drizzle-orm';
 import { 
   users, transactions, giftCards, giftCardRedemptions, 
   orders, orderLineItems, orderModifiers, orderDiscounts, syncState,
-  mcpQueryAudit, appSettings,
+  mcpQueryAudit, appSettings, syncAudit,
   DateRange, TransactionStatus, Order, OrderLineItem, OrderModifier, OrderDiscount,
   InsertUser, User, InsertTransaction, Transaction,
   InsertGiftCard, GiftCard, InsertGiftCardRedemption, GiftCardRedemption,
@@ -19,7 +19,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { InvalidOrderDataError, OrderNotFoundError } from './errors';
 
 // Import IStorage interface from './storage'
-import { IStorage, McpQueryAuditFilters, McpQueryAuditPage } from './storage';
+import { IStorage, McpQueryAuditFilters, McpQueryAuditPage, SyncAuditFilters, SyncAuditPage } from './storage';
 
 class PgStorage implements IStorage {
   // User methods
@@ -480,6 +480,61 @@ class PgStorage implements IStorage {
       total: Number(totalResult.rows[0]?.total ?? 0),
       limit,
       offset,
+    };
+  }
+
+  async listSyncAudit(filters: SyncAuditFilters): Promise<SyncAuditPage> {
+    const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+    const offset = Math.max(filters.offset ?? 0, 0);
+
+    const whereClause = filters.syncType && filters.syncType.trim() !== ''
+      ? sql`WHERE a.sync_type = ${filters.syncType.trim()}`
+      : sql``;
+
+    const rowsResult = await db.execute(sql`
+      SELECT a.id, a.sync_type, a.action, a.actor_user_id, a.actor_ip,
+             a.params, a.status, a.error_message, a.result, a.pages_used,
+             a.started_at, a.completed_at,
+             u.username AS actor_username
+      FROM sync_audit a
+      LEFT JOIN users u ON u.id = a.actor_user_id
+      ${whereClause}
+      ORDER BY a.started_at DESC, a.id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+
+    const totalResult = await db.execute(sql`
+      SELECT COUNT(*)::int AS total
+      FROM sync_audit a
+      ${whereClause}
+    `);
+
+    const typesResult = await db.execute(sql`
+      SELECT DISTINCT sync_type FROM sync_audit ORDER BY sync_type ASC
+    `);
+
+    const entries = rowsResult.rows.map((row) => ({
+      id: Number(row.id),
+      syncType: row.sync_type as string,
+      action: row.action as string,
+      actorUserId: row.actor_user_id === null ? null : Number(row.actor_user_id),
+      actorIp: (row.actor_ip as string | null) ?? null,
+      params: (row.params as Record<string, unknown> | null) ?? null,
+      status: row.status as string,
+      errorMessage: (row.error_message as string | null) ?? null,
+      result: (row.result as Record<string, unknown> | null) ?? null,
+      pagesUsed: Number(row.pages_used ?? 0),
+      startedAt: new Date(row.started_at as string),
+      completedAt: row.completed_at === null ? null : new Date(row.completed_at as string),
+      actorUsername: (row.actor_username as string | null) ?? null,
+    }));
+
+    return {
+      entries,
+      total: Number(totalResult.rows[0]?.total ?? 0),
+      limit,
+      offset,
+      syncTypes: typesResult.rows.map((r) => r.sync_type as string),
     };
   }
 

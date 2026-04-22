@@ -10,6 +10,7 @@ import ResetPassword from "@/pages/ResetPassword";
 import ForcePasswordChange from "@/pages/ForcePasswordChange";
 import Admin from "@/pages/Admin";
 import McpAudit from "@/pages/McpAudit";
+import SyncAudit from "@/pages/SyncAudit";
 import GiftCardTest from "@/pages/GiftCardTest";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
@@ -77,6 +78,14 @@ function Router() {
         {() => (
           <ProtectedRoute requiredRole="admin">
             <McpAudit />
+          </ProtectedRoute>
+        )}
+      </Route>
+
+      <Route path="/admin/sync-audit">
+        {() => (
+          <ProtectedRoute requiredRole="admin">
+            <SyncAudit />
           </ProtectedRoute>
         )}
       </Route>

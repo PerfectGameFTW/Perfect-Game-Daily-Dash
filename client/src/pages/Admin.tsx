@@ -111,6 +111,13 @@ export default function Admin() {
               SQL Query History
             </button>
             <button
+              onClick={() => navigate('/admin/sync-audit')}
+              className="flex items-center rounded-md bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
+            >
+              <Database className="mr-2 h-4 w-4" />
+              Backfill Audit
+            </button>
+            <button
               onClick={() => navigate('/')}
               className="flex items-center rounded-md bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
             >

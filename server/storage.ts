@@ -12,7 +12,8 @@ import {
   OrderDiscount, InsertOrderDiscount,
   OrderSummary,
   InsertMcpQueryAudit,
-  McpQueryAudit
+  McpQueryAudit,
+  SyncAudit
 } from "@shared/schema";
 
 export interface McpQueryAuditFilters {
@@ -33,6 +34,24 @@ export interface McpQueryAuditPage {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface SyncAuditFilters {
+  syncType?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface SyncAuditEntry extends SyncAudit {
+  actorUsername: string | null;
+}
+
+export interface SyncAuditPage {
+  entries: SyncAuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  syncTypes: string[];
 }
 
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
@@ -92,6 +111,9 @@ export interface IStorage {
   recordMcpQueryAudit(entry: InsertMcpQueryAudit): Promise<void>;
   pruneMcpQueryAudit(maxAgeDays: number): Promise<number>;
   listMcpQueryAudit(filters: McpQueryAuditFilters): Promise<McpQueryAuditPage>;
+
+  // Sync audit log (historical/backfill triggers)
+  listSyncAudit(filters: SyncAuditFilters): Promise<SyncAuditPage>;
 
   // Generic per-deployment runtime settings (app_settings table). Values
   // are JSON-typed and intentionally untyped at the storage layer; each

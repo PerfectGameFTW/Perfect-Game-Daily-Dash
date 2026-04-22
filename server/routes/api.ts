@@ -805,6 +805,37 @@ export function createApiRouter(): Router {
     },
   );
 
+  // Admin: paginated browser for the sync audit log. Surfaces who
+  // triggered each historical/backfill run, with which params, and
+  // how it completed.
+  router.get(
+    '/admin/sync-audit',
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const querySchema = z.object({
+          syncType: z.string().trim().max(100).optional(),
+          limit: z.coerce.number().int().min(1).max(200).optional(),
+          offset: z.coerce.number().int().min(0).optional(),
+        });
+        const parsed = querySchema.safeParse(req.query);
+        if (!parsed.success) {
+          return res.status(400).json({
+            error: 'Invalid query parameters',
+            issues: parsed.error.issues.map((i) => ({
+              path: i.path.join('.'),
+              message: i.message,
+            })),
+          });
+        }
+        const page = await pgStorage.listSyncAudit(parsed.data);
+        res.json(page);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // NOTE: do NOT attach the error middleware here — `server/routes.ts`
   // adds more routes to this router AFTER createApiRouter() returns,
   // and Express won't dispatch an error middleware to a route that was
