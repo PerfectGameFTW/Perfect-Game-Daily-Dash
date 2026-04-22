@@ -51,29 +51,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Historical backfill: syncs all orders + payments for a given date range in weekly chunks.
-  // Params (body OR query string):
+  // Params (JSON body only — no query-string fallback):
   //   startDate  — ISO date string, e.g. "2025-01-01"  (defaults to Jan 1 2025)
   //   endDate    — ISO date string, e.g. "2026-03-22"  (defaults to now)
-  //   chunkDays  — number of days per chunk            (defaults to 7)
+  //   chunkDays  — number of days per chunk            (defaults to 7, max 31)
+  // The total span (endDate − startDate) is capped at MAX_BACKFILL_RANGE_DAYS
+  // to keep a misclick (or an attacker-influenced URL handed to an admin)
+  // from triggering a multi-year sync that would burn through the shared
+  // Square API daily quota. The hard daily budget in `sync_daily_budget`
+  // remains the ultimate ceiling; this is the upstream guardrail.
   // Returns immediately with 202 Accepted; poll GET /api/sync/backfill/status for progress.
+  const MAX_BACKFILL_RANGE_DAYS = 366; // ~1 year per request
+  const MAX_CHUNK_DAYS = 31;
   apiRouter.post("/sync/backfill", requireAuth, requireAdmin, async (req, res, next: NextFunction) => {
     try {
-      // Accept params from both body and query string (body takes precedence)
-      const body = req.body ?? {};
-      const query = req.query ?? {};
-      const rawStartDate = body.startDate ?? query.startDate;
-      const rawEndDate   = body.endDate   ?? query.endDate;
-      const rawChunkDays = body.chunkDays ?? query.chunkDays;
+      // Body-only: state-changing parameters from the URL widen the
+      // attack surface (server logs, browser history, Referer headers)
+      // for no benefit, so we ignore req.query entirely here.
+      const body = (req.body ?? {}) as {
+        startDate?: unknown;
+        endDate?: unknown;
+        chunkDays?: unknown;
+      };
 
-      const start = rawStartDate ? new Date(rawStartDate as string) : new Date('2025-01-01T00:00:00Z');
-      const end   = rawEndDate   ? new Date(rawEndDate   as string) : new Date();
-      const chunk = Number(rawChunkDays) > 0 ? Number(rawChunkDays) : 7;
+      const start = body.startDate
+        ? new Date(body.startDate as string)
+        : new Date('2025-01-01T00:00:00Z');
+      const end = body.endDate
+        ? new Date(body.endDate as string)
+        : new Date();
+
+      // Distinguish "absent" (use default) from "explicitly provided but
+      // garbage" (reject). The previous `Number(x) > 0 ? ... : 7` form
+      // silently coerced "abc", 0, and -5 into the default.
+      let chunk = 7;
+      if (body.chunkDays !== undefined && body.chunkDays !== null) {
+        const parsed = Number(body.chunkDays);
+        if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1 || parsed > MAX_CHUNK_DAYS) {
+          throw new ValidationError(
+            `chunkDays must be an integer between 1 and ${MAX_CHUNK_DAYS}`,
+          );
+        }
+        chunk = parsed;
+      }
 
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
         throw new ValidationError('Invalid startDate or endDate');
       }
       if (start >= end) {
         throw new ValidationError('startDate must be before endDate');
+      }
+      const spanDays = (end.getTime() - start.getTime()) / 86_400_000;
+      if (spanDays > MAX_BACKFILL_RANGE_DAYS) {
+        throw new ValidationError(
+          `Date range too large: ${Math.ceil(spanDays)} days requested ` +
+            `but the per-request maximum is ${MAX_BACKFILL_RANGE_DAYS} days. ` +
+            `Split the backfill into multiple sequential calls.`,
+        );
       }
 
       console.log(`[Backfill] Received request: ${start.toISOString()} → ${end.toISOString()}, chunkDays=${chunk}`);

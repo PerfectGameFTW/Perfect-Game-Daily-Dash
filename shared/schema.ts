@@ -362,9 +362,24 @@ export const strongPasswordSchema = z
     message: 'Password must contain at least one digit',
   });
 
+// Username allow-list applied at *account creation* time. The regex
+// constrains the charset so usernames are safe to interpolate into
+// outbound email bodies, log lines, and any future surface that
+// renders them. Login deliberately keeps the looser min(3)/max(50)
+// (no regex) so legacy accounts created before this rule can still
+// sign in.
+const USERNAME_AT_CREATE = z
+  .string()
+  .min(3, 'Username must be at least 3 characters')
+  .max(50, 'Username must be at most 50 characters')
+  .regex(
+    /^[A-Za-z0-9._-]+$/,
+    'Username may only contain letters, digits, dots, underscores, and hyphens',
+  );
+
 // Public self-registration: role is never accepted from the request.
 export const selfRegisterSchema = z.object({
-  username: z.string().min(3).max(50),
+  username: USERNAME_AT_CREATE,
   password: strongPasswordSchema,
 });
 
@@ -375,7 +390,7 @@ export const selfRegisterSchema = z.object({
 // an email cannot recover their password until one is added (see
 // adminUpdateUserEmailSchema below).
 export const adminCreateUserSchema = z.object({
-  username: z.string().min(3).max(50),
+  username: USERNAME_AT_CREATE,
   password: strongPasswordSchema,
   role: z.enum(['user', 'admin']).default('user'),
   email: z.string().trim().email().max(254).optional(),

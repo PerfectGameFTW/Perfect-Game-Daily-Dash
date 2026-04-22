@@ -43,24 +43,71 @@ export const sessionMiddleware = session({
 });
 
 // Cookie-name compatibility shim. When SESSION_COOKIE_NAME is the
-// hardened `__Host-pg.sid` (i.e. anywhere outside an explicit
-// development environment), browsers that signed in *before* this
-// deploy will still be presenting the legacy `pg.sid` cookie. The
-// session id itself is unchanged and remains valid in the
-// connect-pg-simple `sessions` table — only the cookie *name* moved.
+// hardened `__Host-pg.sid` (anywhere outside an explicit development
+// environment), browsers that signed in *before* the cookie rename
+// would still be presenting the legacy `pg.sid` cookie. The session id
+// itself is unchanged in the connect-pg-simple `sessions` table — only
+// the cookie *name* moved.
 //
-// Without this shim every previously-authenticated user would get
-// silently logged out on deploy. Express-session reads from
-// `req.headers.cookie` by name only, so we copy the legacy value
-// over to the new name on the inbound request and let the
-// rolling-session response set the cookie under the new hardened
-// name. We also actively clear the stale legacy cookie so the
-// browser stops sending two parallel session ids.
+// SECURITY TRADE-OFF (the reason this shim is now opt-in and time-boxed):
+// The whole point of the `__Host-` prefix is that browsers reject any
+// such cookie unless it was set with Secure, Path=/, and no Domain
+// attribute. That blocks a sibling subdomain or HTTP page from
+// overwriting the session cookie. The legacy `pg.sid` cookie has no
+// `__Host-` prefix and CAN be set by such peers; if we blindly launder
+// any inbound `pg.sid` value into `__Host-pg.sid` for express-session
+// to read, we re-open the very attack the prefix exists to prevent
+// (login-CSRF / session injection from a controllable peer origin on
+// the same eTLD+1 — relevant on custom domains that share a parent
+// with attacker-controllable subdomains).
 //
-// This shim is a no-op once everyone has cycled onto the new name
-// and can be deleted in a future pass; it costs one regex per
-// request until then.
+// Therefore the shim is now:
+//   - Disabled by default. Set ENABLE_LEGACY_COOKIE_COMPAT=true to
+//     enable it for a one-time migration window.
+//   - Auto-expiring. LEGACY_COOKIE_DEADLINE (ISO-8601 timestamp) is
+//     required when the shim is enabled; the shim becomes a no-op
+//     after that instant. This forces operators to pick a cutoff
+//     instead of leaving the downgrade in place forever.
+//
+// Once everyone has cycled onto the hardened cookie (typically a few
+// idle-timeout windows after the rename deploy), unset both env vars
+// and this whole module degrades to a single boolean check per
+// request.
 const LEGACY_SESSION_COOKIE_NAME = 'pg.sid';
+
+const LEGACY_COMPAT_ENABLED =
+  process.env.ENABLE_LEGACY_COOKIE_COMPAT === 'true';
+
+const LEGACY_COMPAT_DEADLINE_MS: number | null = (() => {
+  if (!LEGACY_COMPAT_ENABLED) return null;
+  const raw = process.env.LEGACY_COOKIE_DEADLINE;
+  if (!raw) {
+    // Refuse to enable the downgrade without an explicit cutoff. Logged
+    // once at module load so operators see it on boot.
+    console.warn(
+      '[session] ENABLE_LEGACY_COOKIE_COMPAT=true but ' +
+        'LEGACY_COOKIE_DEADLINE is not set. The shim will stay disabled — ' +
+        'set LEGACY_COOKIE_DEADLINE to an ISO-8601 timestamp (e.g. ' +
+        '"2026-05-15T00:00:00Z") to enable it until that instant.',
+    );
+    return null;
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) {
+    console.warn(
+      `[session] LEGACY_COOKIE_DEADLINE="${raw}" is not a valid ` +
+        'ISO-8601 timestamp; the legacy cookie shim will stay disabled.',
+    );
+    return null;
+  }
+  return parsed;
+})();
+
+function legacyShimActive(): boolean {
+  if (!LEGACY_COMPAT_ENABLED) return false;
+  if (LEGACY_COMPAT_DEADLINE_MS === null) return false;
+  return Date.now() < LEGACY_COMPAT_DEADLINE_MS;
+}
 
 export const legacyCookieCompatMiddleware = (
   req: Request,
@@ -68,6 +115,9 @@ export const legacyCookieCompatMiddleware = (
   next: NextFunction,
 ) => {
   if (SESSION_COOKIE_NAME === LEGACY_SESSION_COOKIE_NAME) {
+    return next();
+  }
+  if (!legacyShimActive()) {
     return next();
   }
   const cookieHeader = req.headers.cookie;

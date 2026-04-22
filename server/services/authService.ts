@@ -32,6 +32,23 @@ function hashResetToken(rawToken: string): string {
   return createHash('sha256').update(rawToken).digest('hex');
 }
 
+// Minimal HTML escaper for values we interpolate into the recovery
+// email body. The username is constrained to a safe charset by the
+// `selfRegisterSchema` / `adminCreateUserSchema` regex, but the email
+// HTML is sent through external mail providers that may render or
+// rewrite content in ways we can't predict, and historical accounts
+// created before the regex existed may still hold characters like
+// `<` or `&`. Escaping at the interpolation site is the cheap belt
+// to the schema's suspenders.
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // AuthError now lives in `server/errors.ts` (see Task #58). Imported (not
 // re-exported) here because nothing else in the project imports it from
 // authService.
@@ -399,11 +416,17 @@ export class AuthService {
       `${resetUrl}\n\n` +
       `If you didn't request this, you can safely ignore this email — your password ` +
       `will not change.\n`;
+    // HTML body: escape every interpolated value. The reset URL is
+    // safe (we built it from a 256-bit hex token + a configured
+    // baseUrl), but escaping it costs nothing and removes one more
+    // sharp edge if APP_BASE_URL is ever misconfigured.
+    const safeUsername = escapeHtml(user.username);
+    const safeResetUrl = escapeHtml(resetUrl);
     const html =
-      `<p>Hi ${user.username},</p>` +
+      `<p>Hi ${safeUsername},</p>` +
       `<p>Someone requested a password reset for your account. If that was you, ` +
       `click the link below within 30 minutes to set a new password:</p>` +
-      `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
+      `<p><a href="${safeResetUrl}">${safeResetUrl}</a></p>` +
       `<p>If you didn't request this, you can safely ignore this email — your password ` +
       `will not change.</p>`;
 
