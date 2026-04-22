@@ -15,6 +15,7 @@ import {
   Mail,
   Pencil,
   Check,
+  KeyRound,
 } from 'lucide-react';
 import {
   Dialog,
@@ -69,11 +70,17 @@ type UserFormValues = z.infer<typeof userSchema>;
 
 // User type definition. `email` is the recovery address used by the
 // password-reset flow — null when the account hasn't been enrolled.
+// `mustRotatePassword` is set on every account whose password predates
+// the strong-password policy (Task #55) and stays true until the user
+// successfully changes it. Surfacing it here lets admins see at a
+// glance who still has a weak legacy password and nudge them to
+// rotate (Task #99).
 interface User {
   id: number;
   username: string;
   role: string;
   email: string | null;
+  mustRotatePassword: boolean;
 }
 
 export default function UserManagement() {
@@ -108,6 +115,17 @@ export default function UserManagement() {
   const [editingEmailUserId, setEditingEmailUserId] = useState<number | null>(null);
   const [emailDraft, setEmailDraft] = useState('');
   const [savingEmailUserId, setSavingEmailUserId] = useState<number | null>(null);
+
+  // Filter toggle for the password-rotation rollout (Task #99). When
+  // on, the table is narrowed to accounts whose `mustRotatePassword`
+  // is still true so an admin can see exactly who hasn't completed
+  // the rotation. Defaults off so the page still shows the full
+  // roster on first open.
+  const [showOnlyWeakPasswords, setShowOnlyWeakPasswords] = useState(false);
+  const weakPasswordCount = users.filter((u) => u.mustRotatePassword).length;
+  const visibleUsers = showOnlyWeakPasswords
+    ? users.filter((u) => u.mustRotatePassword)
+    : users;
 
   // Fetch users
   const fetchUsers = async () => {
@@ -322,13 +340,36 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-semibold text-gray-800">User Accounts</h2>
           {loading && <Spinner size="sm" className="text-blue-600" />}
         </div>
-        
-        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Password-rotation filter (Task #99). The button doubles as
+              a live count of accounts still on the legacy weak password
+              so admins can see at a glance how the rollout is going. */}
+          <Button
+            type="button"
+            variant={showOnlyWeakPasswords ? 'default' : 'outline'}
+            size="sm"
+            className="gap-2"
+            onClick={() => setShowOnlyWeakPasswords((v) => !v)}
+            title={
+              showOnlyWeakPasswords
+                ? 'Showing only accounts that still have a legacy weak password. Click to show all.'
+                : 'Show only accounts that still have a legacy weak password.'
+            }
+            disabled={users.length === 0}
+          >
+            <KeyRound className="h-4 w-4" />
+            {showOnlyWeakPasswords
+              ? `Showing ${weakPasswordCount} weak password${weakPasswordCount === 1 ? '' : 's'} — clear filter`
+              : `Weak passwords (${weakPasswordCount})`}
+          </Button>
+
+          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button className="gap-2">
               <UserPlus className="h-4 w-4" />
@@ -438,6 +479,7 @@ export default function UserManagement() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="rounded-md border">
@@ -478,8 +520,32 @@ export default function UserManagement() {
                     </div>
                   </td>
                 </tr>
+              ) : visibleUsers.length === 0 ? (
+                // Filter is on but every account has already rotated.
+                // A celebratory empty state is more useful than an
+                // ambiguous "no users found" — it confirms the rollout
+                // is complete and tells the admin how to get back to
+                // the full list.
+                <tr>
+                  <td colSpan={4} className="py-8 text-center">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <Check className="h-8 w-8 text-green-500" />
+                      <p className="text-sm text-gray-700">
+                        Every account has rotated to the new password policy.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        onClick={() => setShowOnlyWeakPasswords(false)}
+                      >
+                        Show all users
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
               ) : (
-                users.map((user) => (
+                visibleUsers.map((user) => (
                   <tr key={user.id} className={user.id === currentUser?.id ? 'bg-blue-50' : ''}>
                     <td className="whitespace-nowrap px-6 py-4">
                       <div className="flex items-center">
@@ -495,10 +561,23 @@ export default function UserManagement() {
                           </div>
                         </div>
                         <div className="ml-4">
-                          <div className="font-medium text-gray-900">
-                            {user.username}
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-medium text-gray-900">
+                            <span>{user.username}</span>
                             {user.id === currentUser?.id && (
-                              <span className="ml-2 text-xs font-normal text-blue-600">(You)</span>
+                              <span className="text-xs font-normal text-blue-600">(You)</span>
+                            )}
+                            {/* Legacy-password badge (Task #99). Shown
+                                whenever the account still has the
+                                pre-policy weak password and hasn't
+                                completed a rotation. */}
+                            {user.mustRotatePassword && (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800"
+                                title="This account still has its pre-policy weak password and has not completed the required rotation yet."
+                              >
+                                <KeyRound className="h-3 w-3" />
+                                Legacy password
+                              </span>
                             )}
                           </div>
                           <div className="text-xs text-gray-500">ID: {user.id}</div>
