@@ -285,6 +285,13 @@ export const users = pgTable(
     // regardless of source IP (see authService.loginUser).
     failedLoginCount: integer("failed_login_count").default(0).notNull(),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    // True when the account's stored password predates the current
+    // strong-password policy (12+ chars, letter + digit) and the user
+    // must rotate it before the client unlocks the rest of the app.
+    // Cleared on successful password reset. New accounts created after
+    // the policy went live default to false because their password was
+    // validated against strongPasswordSchema at creation time.
+    mustRotatePassword: boolean("must_rotate_password").default(false).notNull(),
   },
   (table) => ({
     // Case-insensitive uniqueness on the recovery email so two accounts

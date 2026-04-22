@@ -470,6 +470,12 @@ export class AuthService {
           // user can sign in immediately with the new password.
           failedLoginCount: 0,
           lockedUntil: null,
+          // The user just chose a new password that satisfied the
+          // strong-password policy, so the legacy-password rotation
+          // requirement (Task #55) is satisfied. Always clear, even
+          // if it was already false, so this stays the single
+          // authoritative place that lowers the flag.
+          mustRotatePassword: false,
         })
         .where(eq(users.id, record.userId));
 

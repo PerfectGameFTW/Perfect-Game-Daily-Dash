@@ -7,6 +7,7 @@ import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import ResetPassword from "@/pages/ResetPassword";
+import ForcePasswordChange from "@/pages/ForcePasswordChange";
 import Admin from "@/pages/Admin";
 import GiftCardTest from "@/pages/GiftCardTest";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -18,9 +19,9 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 
 // Authentication-aware router
 function Router() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const [location, navigate] = useLocation();
-  
+
   // Global navigation guard
   useEffect(() => {
     // If not loading and not on login/register page and not authenticated, redirect to login
@@ -32,7 +33,21 @@ function Router() {
       navigate('/login');
     }
   }, [isLoading, isAuthenticated, location, navigate]);
-  
+
+  // Forced password rotation (Task #55): if the authenticated user's
+  // stored password predates the current strong-password policy,
+  // refuse to render anything except the dedicated change-password
+  // screen and the public /reset page (which is where the email link
+  // lands to actually complete the rotation).
+  if (
+    !isLoading &&
+    isAuthenticated &&
+    user?.mustRotatePassword &&
+    location !== '/reset'
+  ) {
+    return <ForcePasswordChange />;
+  }
+
   return (
     <Switch>
       {/* Public routes */}

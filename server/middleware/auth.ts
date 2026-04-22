@@ -95,13 +95,20 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
  * Creates a user object for frontend with safe data
  * Returns null if user is falsy
  */
-export function createSafeUser(user: any): { id: number; username: string; role: string } | null {
+export function createSafeUser(
+  user: any,
+): { id: number; username: string; role: string; mustRotatePassword: boolean } | null {
   if (!user) return null;
 
-  // Return only safe user data (exclude password)
+  // Return only safe user data (exclude password). `mustRotatePassword`
+  // is exposed so the client can gate the rest of the app behind a
+  // forced password-change screen for accounts whose password predates
+  // the strong-password policy (see Task #55). Defaults to false for
+  // any legacy code path that hands us a user shape missing the field.
   return {
     id: user.id,
     username: user.username,
-    role: user.role || 'user' // Default to 'user' if role is missing
+    role: user.role || 'user', // Default to 'user' if role is missing
+    mustRotatePassword: Boolean(user.mustRotatePassword),
   };
 }

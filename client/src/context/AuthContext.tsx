@@ -5,6 +5,10 @@ interface User {
   id: number;
   username: string;
   role?: string;
+  // True for accounts whose stored password predates the strong-password
+  // policy (Task #55). When set, the app must redirect to the forced
+  // password-change screen and refuse to render any other page.
+  mustRotatePassword?: boolean;
 }
 
 interface AuthContextType {

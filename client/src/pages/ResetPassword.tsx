@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useLocation } from 'wouter';
 import { apiRequest } from '@/lib/queryClient';
+import { useAuth } from '@/context/AuthContext';
 
 // Mirrors the strong-password policy enforced by the server. Keeping the
 // client-side check so users get immediate feedback before submitting.
@@ -26,6 +27,7 @@ type FormValues = z.infer<typeof completeResetSchema>;
 
 export default function ResetPassword() {
   const [, navigate] = useLocation();
+  const { checkAuth } = useAuth();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -62,6 +64,12 @@ export default function ResetPassword() {
           'Your password has been reset. You can now sign in with your new password.',
         );
         form.reset();
+        // If the user reached this page while still authenticated (the
+        // forced-rotation flow leaves the session active), refresh the
+        // cached user so `mustRotatePassword` flips to false and the
+        // app gate lifts on the next render. Best-effort: ignore errors
+        // since the success UI is already shown either way.
+        checkAuth().catch(() => {});
       } else {
         setErrorMessage(
           res?.error ||

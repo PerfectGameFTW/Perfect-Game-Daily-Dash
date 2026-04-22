@@ -608,6 +608,27 @@ async function exitWithError(error: unknown) {
     )`);
     log('✓ App settings schema verified');
 
+    // Forced-rotation flag for users whose password predates the
+    // strong-password policy (Task #55). Self-bootstrap pattern: in a
+    // single DO block, add the column if missing and — only on that
+    // first add — flip every existing user to mustRotatePassword=true
+    // as the one-time backfill. Subsequent boots find the column and
+    // skip the backfill, so the operation is idempotent and never
+    // re-marks users who have already rotated.
+    log('Bootstrapping must_rotate_password column...');
+    await db.execute(sql`DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'must_rotate_password'
+      ) THEN
+        ALTER TABLE users
+          ADD COLUMN must_rotate_password BOOLEAN NOT NULL DEFAULT FALSE;
+        UPDATE users SET must_rotate_password = TRUE;
+      END IF;
+    END$$;`);
+    log('✓ must_rotate_password column verified');
+
     log('Registering routes...');
     const server = await registerRoutes(app);
     httpServer = server;
