@@ -314,4 +314,103 @@ describe('Password reset flow', () => {
       }
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Brute-force / rate-limit regression coverage (Task #105)
+  // -------------------------------------------------------------------------
+  // Every other test in this file deliberately rotates the source IP per
+  // request so the rate limiters never trip and we can isolate the
+  // correctness/timing/single-use behavior. These tests do the OPPOSITE:
+  // they pin a single attacker IP and walk the limiter past its budget,
+  // so a future refactor that detaches `passwordResetRequestLimiter` or
+  // `authLimiter` from these endpoints (or silently relaxes their caps)
+  // fails loudly here.
+  //
+  // express-rate-limit's default in-memory store is module-level state
+  // shared across the whole test process. To avoid being polluted by
+  // (or polluting) other tests we use IPs in the 203.0.113.0/24
+  // (TEST-NET-3) block that no other test in the suite uses; the other
+  // tests live in 192.0.2.0/24 (TEST-NET-1) and 198.51.100.0/24
+  // (TEST-NET-2). The two new tests also use distinct IPs from each
+  // other so /request-reset's bucket can't bleed into /complete-reset's
+  // (they share neither limiter nor IP).
+  describe('brute-force caps', () => {
+    it('caps /api/auth/request-reset at 3 requests per hour per IP and the 4th returns 429 with a generic body (no enumeration)', async () => {
+      const attackerIp = '203.0.113.10';
+      const url = `${baseUrl}/api/auth/request-reset`;
+
+      // First three requests inside the hour-long window must succeed
+      // with the standard generic 200 response, regardless of whether
+      // the username exists.
+      for (let i = 0; i < 3; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await postJson(url, { usernameOrEmail: TEST_USERNAME_WITH_EMAIL }, attackerIp);
+        expect(r.status).toBe(200);
+      }
+
+      // Fourth request from the same IP — even targeting an account
+      // we KNOW exists — must be cut off by the limiter.
+      const blockedExisting = await postJson(
+        url,
+        { usernameOrEmail: TEST_USERNAME_WITH_EMAIL },
+        attackerIp,
+      );
+      expect(blockedExisting.status).toBe(429);
+
+      // And targeting a user we know does NOT exist must give the
+      // exact same 429 — the limiter must not become an enumeration
+      // oracle. We compare body shape (not just status) because an
+      // attacker who can distinguish "rate-limited because the user
+      // exists and we triggered an email" from "rate-limited because
+      // the IP is over budget" recovers most of the signal the
+      // generic-200 response was designed to hide.
+      const blockedNonexistent = await postJson(
+        url,
+        { usernameOrEmail: NONEXISTENT_USERNAME },
+        attackerIp,
+      );
+      expect(blockedNonexistent.status).toBe(429);
+      expect(blockedNonexistent.body).toEqual(blockedExisting.body);
+      // The rate-limit body itself must not echo the username back or
+      // otherwise reveal account state.
+      const serialized = JSON.stringify(blockedExisting.body).toLowerCase();
+      expect(serialized).not.toContain(TEST_USERNAME_WITH_EMAIL.toLowerCase());
+      expect(serialized).not.toContain(TEST_EMAIL.toLowerCase());
+    });
+
+    it('caps /api/auth/complete-reset at 10 attempts per 15 minutes per IP and the 11th returns 429', async () => {
+      const attackerIp = '203.0.113.20';
+      const url = `${baseUrl}/api/auth/complete-reset`;
+
+      // Ten bogus-token attempts should all be processed (and rejected
+      // as invalid tokens with 400) before the limiter intervenes. We
+      // use a fresh random "looks like a real token" string per attempt
+      // to make sure we're exercising the route's token-lookup path
+      // rather than short-circuiting on schema validation.
+      for (let i = 0; i < 10; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await postJson(
+          url,
+          { token: randomBytes(32).toString('hex'), newPassword: NEW_STRONG_PASSWORD },
+          attackerIp,
+        );
+        // 400 = invalid/expired token; the precise message is asserted
+        // elsewhere. The point here is that the limiter has NOT yet
+        // engaged.
+        expect(r.status).toBe(400);
+      }
+
+      // Eleventh attempt from the same IP must be cut off.
+      const blocked = await postJson(
+        url,
+        { token: randomBytes(32).toString('hex'), newPassword: NEW_STRONG_PASSWORD },
+        attackerIp,
+      );
+      expect(blocked.status).toBe(429);
+      // The limiter response is JSON with an error field — pin the
+      // shape so a future refactor that swaps it for a plaintext body
+      // (which some frontends silently mis-handle) is caught.
+      expect(typeof blocked.body.error).toBe('string');
+    });
+  });
 });
