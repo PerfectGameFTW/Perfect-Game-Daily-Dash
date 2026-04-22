@@ -22,6 +22,7 @@ import {
 } from '../../shared/schema';
 import { getEasternDateRange } from '../dateUtils';
 import { fetchOrdersByIds, fetchGiftCardActivitiesPage } from '../squareClient';
+import { logger, errorContext } from '../logger';
 
 // Error classes now live in `server/errors.ts` (see Task #58: centralized
 // error hierarchy). Re-exported here so existing imports keep working.
@@ -73,7 +74,7 @@ export class GiftCardService {
     
     try {
       // Now enhance it with accurate activation amount by linking to its order
-      console.log(`Linking new gift card ${newGiftCard.id} to its order for accurate activation amount...`);
+      logger.info('giftCard.create.link_order', { giftCardId: newGiftCard.id });
       
       // Import the enhanced gift card fix function for single cards
       const { fixNewGiftCardActivationAmount } = await import('./enhancedGiftCardFix');
@@ -93,8 +94,7 @@ export class GiftCardService {
       }
     } catch (error) {
       // Log the error but don't fail - we'll just return the original gift card
-      console.error(`Error enhancing new gift card ${newGiftCard.id}:`, error);
-      console.log('Continuing with original gift card data');
+      logger.error('giftCard.create.enhance_failed', { ...errorContext(error), giftCardId: newGiftCard.id });
     }
     
     // Return the original gift card if enhancement failed
@@ -350,7 +350,7 @@ export class GiftCardService {
     // Incremental mode: full scan done previously — only process new events
     if (stateRow?.isComplete && stateRow.lastSyncedAt) {
       const since = stateRow.lastSyncedAt;
-      console.log(`[GiftCardOrderIdBackfill] Incremental scan since ${since.toISOString()}`);
+      logger.info('giftCard.orderIdBackfill.incremental_start', { since: since.toISOString() });
       let cursor: string | undefined;
       let pageNum = 0;
       while (true) {
@@ -373,14 +373,14 @@ export class GiftCardService {
       await db.update(syncState)
         .set({ lastSyncedAt: new Date(), processedCount: (stateRow.processedCount ?? 0) + scanned })
         .where(eq(syncState.id, stateRow.id));
-      console.log(`[GiftCardOrderIdBackfill] Incremental done: ${scanned} scanned, ${linked} linked`);
+      logger.info('giftCard.orderIdBackfill.incremental_done', { scanned, linked });
       return { scanned, linked };
     }
 
     // Full scan (first run or resumed after restart)
     const savedCursor = stateRow?.cursor || undefined;
     const isResume = !!savedCursor;
-    console.log(`[GiftCardOrderIdBackfill] ${isResume ? 'Resuming' : 'Starting'} full ACTIVATE history scan`);
+    logger.info('giftCard.orderIdBackfill.full_start', { isResume });
 
     if (!stateRow) {
       const [created] = await db.insert(syncState).values({
@@ -417,7 +417,7 @@ export class GiftCardService {
         .set({ cursor: cursor ?? '', processedCount: scanned, lastSyncedAt: new Date() })
         .where(eq(syncState.id, stateRow.id));
       if (pageNum % 20 === 0) {
-        console.log(`[GiftCardOrderIdBackfill] Page ${pageNum}: ${scanned} events scanned, ${linked} linked`);
+        logger.info('giftCard.orderIdBackfill.page', { pageNum, scanned, linked });
       }
       if (!cursor || activities.length === 0) break;
     }
@@ -425,7 +425,7 @@ export class GiftCardService {
     await db.update(syncState)
       .set({ isComplete: true, status: 'completed', processedCount: scanned, lastSyncedAt: new Date() })
       .where(eq(syncState.id, stateRow.id));
-    console.log(`[GiftCardOrderIdBackfill] Full scan complete: ${scanned} events, ${linked} order IDs linked`);
+    logger.info('giftCard.orderIdBackfill.full_done', { scanned, linked });
     return { scanned, linked };
   }
 
@@ -504,7 +504,7 @@ export class GiftCardService {
     `);
 
     const updated = result.rows.length;
-    console.log(`[GiftCardBackfill] activation_square_order_id backfill: ${updated} rows updated`);
+    logger.info('giftCard.backfill.activation_order_id', { updated });
     return { updated };
   }
 
@@ -553,11 +553,11 @@ export class GiftCardService {
     `);
 
     if (mislinked.rows.length === 0) {
-      console.log('[GiftCardRepair] No mislinked activation orders found');
+      logger.info('giftCard.repair.none_found');
       return { cleared: 0, relinked: 0 };
     }
 
-    console.log(`[GiftCardRepair] Found ${mislinked.rows.length} mislinked gift card(s)`);
+    logger.info('giftCard.repair.found', { count: mislinked.rows.length });
 
     let cleared = 0;
     let relinked = 0;
@@ -598,7 +598,7 @@ export class GiftCardService {
           WHERE id = ${gcId}
         `);
         relinked++;
-        console.log(`[GiftCardRepair] Card ${gcId} ($${activationAmount}): relinked from ${row.bad_order_square_id} to ${betterSquareId}`);
+        logger.info('giftCard.repair.relinked', { giftCardId: gcId });
       } else {
         await db.execute(sql`
           UPDATE gift_cards
@@ -606,11 +606,11 @@ export class GiftCardService {
           WHERE id = ${gcId}
         `);
         cleared++;
-        console.log(`[GiftCardRepair] Card ${gcId} ($${activationAmount}): cleared bad link ${row.bad_order_square_id} (no better match found)`);
+        logger.info('giftCard.repair.cleared', { giftCardId: gcId });
       }
     }
 
-    console.log(`[GiftCardRepair] Done: ${relinked} relinked, ${cleared} cleared for re-backfill`);
+    logger.info('giftCard.repair.done', { relinked, cleared });
     return { cleared, relinked };
   }
 
@@ -639,15 +639,15 @@ export class GiftCardService {
 
     const missingIds = missing.rows.map(r => String(r.order_square_id));
     if (missingIds.length === 0) {
-      console.log('[GiftCardBackfill] No missing activation orders to sync');
+      logger.info('giftCard.backfill.no_missing_orders');
       return { inserted: 0 };
     }
 
-    console.log(`[GiftCardBackfill] Fetching ${missingIds.length} missing activation order(s) from Square`);
+    logger.info('giftCard.backfill.fetch_missing', { count: missingIds.length });
 
     const fetched = await fetchOrdersByIds(missingIds);
     if (fetched.length === 0) {
-      console.log('[GiftCardBackfill] Square returned 0 orders for missing IDs');
+      logger.info('giftCard.backfill.square_returned_zero');
       return { inserted: 0 };
     }
 
@@ -657,11 +657,11 @@ export class GiftCardService {
         await db.insert(orders).values(order).onConflictDoNothing();
         inserted++;
       } catch (err) {
-        console.error(`[GiftCardBackfill] Failed to insert order ${order.squareId}:`, err);
+        logger.error('giftCard.backfill.order_insert_failed', { ...errorContext(err), squareId: order.squareId });
       }
     }
 
-    console.log(`[GiftCardBackfill] Inserted ${inserted} of ${fetched.length} missing activation orders`);
+    logger.info('giftCard.backfill.missing_orders_inserted', { inserted, fetched: fetched.length });
     return { inserted };
   }
   
@@ -698,7 +698,7 @@ export class GiftCardService {
           .limit(1)
           .then(results => results[0]);
       } catch (error) {
-        console.log(`Gift card not found by squareId ${sourceId}`, error);
+        logger.warn('giftCard.lookup.squareId_failed', errorContext(error));
       }
       
       // If not found by squareId, try GAN
@@ -709,7 +709,7 @@ export class GiftCardService {
             .limit(1)
             .then(results => results[0]);
         } catch (error) {
-          console.log(`Gift card not found by gan ${sourceId}`, error);
+          logger.warn('giftCard.lookup.gan_failed', errorContext(error));
         }
       }
       
@@ -727,13 +727,13 @@ export class GiftCardService {
             giftCard = cards.rows[0] as GiftCard;
           }
         } catch (error) {
-          console.log(`Error searching for gift card in square_data: ${sourceId}`, error);
+          logger.warn('giftCard.lookup.squareData_search_failed', errorContext(error));
         }
       }
       
       // If gift card is still not found, log and return null
       if (!giftCard) {
-        console.log(`Could not find gift card with ID/GAN: ${sourceId}`);
+        logger.info('giftCard.lookup.not_found');
         return null;
       }
       
@@ -744,7 +744,7 @@ export class GiftCardService {
         paymentId
       );
     } catch (error) {
-      console.error('Error processing gift card redemption from Square payment:', error);
+      logger.error('giftCard.redemption.process_failed', errorContext(error));
       return null;
     }
   }
@@ -765,7 +765,7 @@ export class GiftCardService {
             .where(eq(giftCards.squareId, squareId));
           if (zeroResult.rowCount && zeroResult.rowCount > 0) {
             updated++;
-            console.log(`[GiftCardBalanceRefresh] Card ${squareId} not found in Square — zeroed balance`);
+            logger.info('giftCard.balanceRefresh.zeroed_missing', { squareId });
           }
           continue;
         }
@@ -787,20 +787,20 @@ export class GiftCardService {
         if (result.rowCount && result.rowCount > 0) updated++;
       } catch (err) {
         failed++;
-        console.error(`[GiftCardBalanceRefresh] Failed to refresh balance for ${squareId}:`, err);
+        logger.error('giftCard.balanceRefresh.failed', { ...errorContext(err), squareId });
       }
     }
 
-    console.log(`[GiftCardBalanceRefresh] Refreshed ${updated}/${squareIds.length} card balances (${failed} failed)`);
+    logger.info('giftCard.balanceRefresh.batch_done', { updated, failed, total: squareIds.length });
     return { updated, failed, total: squareIds.length };
   }
 
   async refreshAllGiftCardBalances(): Promise<{ updated: number; total: number }> {
     const { fetchGiftCards } = await import('../squareClient');
 
-    console.log('[GiftCardBalanceRefresh] Fetching all gift cards from Square...');
+    logger.info('giftCard.balanceRefresh.fetch_all_start');
     const { cards: allSquareCards, complete: fetchComplete } = await fetchGiftCards();
-    console.log(`[GiftCardBalanceRefresh] Fetched ${allSquareCards.length} cards from Square (complete=${fetchComplete})`);
+    logger.info('giftCard.balanceRefresh.fetched_all', { count: allSquareCards.length, fetchComplete });
 
     const values: { squareId: string; balance: number; isActive: boolean }[] = [];
     for (const card of allSquareCards) {
@@ -834,10 +834,10 @@ export class GiftCardService {
         WHERE gc.square_id = v.square_id
       `);
       updated += result.rowCount ?? 0;
-      console.log(`[GiftCardBalanceRefresh] Progress: ${Math.min(i + BATCH, values.length)}/${values.length}`);
+      logger.info('giftCard.balanceRefresh.progress', { processed: Math.min(i + BATCH, values.length), total: values.length });
     }
 
-    console.log(`[GiftCardBalanceRefresh] Done — updated ${updated} of ${allSquareCards.length} cards`);
+    logger.info('giftCard.balanceRefresh.done', { updated, total: allSquareCards.length });
 
     if (fetchComplete) {
       const squareIdSet = new Set(values.map(v => v.squareId));
@@ -859,10 +859,10 @@ export class GiftCardService {
             .where(inArray(giftCards.squareId, batch));
           zeroed += result.rowCount ?? 0;
         }
-        console.log(`[GiftCardBalanceRefresh] Zeroed ${zeroed} cards no longer in Square (deleted/removed)`);
+        logger.info('giftCard.balanceRefresh.zeroed_deleted', { count: zeroed });
       }
     } else {
-      console.warn(`[GiftCardBalanceRefresh] ⚠️ Skipping deleted-card cleanup — Square fetch was incomplete (pagination failed)`);
+      logger.warn('giftCard.balanceRefresh.skip_cleanup_incomplete_fetch');
     }
 
     return { updated, total: allSquareCards.length };

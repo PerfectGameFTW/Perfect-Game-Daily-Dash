@@ -2,6 +2,7 @@ import { db } from '../db';
 import { eq, sql } from 'drizzle-orm';
 import { intercardRevenue, syncState, type DateRange } from '../../shared/schema';
 import { getEasternBusinessDateStrings } from '../dateUtils';
+import { logger, errorContext } from '../logger';
 
 const INTERCARD_HOST = (process.env.INTERCARD_HOST || '').replace(/\/+$/, '');
 const INTERCARD_MAC_ID = process.env.INTERCARD_MAC_ID || '';
@@ -84,16 +85,16 @@ export class IntercardService {
         },
       });
       if (!response.ok) {
-        console.error(`[Intercard] Auth token error ${response.status}: ${await response.text()}`);
+        logger.error('intercard.auth.token_error', { httpStatus: response.status });
         return null;
       }
       const token = await response.text();
       this.cachedToken = token.replace(/^"|"$/g, '');
       this.tokenExpiresAt = Date.now() + 50 * 60 * 1000;
-      console.log('[Intercard] Auth token acquired');
+      logger.info('intercard.auth.token_acquired');
       return this.cachedToken;
     } catch (err) {
-      console.error('[Intercard] Auth token fetch error:', err);
+      logger.error('intercard.auth.token_fetch_failed', errorContext(err));
       return null;
     }
   }
@@ -116,7 +117,7 @@ export class IntercardService {
     });
 
     const url = `${INTERCARD_HOST}${INTERCARD_BASE_PATH}?${params.toString()}`;
-    console.log(`[Intercard] Fetching revenue: ${url}`);
+    logger.info('intercard.fetch.start', { startDate: startDateStr, endDate: end });
 
     try {
       const controller = new AbortController();
@@ -136,29 +137,27 @@ export class IntercardService {
       clearTimeout(timeout);
 
       if (response.status === 401 || response.status === 403) {
-        const text = await response.text();
-        console.error(`[Intercard] Auth error ${response.status}: ${text}`);
+        logger.error('intercard.fetch.auth_error', { httpStatus: response.status });
         this.cachedToken = null;
         this.tokenExpiresAt = 0;
         return { ok: false, rows: [], errorType: 'auth_failed' };
       }
 
       if (!response.ok) {
-        const text = await response.text();
-        console.error(`[Intercard] API error ${response.status}: ${text}`);
+        logger.error('intercard.fetch.api_error', { httpStatus: response.status });
         return { ok: false, rows: [], errorType: 'api_error' };
       }
 
       const data = await response.json();
       if (!Array.isArray(data)) {
-        console.error('[Intercard] Unexpected response format:', typeof data);
+        logger.error('intercard.fetch.parse_error');
         return { ok: false, rows: [], errorType: 'parse_error' };
       }
 
-      console.log(`[Intercard] Fetched ${data.length} revenue rows`);
+      logger.info('intercard.fetch.done', { count: data.length });
       return { ok: true, rows: data as IntercardRevenueRow[] };
     } catch (err) {
-      console.error('[Intercard] Fetch error:', err);
+      logger.error('intercard.fetch.network_error', errorContext(err));
       return { ok: false, rows: [], errorType: 'network_error' };
     }
   }
@@ -203,7 +202,7 @@ export class IntercardService {
           result.upserted++;
         } catch (err) {
           result.failed++;
-          console.error('[Intercard] Insert error:', err);
+          logger.error('intercard.insert_error', errorContext(err));
         }
       }
     });
@@ -217,13 +216,13 @@ export class IntercardService {
     const todayStr = formatDateET(new Date());
     const dayResult = await this.syncSingleDay(todayStr);
     if (dayResult.upserted > 0) {
-      console.log(`[Intercard] Today sync: ${dayResult.upserted} records`);
+      logger.info('intercard.today.synced', { upserted: dayResult.upserted });
     }
   }
 
   async runHistoricalBackfill(): Promise<void> {
     if (!isIntercardConfigured()) {
-      console.log('[Intercard] Skipping backfill — Intercard not configured');
+      logger.info('intercard.backfill.skipped_unconfigured');
       return;
     }
 
@@ -233,7 +232,7 @@ export class IntercardService {
       .limit(1);
 
     if (existingState.length > 0 && existingState[0].isComplete && existingState[0].status === 'completed') {
-      console.log('[Intercard] Historical backfill already complete');
+      logger.info('intercard.backfill.already_complete');
       return;
     }
 
@@ -252,7 +251,7 @@ export class IntercardService {
 
     if (currentDateStr < BACKFILL_START) currentDateStr = BACKFILL_START;
 
-    console.log(`[Intercard] Starting historical backfill from ${currentDateStr} to ${backfillEndStr}`);
+    logger.info('intercard.backfill.start', { startDate: currentDateStr, endDate: backfillEndStr });
 
     if (existingState.length === 0) {
       await db.insert(syncState).values({
@@ -286,11 +285,11 @@ export class IntercardService {
         }
 
         if (daysProcessed % 30 === 0 && daysProcessed > 0) {
-          console.log(`[Intercard] Backfill progress: ${daysProcessed} days synced, ${failedDays} failed, date=${currentDateStr}`);
+          logger.info('intercard.backfill.progress', { daysProcessed, failedDays, currentDate: currentDateStr });
         }
 
         if (consecutiveFailures >= 10) {
-          console.error(`[Intercard] Backfill paused: ${consecutiveFailures} consecutive failures at ${currentDateStr}`);
+          logger.error('intercard.backfill.paused', { consecutiveFailures, currentDate: currentDateStr });
           await db.update(syncState)
             .set({
               status: 'paused',
@@ -311,7 +310,7 @@ export class IntercardService {
           })
           .where(eq(syncState.syncType, syncType));
       } catch (err) {
-        console.error(`[Intercard] Backfill error for ${currentDateStr}:`, err);
+        logger.error('intercard.backfill.day_error', { ...errorContext(err), currentDate: currentDateStr });
         failedDays++;
       }
 
@@ -321,7 +320,7 @@ export class IntercardService {
     }
 
     if (failedDays > 0) {
-      console.warn(`[Intercard] Historical backfill finished with ${failedDays} failed days out of ${daysProcessed + failedDays} total`);
+      logger.warn('intercard.backfill.completed_with_errors', { failedDays, daysProcessed });
       await db.update(syncState)
         .set({
           isComplete: false,
@@ -341,7 +340,7 @@ export class IntercardService {
           errorMessage: null,
         })
         .where(eq(syncState.syncType, syncType));
-      console.log(`[Intercard] Historical backfill complete: ${daysProcessed} days processed`);
+      logger.info('intercard.backfill.complete', { daysProcessed });
     }
   }
 

@@ -37,6 +37,7 @@ import {
 } from '../middleware/rateLimiter';
 import { SESSION_COOKIE_NAME } from '../sessionConfig';
 import { pool } from '../db';
+import { logger, errorContext } from '../logger';
 
 // Validation schemas
 //
@@ -112,7 +113,7 @@ export function createAuthRouter(): Router {
 
       res.json(createSafeUser(user));
     } catch (error) {
-      console.error('Error checking authentication:', error);
+      logger.error('auth.me.error', errorContext(error));
       next(error);
     }
   });
@@ -126,13 +127,13 @@ export function createAuthRouter(): Router {
       const user = await authService.loginUser(username, password);
 
       if (!user) {
-        console.log('Authentication failed');
+        logger.info('auth.login.failed');
         throw new UnauthorizedError('Invalid username or password');
       }
 
       // Ensure session exists
       if (!req.session) {
-        console.error('No session object available');
+        logger.error('auth.login.no_session');
         throw new Error('Session initialization failed');
       }
 
@@ -150,7 +151,7 @@ export function createAuthRouter(): Router {
             );
           });
         } catch (regenErr) {
-          console.error('Error regenerating session for TOTP step:', regenErr);
+          logger.error('auth.login.session_regen_failed_totp', errorContext(regenErr));
           throw new Error('Session initialization failed');
         }
         req.session.pendingTotpUserId = user.id;
@@ -173,7 +174,7 @@ export function createAuthRouter(): Router {
           });
         });
       } catch (regenErr) {
-        console.error('Error regenerating session:', regenErr);
+        logger.error('auth.login.session_regen_failed', errorContext(regenErr));
         throw new Error('Session initialization failed');
       }
 
@@ -187,7 +188,7 @@ export function createAuthRouter(): Router {
       // (rolling sessions reset the cookie expiry on every request).
       req.session.createdAt = Date.now();
 
-      console.log('User authenticated successfully');
+      logger.info('auth.login.ok');
 
       // Persist the new session before responding.
       try {
@@ -197,7 +198,7 @@ export function createAuthRouter(): Router {
           });
         });
       } catch (saveErr) {
-        console.error('Error saving session:', saveErr);
+        logger.error('auth.login.session_save_failed', errorContext(saveErr));
         // Tear down the partially-populated session so no half-authenticated
         // state can leak to the client.
         await new Promise<void>((resolve) => {
@@ -207,14 +208,14 @@ export function createAuthRouter(): Router {
         throw new Error('Session initialization failed');
       }
 
-      console.log('Session saved successfully');
+      logger.info('auth.login.session_saved');
 
       res.json({
         success: true,
         user: createSafeUser(user)
       });
     } catch (error) {
-      console.error('Error during login:', error);
+      logger.error('auth.login.error', errorContext(error));
       next(error);
     }
   });
@@ -305,7 +306,7 @@ export function createAuthRouter(): Router {
             );
           });
         } catch (regenErr) {
-          console.error('Error regenerating session post-TOTP:', regenErr);
+          logger.error('auth.totpVerify.session_regen_failed', errorContext(regenErr));
           throw new Error('Session initialization failed');
         }
 
@@ -323,7 +324,7 @@ export function createAuthRouter(): Router {
             );
           });
         } catch (saveErr) {
-          console.error('Error saving session post-TOTP:', saveErr);
+          logger.error('auth.totpVerify.session_save_failed', errorContext(saveErr));
           await new Promise<void>((resolve) =>
             req.session.destroy(() => resolve()),
           );
@@ -360,7 +361,7 @@ export function createAuthRouter(): Router {
         const result = await totpService.beginEnrollment(req.user!);
         res.json(result);
       } catch (error) {
-        console.error('Error beginning TOTP enrollment:', error);
+        logger.error('auth.totpEnroll.error', errorContext(error));
         next(error);
       }
     },
@@ -437,10 +438,7 @@ export function createAuthRouter(): Router {
       let baseUrl = process.env.APP_BASE_URL;
       if (!baseUrl) {
         if (process.env.NODE_ENV === 'production') {
-          console.error(
-            '[auth/request-reset] APP_BASE_URL is not set in production; ' +
-              'refusing to construct reset link from untrusted Host header.',
-          );
+          logger.error('auth.requestReset.missing_app_base_url');
           // Still return the generic message so the failure path is not
           // an enumeration oracle. The user-facing effect is "no email
           // arrives" — an operator alarm should fire on the log line.
@@ -465,7 +463,7 @@ export function createAuthRouter(): Router {
           authService
             .requestPasswordReset(identifier, baseUrl as string)
             .catch((err) =>
-              console.error('Error issuing password reset:', err),
+              logger.error('auth.requestReset.error', errorContext(err)),
             );
         });
       }
@@ -500,7 +498,7 @@ export function createAuthRouter(): Router {
 
         res.json({ success: true });
       } catch (error) {
-        console.error('Error completing password reset:', error);
+        logger.error('auth.completeReset.error', errorContext(error));
         next(error);
       }
     },
@@ -509,11 +507,11 @@ export function createAuthRouter(): Router {
   // Logout endpoint
   router.post('/logout', (req: Request & { session?: any }, res: Response) => {
     if (req.session) {
-      console.log('Processing logout request');
+      logger.info('auth.logout.start');
 
       req.session.destroy((err: Error | null) => {
         if (err) {
-          console.error('Error destroying session:', err);
+          logger.error('auth.logout.destroy_failed', errorContext(err));
           // Inside a synchronous callback, no `next` available — use the
           // sanitizer directly so the response shape stays consistent.
           return sendError(res, new Error('Failed to logout'));
@@ -523,7 +521,7 @@ export function createAuthRouter(): Router {
         res.json({ success: true });
       });
     } else {
-      console.log('Logout attempted with no active session');
+      logger.info('auth.logout.no_session');
       res.json({ success: true });
     }
   });
@@ -556,7 +554,7 @@ export function createAuthRouter(): Router {
         throw err;
       }
     } catch (error) {
-      console.error('Error during registration:', error);
+      logger.error('auth.register.error', errorContext(error));
       next(error);
     }
   });
@@ -568,7 +566,7 @@ export function createAuthRouter(): Router {
       const safeUsers = users.map(createSafeUser);
       res.json(safeUsers);
     } catch (error) {
-      console.error('Error fetching users:', error);
+      logger.error('auth.users.list_error', errorContext(error));
       next(error);
     }
   });
@@ -599,7 +597,7 @@ export function createAuthRouter(): Router {
         }
         res.json({ success: true, user: createSafeUser(updated) });
       } catch (error) {
-        console.error('Error updating user email:', error);
+        logger.error('auth.users.email_update_error', errorContext(error));
         next(error);
       }
     },
@@ -644,15 +642,12 @@ export function createAuthRouter(): Router {
           // the next authenticated request will be rejected by
           // requireAuth's user re-fetch anyway. Log so an operator can
           // investigate the session-store hiccup.
-          console.error(
-            'Failed to purge sessions for deleted user:',
-            sessionErr,
-          );
+          logger.error('auth.users.session_purge_failed', errorContext(sessionErr));
         }
 
         res.json({ success: true });
       } catch (error) {
-        console.error('Error deleting user:', error);
+        logger.error('auth.users.delete_error', errorContext(error));
         next(error);
       }
     },

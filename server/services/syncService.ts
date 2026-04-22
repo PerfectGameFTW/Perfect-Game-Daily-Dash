@@ -45,7 +45,7 @@ const BACKFILL_BUDGET_PER_CHUNK = 10;
 // SyncError now lives in `server/errors.ts` (see Task #58). Re-exported.
 export { SyncError } from '../errors';
 import { SyncError } from '../errors';
-import { logger } from '../logger';
+import { logger, errorContext } from '../logger';
 
 export class SyncService {
   /** In-memory lock to prevent concurrent backfill runs within a single process */
@@ -150,7 +150,7 @@ export class SyncService {
     errors: any[];
     redeemedGiftCardIds: string[];
   }> {
-    console.log(`Starting gift card redemption sync from ${startDate?.toISOString() || 'beginning'} to ${endDate?.toISOString() || 'now'}`);
+    logger.info('sync.giftCardRedemption.start', { startDate: startDate?.toISOString() ?? null, endDate: endDate?.toISOString() ?? null });
     
     try {
       // Set default dates if not provided
@@ -172,7 +172,7 @@ export class SyncService {
       
       const transactions = await db.execute(query);
       
-      console.log(`Found ${transactions.rowCount} potential gift card redemptions to process`);
+      logger.info('sync.giftCardRedemption.found', { count: transactions.rowCount });
       
       // Initialize result counters
       const result = {
@@ -239,7 +239,7 @@ export class SyncService {
               if (redemptionResult.squareId) {
                 result.redeemedGiftCardIds.push(redemptionResult.squareId);
               }
-              console.log(`Created redemption record for transaction ${transaction.id}, gift card ${redemptionResult.id} (${redemptionResult.gan || sourceId})`);
+              logger.info('sync.giftCardRedemption.created', { transactionId: transaction.id, giftCardId: redemptionResult.id });
             } else {
               result.errors.push({
                 transactionId: transaction.id,
@@ -248,7 +248,7 @@ export class SyncService {
               });
             }
           } catch (error) {
-            console.error(`Error processing transaction ${transaction.id}:`, error);
+            logger.error('sync.giftCardRedemption.tx_error', { ...errorContext(error), transactionId: transaction.id });
             result.errors.push({
               transactionId: transaction.id,
               error: error instanceof Error ? error.message : String(error)
@@ -278,12 +278,12 @@ export class SyncService {
           });
         }
       } catch (syncError) {
-        console.error('Failed to update sync state:', syncError);
+        logger.error('sync.state.update_failed', errorContext(syncError));
       }
       
       return result;
     } catch (error) {
-      console.error('Error synchronizing gift card redemptions:', error);
+      logger.error('sync.giftCardRedemption.fatal', errorContext(error));
       return {
         success: false,
         processed: 0,
@@ -312,7 +312,7 @@ export class SyncService {
     alreadyRunning?: boolean;
   }> {
     if (this._ordersSyncRunning) {
-      console.log('[SyncOrders] Already running in this process, skipping');
+      logger.info('sync.orders.already_running');
       return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
     }
 
@@ -331,7 +331,7 @@ export class SyncService {
         const timeThreshold = 5 * 60 * 1000;
         
         if (timeDifference < timeThreshold) {
-          console.log(`[SyncOrders] DB status still in_progress from ${lastSyncTime.toISOString()}, skipping`);
+          logger.info('sync.orders.db_in_progress', { lastSyncedAt: lastSyncTime.toISOString() });
           return { 
             processed: state.processedCount || 0, 
             created, 
@@ -340,7 +340,7 @@ export class SyncService {
             alreadyRunning: true 
           };
         } else {
-          console.log(`[SyncOrders] Previous sync appears stuck (${Math.round(timeDifference/60000)} min). Restarting...`);
+          logger.warn('sync.orders.stuck_restart', { stuckMinutes: Math.round(timeDifference/60000) });
         }
       }
       
@@ -366,12 +366,12 @@ export class SyncService {
       });
       
       try {
-        console.log('[SyncOrders] Syncing catalog before processing orders...');
+        logger.info('sync.orders.catalog_pre');
         const catalogResult = await syncCatalog();
-        console.log(`[SyncOrders] Catalog sync complete: ${catalogResult.categories} categories, ${catalogResult.items} items`);
+        logger.info('sync.orders.catalog_done', { categories: catalogResult.categories, items: catalogResult.items });
         await preloadCatalogCache();
       } catch (catalogError) {
-        console.error('[SyncOrders] Catalog sync failed, continuing with fallback heuristics:', catalogError);
+        logger.error('sync.orders.catalog_failed', errorContext(catalogError));
         try { await preloadCatalogCache(); } catch (_) {}
       }
 
@@ -456,16 +456,16 @@ export class SyncService {
                         );
                         await orderService.createOrderModifier(modifierData);
                       } catch (modifierError) {
-                        console.error(`Error creating modifier for updated order ${orderData.squareId}:`, modifierError);
+                        logger.error('sync.orders.modifier_error', { ...errorContext(modifierError), squareId: orderData.squareId });
                       }
                     }
                   }
                 } catch (lineItemError) {
-                  console.error(`Error creating line item for updated order ${orderData.squareId}:`, lineItemError);
+                  logger.error('sync.orders.lineItem_error', { ...errorContext(lineItemError), squareId: orderData.squareId });
                 }
               }
               if (backfilledCount > 0) {
-                console.log(`Backfilled ${backfilledCount} missing line item(s) for order ${orderData.squareId}`);
+                logger.info('sync.orders.lineItem_backfilled', { count: backfilledCount, squareId: orderData.squareId });
               }
             }
 
@@ -488,7 +488,7 @@ export class SyncService {
                   );
                   await orderService.createOrderDiscount(discountData);
                 } catch (discountError) {
-                  console.error(`Error creating discount for updated order ${orderData.squareId}:`, discountError);
+                  logger.error('sync.orders.discount_error', { ...errorContext(discountError), squareId: orderData.squareId });
                 }
               }
             }
@@ -514,7 +514,7 @@ export class SyncService {
                 }
                 
                 if (orderId === 0) {
-                  console.warn('Could not determine order ID for line item, skipping');
+                  logger.warn('sync.orders.lineItem_no_order_id');
                   continue;
                 }
                 
@@ -555,7 +555,7 @@ export class SyncService {
                 }
                 
                 if (orderId === 0) {
-                  console.warn('Could not determine order ID for discount, skipping');
+                  logger.warn('sync.orders.discount_no_order_id');
                   continue;
                 }
                 
@@ -582,7 +582,7 @@ export class SyncService {
           }
         } catch (error) {
           failed++;
-          console.error('Failed to process order:', error);
+          logger.error('sync.orders.process_failed', errorContext(error));
         }
       }
       
@@ -632,7 +632,7 @@ export class SyncService {
     alreadyRunning?: boolean;
   }> {
     if (this._paymentsSyncRunning) {
-      console.log('[SyncPayments] Already running in this process, skipping');
+      logger.info('sync.payments.already_running');
       return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
     }
 
@@ -651,7 +651,7 @@ export class SyncService {
         const timeThreshold = 5 * 60 * 1000;
         
         if (timeDifference < timeThreshold) {
-          console.log(`[SyncPayments] DB status still in_progress from ${lastSyncTime.toISOString()}, skipping`);
+          logger.info('sync.payments.db_in_progress', { lastSyncedAt: lastSyncTime.toISOString() });
           return { 
             processed: state.processedCount || 0, 
             created, 
@@ -660,7 +660,7 @@ export class SyncService {
             alreadyRunning: true 
           };
         } else {
-          console.log(`[SyncPayments] Previous sync appears stuck (${Math.round(timeDifference/60000)} min). Restarting...`);
+          logger.warn('sync.payments.stuck_restart', { stuckMinutes: Math.round(timeDifference/60000) });
         }
       }
       
@@ -686,12 +686,12 @@ export class SyncService {
       });
       
       try {
-        console.log('[SyncPayments] Syncing catalog before processing payments...');
+        logger.info('sync.payments.catalog_pre');
         const catalogResult = await syncCatalog();
-        console.log(`[SyncPayments] Catalog sync complete: ${catalogResult.categories} categories, ${catalogResult.items} items`);
+        logger.info('sync.payments.catalog_done', { categories: catalogResult.categories, items: catalogResult.items });
         await preloadCatalogCache();
       } catch (catalogError) {
-        console.error('[SyncPayments] Catalog sync failed, continuing with fallback heuristics:', catalogError);
+        logger.error('sync.payments.catalog_failed', errorContext(catalogError));
         try { await preloadCatalogCache(); } catch (_) {}
       }
 
@@ -763,7 +763,7 @@ export class SyncService {
           }
         } catch (error) {
           failed++;
-          console.error('Failed to process payment:', error);
+          logger.error('sync.payments.process_failed', errorContext(error));
         }
       }
       
@@ -874,7 +874,7 @@ export class SyncService {
           }
         } catch (error) {
           failed++;
-          console.error('Failed to process refund:', error);
+          logger.error('sync.refunds.process_failed', errorContext(error));
         }
       }
 
@@ -941,10 +941,10 @@ export class SyncService {
     if (state?.status === 'in_progress') {
       const elapsed = state.lastSyncedAt ? Date.now() - new Date(state.lastSyncedAt).getTime() : Infinity;
       if (elapsed < STALE_LOCK_MS) {
-        console.log('[IncrementalGiftCardSync] Previous run still in progress — skipping this cycle');
+        logger.info('sync.incrementalGc.in_progress_skip');
         return { processed: 0, created: 0, updated: 0, failed: 0, sinceDate: 'skipped' };
       }
-      console.warn(`[IncrementalGiftCardSync] ⚠️ STALE LOCK DETECTED — sync has been stuck in_progress for ${Math.round(elapsed / 60000)} minutes. Force-resetting to allow next cycle.`);
+      logger.warn('sync.incrementalGc.stale_lock_reset', { stuckMinutes: Math.round(elapsed / 60000) });
       await this.updateSyncState(state.id, { status: 'completed', isComplete: true });
     }
 
@@ -954,7 +954,7 @@ export class SyncService {
       : new Date(runStartedAt.getTime() - DEFAULT_LOOKBACK_MS);
     const since = new Date(lastWatermark.getTime() - OVERLAP_MS);
 
-    console.log(`[IncrementalGiftCardSync] Window: ${since.toISOString()} → ${runStartedAt.toISOString()} (overlap=${OVERLAP_MS / 1000}s)`);
+    logger.info('sync.incrementalGc.window', { since: since.toISOString(), until: runStartedAt.toISOString(), overlapSec: OVERLAP_MS / 1000 });
 
     // Upsert sync state to in_progress (do NOT advance lastSyncedAt yet)
     if (!state) {
@@ -981,7 +981,7 @@ export class SyncService {
       const recentActivations = await squareClient.fetchRecentGiftCardActivations(since);
 
       if (recentActivations.length === 0) {
-        console.log('[IncrementalGiftCardSync] No new activations found.');
+        logger.info('sync.incrementalGc.no_activations');
         await this.updateSyncState(state.id, {
           isComplete: true,
           status: 'completed',
@@ -1000,7 +1000,7 @@ export class SyncService {
         }
       }
 
-      console.log(`[IncrementalGiftCardSync] Processing ${uniqueActivations.size} unique activations (${recentActivations.length} raw events)`);
+      logger.info('sync.incrementalGc.processing', { unique: uniqueActivations.size, raw: recentActivations.length });
 
       // Load existing squareIds for fast lookup (avoids per-card DB query)
       const existingRows = await db.select({ squareId: giftCards.squareId }).from(giftCards);
@@ -1043,7 +1043,7 @@ export class SyncService {
               if (squareOrderId) cardData.activationSquareOrderId = squareOrderId;
               await giftCardService.createGiftCard(cardData);
             } else {
-              console.warn(`[IncrementalGiftCardSync] Card ${giftCardId} no longer exists in Square (likely fully redeemed) — creating from ACTIVATE event data`);
+              logger.warn('sync.incrementalGc.card_missing_in_square', { giftCardId });
               await giftCardService.createGiftCard({
                 squareId: giftCardId,
                 gan: null,
@@ -1061,11 +1061,11 @@ export class SyncService {
           processed++;
         } catch (err) {
           failed++;
-          console.error(`[IncrementalGiftCardSync] Failed for card ${giftCardId}:`, err);
+          logger.error('sync.incrementalGc.card_failed', { ...errorContext(err), giftCardId });
         }
       }
 
-      console.log(`[IncrementalGiftCardSync] Done — processed=${processed} created=${created} updated=${updated} failed=${failed}`);
+      logger.info('sync.incrementalGc.done', { processed, created, updated, failed });
 
       if (failed === 0) {
         // Advance watermark to run-start time — next cycle picks up from here
@@ -1083,7 +1083,7 @@ export class SyncService {
           processedCount: processed,
           errorMessage: `${failed} card(s) failed; watermark not advanced so next cycle retries`
         });
-        console.warn(`[IncrementalGiftCardSync] ${failed} card(s) failed — watermark held at ${lastWatermark.toISOString()} for retry`);
+        logger.warn('sync.incrementalGc.watermark_held', { failed, watermark: lastWatermark.toISOString() });
       }
 
       return { processed, created, updated, failed, sinceDate: since.toISOString() };
@@ -1094,7 +1094,7 @@ export class SyncService {
         errorMessage: error instanceof Error ? error.message : 'Unknown error'
         // watermark NOT advanced — entire run retried next cycle
       });
-      console.error('[IncrementalGiftCardSync] Fatal error:', error);
+      logger.error('sync.incrementalGc.fatal', errorContext(error));
       return { processed, created, updated, failed, sinceDate: since.toISOString() };
     }
   }
@@ -1116,7 +1116,7 @@ export class SyncService {
       if (elapsed < STALE_LOCK_MS) {
         return { redeemEvents: 0, cardsRefreshed: 0 };
       }
-      console.warn(`[RedeemMonitor] ⚠️ STALE LOCK DETECTED — stuck for ${Math.round(elapsed / 60000)} min. Force-resetting.`);
+      logger.warn('sync.redeemMonitor.stale_lock_reset', { stuckMinutes: Math.round(elapsed / 60000) });
       await this.updateSyncState(state.id, { status: 'completed', isComplete: true });
     }
 
@@ -1157,13 +1157,13 @@ export class SyncService {
       }
 
       const uniqueCardIds = Array.from(new Set(recentRedemptions.map(r => r.giftCardId)));
-      console.log(`[RedeemMonitor] ${recentRedemptions.length} REDEEM events → ${uniqueCardIds.length} unique cards to refresh`);
+      logger.info('sync.redeemMonitor.events', { events: recentRedemptions.length, uniqueCards: uniqueCardIds.length });
 
       const refreshResult = await giftCardService.refreshGiftCardBalancesByIds(uniqueCardIds);
 
       const shouldAdvanceWatermark = fetchComplete && refreshResult.failed === 0;
       if (!shouldAdvanceWatermark) {
-        console.warn(`[RedeemMonitor] Holding watermark for retry (fetchComplete=${fetchComplete}, failedRefreshes=${refreshResult.failed})`);
+        logger.warn('sync.redeemMonitor.watermark_held', { fetchComplete, failedRefreshes: refreshResult.failed });
       }
       await this.updateSyncState(state.id, {
         isComplete: true,
@@ -1179,7 +1179,7 @@ export class SyncService {
         status: 'error',
         errorMessage: error instanceof Error ? error.message : 'Unknown error'
       });
-      console.error('[RedeemMonitor] Fatal error:', error);
+      logger.error('sync.redeemMonitor.fatal', errorContext(error));
       return { redeemEvents: 0, cardsRefreshed: 0 };
     }
   }
@@ -1221,7 +1221,7 @@ export class SyncService {
     // process / instance triggers it.
     const lock = ctx.skipLock ? { release: async () => {} } : await tryAcquireSyncLock(SYNC_TYPE);
     if (!lock) {
-      console.log('[HistoricalGiftCardBackfill] Advisory lock held — another run is in progress');
+      logger.info('sync.historicalGc.lock_held');
       // Audit the rejected trigger so repeated/abusive attempts are visible
       const rejectedAuditId = await recordAuditStart({
         syncType: SYNC_TYPE,
@@ -1263,9 +1263,9 @@ export class SyncService {
     // Read saved cursor from errorMessage field (repurposed as a checkpoint store)
     if (state?.errorMessage?.startsWith('cursor:')) {
       savedCursor = state.errorMessage.slice('cursor:'.length) || undefined;
-      console.log(`[HistoricalGiftCardBackfill] Resuming from saved cursor (${savedCursor?.slice(0, 20)}...)`);
+      logger.info('sync.historicalGc.resume_from_cursor');
     } else {
-      console.log('[HistoricalGiftCardBackfill] Starting from beginning (no saved cursor)');
+      logger.info('sync.historicalGc.start_fresh');
     }
 
     // Mark as in_progress
@@ -1290,14 +1290,14 @@ export class SyncService {
     // Pre-load ALL Square gift cards into a map (squareId → card data).
     // This avoids per-card API calls inside the activation-event loop — instead we
     // do a single bulk fetch up front and look up cards from the in-memory map.
-    console.log('[HistoricalGiftCardBackfill] Pre-loading all Square gift cards...');
+    logger.info('sync.historicalGc.preload_start');
     const { cards: allSquareCards } = await squareClient.fetchGiftCards();
     const squareCardMap = new Map<string, any>();
     for (const card of allSquareCards) {
       const id = card.id || card.squareId;
       if (id) squareCardMap.set(id, card);
     }
-    console.log(`[HistoricalGiftCardBackfill] Pre-loaded ${squareCardMap.size} Square cards`);
+    logger.info('sync.historicalGc.preload_done', { count: squareCardMap.size });
 
     // Load all existing squareIds once for fast lookup
     const existingRows = await db.select({ squareId: giftCards.squareId }).from(giftCards);
@@ -1315,7 +1315,7 @@ export class SyncService {
         const budget = await consumeDailyBudget(1);
         if (!budget.ok) {
           budgetExceeded = true;
-          console.warn(`[HistoricalGiftCardBackfill] Daily Square page budget exhausted (${budget.used}/${budget.cap}) — pausing run`);
+          logger.warn('sync.historicalGc.budget_exhausted', { used: budget.used, cap: budget.cap });
           break;
         }
 
@@ -1329,7 +1329,7 @@ export class SyncService {
         }
         pagesProcessed++;
 
-        console.log(`[HistoricalGiftCardBackfill] Page ${page + 1}: ${activities.length} ACTIVATE events (cursor: ${currentCursor?.slice(0, 20) ?? 'start'})`);
+        logger.info('sync.historicalGc.page', { page: page + 1, events: activities.length });
 
         for (const { giftCardId, activationAmountDollars, createdAt, squareOrderId } of activities) {
           try {
@@ -1340,7 +1340,7 @@ export class SyncService {
             if (!squareCard) {
               squareCard = await squareClient.fetchGiftCardById(giftCardId);
               if (!squareCard) {
-                console.warn(`[HistoricalGiftCardBackfill] Could not resolve card ${giftCardId}`);
+                logger.warn('sync.historicalGc.card_unresolved', { giftCardId });
                 failed++;
                 continue;
               }
@@ -1378,7 +1378,7 @@ export class SyncService {
             processed++;
           } catch (err) {
             failed++;
-            console.error(`[HistoricalGiftCardBackfill] Failed for card ${giftCardId}:`, err);
+            logger.error('sync.historicalGc.card_failed', { ...errorContext(err), giftCardId });
           }
         }
 
@@ -1405,7 +1405,7 @@ export class SyncService {
           processedCount: (state.processedCount || 0) + processed,
           errorMessage: null // clear cursor checkpoint — done
         });
-        console.log(`[HistoricalGiftCardBackfill] COMPLETE — processed=${processed} created=${created} updated=${updated} failed=${failed}`);
+        logger.info('sync.historicalGc.complete', { processed, created, updated, failed });
       } else {
         const pausedReason = budgetExceeded
           ? 'paused — daily Square budget exhausted, retry tomorrow'
@@ -1417,7 +1417,7 @@ export class SyncService {
           processedCount: (state.processedCount || 0) + processed,
           // errorMessage already updated with cursor above
         });
-        console.log(`[HistoricalGiftCardBackfill] ${pausedReason}`);
+        logger.info('sync.historicalGc.paused', { reason: pausedReason });
       }
 
       await recordAuditFinish(auditId, {
@@ -1449,7 +1449,7 @@ export class SyncService {
         errorMessage: error instanceof Error ? error.message : String(error),
         pagesUsed: pagesProcessed,
       });
-      console.error('[HistoricalGiftCardBackfill] Error:', error);
+      logger.error('sync.historicalGc.error', errorContext(error));
       throw error;
     } finally {
       await lock.release();
@@ -1481,7 +1481,7 @@ export class SyncService {
     // heuristic (which let a second admin race in after 10 minutes).
     const lock = await tryAcquireSyncLock(SYNC_TYPE);
     if (!lock) {
-      console.log('[HistoricalBackfill] Advisory lock held — backfill already running');
+      logger.info('sync.historicalBackfill.lock_held');
       // Audit the rejected trigger so repeated/abusive attempts are visible
       const rejectedAuditId = await recordAuditStart({
         syncType: SYNC_TYPE,
@@ -1543,10 +1543,10 @@ export class SyncService {
         const resumeIdx = savedCheckpoint.nextChunkToProcess ?? savedCheckpoint.chunksCompleted ?? 0;
         resumeFromChunk = Math.min(Math.max(0, resumeIdx), chunks.length);
         if (resumeFromChunk > 0) {
-          console.log(`[HistoricalBackfill] Resuming from chunk ${resumeFromChunk} of ${chunks.length} (params match)`);
+          logger.info('sync.historicalBackfill.resume_chunk', { resumeFromChunk, totalChunks: chunks.length });
         }
       } else {
-        console.log(`[HistoricalBackfill] Checkpoint params differ from request — starting fresh`);
+        logger.info('sync.historicalBackfill.checkpoint_mismatch_fresh');
         resumeFromChunk = 0;
       }
     }
@@ -1614,7 +1614,7 @@ export class SyncService {
 
     // Fire background loop — non-blocking
     setImmediate(async () => {
-      console.log(`[HistoricalBackfill] Starting: ${chunks.length} chunks of ${chunkDays} days each, resuming from chunk ${resumeFromChunk}`);
+      logger.info('sync.historicalBackfill.start', { totalChunks: chunks.length, chunkDays, resumeFromChunk });
       let totalOrders = 0;
       let totalPayments = 0;
       let failedChunks = 0;
@@ -1637,11 +1637,11 @@ export class SyncService {
         const budget = await consumeDailyBudget(BACKFILL_BUDGET_PER_CHUNK);
         if (!budget.ok) {
           budgetExceeded = true;
-          console.warn(`[HistoricalBackfill] Daily Square budget exhausted (${budget.used}/${budget.cap}) — pausing at chunk ${i + 1}/${chunks.length}`);
+          logger.warn('sync.historicalBackfill.budget_exhausted', { used: budget.used, cap: budget.cap, chunkIndex: i + 1, totalChunks: chunks.length });
           break;
         }
 
-        console.log(`[HistoricalBackfill] Chunk ${i + 1}/${chunks.length}: ${start.toISOString().slice(0, 10)} → ${end.toISOString().slice(0, 10)}`);
+        logger.info('sync.historicalBackfill.chunk_start', { chunkIndex: i + 1, totalChunks: chunks.length, startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) });
 
         try {
           // --- Orders (batch upsert) ---
@@ -1658,7 +1658,7 @@ export class SyncService {
               orderRows.push(orderData);
               squareOrderMap.set(orderData.squareId, squareOrder);
             } catch (err) {
-              console.error(`[HistoricalBackfill] Order convert error:`, err);
+              logger.error('sync.historicalBackfill.order_convert_error', errorContext(err));
             }
           }
 
@@ -1712,7 +1712,7 @@ export class SyncService {
           }
 
           totalOrders += squareOrders.length;
-          console.log(`[HistoricalBackfill] Chunk ${i + 1} orders: ${chunkOrdersUpserted} upserted from ${squareOrders.length} fetched`);
+          logger.info('sync.historicalBackfill.chunk_orders', { chunkIndex: i + 1, upserted: chunkOrdersUpserted, fetched: squareOrders.length });
 
           // --- Payments (batch upsert) ---
           const paymentResult = await squareClient.fetchPayments(start, end, { returnMeta: true })
@@ -1723,7 +1723,7 @@ export class SyncService {
           const squarePayments = paymentResult.payments;
           if (paymentResult.hitPageCap) {
             cappedPaymentChunks.push({ start, end, chunkIndex: i });
-            console.warn(`[HistoricalBackfill] Chunk ${i + 1} HIT 50-PAGE PAYMENT CAP — will re-sweep with smaller windows after main backfill`);
+            logger.warn('sync.historicalBackfill.payment_cap_hit', { chunkIndex: i + 1 });
           }
           const paymentRows: any[] = [];
 
@@ -1733,7 +1733,7 @@ export class SyncService {
               if (!paymentData.amount || paymentData.amount === 0) continue;
               paymentRows.push(paymentData);
             } catch (err) {
-              console.error(`[HistoricalBackfill] Payment convert error:`, err);
+              logger.error('sync.historicalBackfill.payment_convert_error', errorContext(err));
             }
           }
 
@@ -1758,7 +1758,7 @@ export class SyncService {
           }
 
           totalPayments += squarePayments.length;
-          console.log(`[HistoricalBackfill] Chunk ${i + 1} payments: ${chunkPaymentsUpserted} upserted from ${squarePayments.length} fetched`);
+          logger.info('sync.historicalBackfill.chunk_payments', { chunkIndex: i + 1, upserted: chunkPaymentsUpserted, fetched: squarePayments.length });
 
         } catch (err) {
           failedChunks++;
@@ -1778,7 +1778,7 @@ export class SyncService {
             error: err instanceof Error ? err.message : String(err),
             errorName: err instanceof Error ? err.name : undefined,
           });
-          console.error(`[HistoricalBackfill] Chunk ${i + 1} failed entirely:`, err);
+          logger.error('sync.historicalBackfill.chunk_failed', { ...errorContext(err), chunkIndex: i + 1 });
           await this.updateSyncState(state.id, {
             errorMessage: `Chunk ${i + 1} (${start.toISOString().slice(0, 10)}): ${err instanceof Error ? err.message : String(err)}`,
             lastCheckpoint: {
@@ -1827,47 +1827,47 @@ export class SyncService {
         try {
           const gcResult = await giftCardService.backfillActivationSquareOrderIds({ start, end });
           if (gcResult.updated > 0) {
-            console.log(`[HistoricalBackfill] Chunk ${i + 1} gift-card linking: ${gcResult.updated} gift cards linked`);
+            logger.info('sync.historicalBackfill.chunk_gc_linked', { chunkIndex: i + 1, updated: gcResult.updated });
           }
         } catch (gcErr) {
-          console.error(`[HistoricalBackfill] Chunk ${i + 1} gift-card linking failed (non-fatal):`, gcErr);
+          logger.error('sync.historicalBackfill.chunk_gc_failed', { ...errorContext(gcErr), chunkIndex: i + 1 });
         }
 
         // No inter-chunk delay needed — Square API rate limits are handled within fetch pagination
       }
 
       // All chunks complete — run full gift-card linking phases (including history scan)
-      console.log('[HistoricalBackfill] All chunks done. Running gift-card linking phases...');
+      logger.info('sync.historicalBackfill.linking_phases_start');
       try {
         const r0 = await giftCardService.backfillActivationOrderIdsFromActivateHistory();
-        console.log(`[HistoricalBackfill] Phase 0: ${r0.scanned} events scanned, ${r0.linked} order IDs linked`);
+        logger.info('sync.historicalBackfill.phase0', { scanned: r0.scanned, linked: r0.linked });
       } catch (err) {
-        console.error('[HistoricalBackfill] Phase 0 failed:', err);
+        logger.error('sync.historicalBackfill.phase0_failed', errorContext(err));
       }
       try {
         const r1 = await giftCardService.syncMissingActivationOrders();
-        console.log(`[HistoricalBackfill] Phase 1: ${r1.inserted} missing orders inserted`);
+        logger.info('sync.historicalBackfill.phase1', { inserted: r1.inserted });
       } catch (err) {
-        console.error('[HistoricalBackfill] Phase 1 failed:', err);
+        logger.error('sync.historicalBackfill.phase1_failed', errorContext(err));
       }
       try {
         const repair = await giftCardService.repairMislinkedActivationOrders();
         if (repair.cleared > 0 || repair.relinked > 0) {
-          console.log(`[HistoricalBackfill] Phase 1.5 (mislink repair): ${repair.relinked} relinked, ${repair.cleared} cleared`);
+          logger.info('sync.historicalBackfill.phase1_5', { relinked: repair.relinked, cleared: repair.cleared });
         }
       } catch (err) {
-        console.error('[HistoricalBackfill] Phase 1.5 (mislink repair) failed:', err);
+        logger.error('sync.historicalBackfill.phase1_5_failed', errorContext(err));
       }
       try {
         const r2 = await giftCardService.backfillActivationSquareOrderIds();
-        console.log(`[HistoricalBackfill] Phase 2: ${r2.updated} gift cards linked via heuristic`);
+        logger.info('sync.historicalBackfill.phase2', { updated: r2.updated });
       } catch (err) {
-        console.error('[HistoricalBackfill] Phase 2 failed:', err);
+        logger.error('sync.historicalBackfill.phase2_failed', errorContext(err));
       }
 
       // --- Re-sweep capped payment chunks with smaller windows ---
       if (cappedPaymentChunks.length > 0) {
-        console.log(`[HistoricalBackfill] Re-sweeping ${cappedPaymentChunks.length} chunk(s) that hit the 50-page payment cap...`);
+        logger.info('sync.historicalBackfill.resweep_start', { chunks: cappedPaymentChunks.length });
         const SUB_CHUNK_DAYS = 5;
         let resweepTotal = 0;
 
@@ -1880,14 +1880,14 @@ export class SyncService {
             subStart = subEnd;
           }
 
-          console.log(`[PaymentResweep] Chunk ${capped.chunkIndex + 1} (${capped.start.toISOString().slice(0, 10)} → ${capped.end.toISOString().slice(0, 10)}): splitting into ${subChunks.length} sub-chunks of ${SUB_CHUNK_DAYS} days`);
+          logger.info('sync.paymentResweep.chunk_split', { chunkIndex: capped.chunkIndex + 1, startDate: capped.start.toISOString().slice(0, 10), endDate: capped.end.toISOString().slice(0, 10), subChunks: subChunks.length, subChunkDays: SUB_CHUNK_DAYS });
 
           for (let s = 0; s < subChunks.length; s++) {
             const sub = subChunks[s];
             try {
               const subResult = await squareClient.fetchPayments(sub.start, sub.end, { returnMeta: true });
               if (subResult.hitPageCap) {
-                console.warn(`[PaymentResweep] Sub-chunk ${s + 1}/${subChunks.length} (${sub.start.toISOString().slice(0, 10)} → ${sub.end.toISOString().slice(0, 10)}) STILL hit page cap — ${subResult.payments.length} payments fetched`);
+                logger.warn('sync.paymentResweep.sub_cap_hit', { subIndex: s + 1, totalSubs: subChunks.length, startDate: sub.start.toISOString().slice(0, 10), endDate: sub.end.toISOString().slice(0, 10), fetched: subResult.payments.length });
               }
 
               const paymentRows: any[] = [];
@@ -1897,7 +1897,7 @@ export class SyncService {
                   if (!pd.amount || pd.amount === 0) continue;
                   paymentRows.push(pd);
                 } catch (err) {
-                  console.error(`[PaymentResweep] Payment convert error:`, err);
+                  logger.error('sync.paymentResweep.convert_error', errorContext(err));
                 }
               }
 
@@ -1919,15 +1919,15 @@ export class SyncService {
                 resweepTotal += paymentRows.length;
               }
 
-              console.log(`[PaymentResweep] Sub-chunk ${s + 1}/${subChunks.length}: ${paymentRows.length} payments upserted from ${subResult.payments.length} fetched`);
+              logger.info('sync.paymentResweep.sub_done', { subIndex: s + 1, totalSubs: subChunks.length, upserted: paymentRows.length, fetched: subResult.payments.length });
             } catch (err) {
-              console.error(`[PaymentResweep] Sub-chunk ${s + 1}/${subChunks.length} failed:`, err);
+              logger.error('sync.paymentResweep.sub_failed', { ...errorContext(err), subIndex: s + 1, totalSubs: subChunks.length });
             }
           }
         }
 
         totalPayments += resweepTotal;
-        console.log(`[PaymentResweep] COMPLETE — ${resweepTotal} additional payments upserted across ${cappedPaymentChunks.length} re-swept chunk(s)`);
+        logger.info('sync.paymentResweep.complete', { upserted: resweepTotal, chunks: cappedPaymentChunks.length });
       }
 
       // isComplete only when every chunk was processed without failure
@@ -1956,9 +1956,9 @@ export class SyncService {
         },
       });
       if (allSucceeded) {
-        console.log(`[HistoricalBackfill] COMPLETE — ${totalOrders} orders + ${totalPayments} payments across ${chunks.length} chunks`);
+        logger.info('sync.historicalBackfill.complete', { totalOrders, totalPayments, chunks: chunks.length });
       } else {
-        console.warn(`[HistoricalBackfill] PARTIAL — ${failedChunks} chunk(s) failed; ${totalOrders} orders + ${totalPayments} payments processed`);
+        logger.warn('sync.historicalBackfill.partial', { failedChunks, totalOrders, totalPayments });
       }
 
       await recordAuditFinish(auditId, {
@@ -1977,7 +1977,7 @@ export class SyncService {
         pagesUsed: chunksProcessed * BACKFILL_BUDGET_PER_CHUNK,
       });
       } catch (fatalErr) {
-        console.error('[HistoricalBackfill] Fatal error in background loop:', fatalErr);
+        logger.error('sync.historicalBackfill.fatal', errorContext(fatalErr));
         try {
           await this.updateSyncState(state.id, {
             status: 'failed',

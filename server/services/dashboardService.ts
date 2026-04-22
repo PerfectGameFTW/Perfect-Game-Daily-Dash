@@ -25,6 +25,7 @@ import {
 import { getEasternDateRange } from '../dateUtils';
 import { db } from '../db';
 import { sql } from 'drizzle-orm';
+import { logger, errorContext } from '../logger';
 
 export class DashboardService {
   /**
@@ -40,11 +41,11 @@ export class DashboardService {
     startDate?: Date,
     endDate?: Date
   ): Promise<DailySummary> {
-    console.log(`Getting daily summary with UTC dates: {
-  dateRange: '${dateRange}',
-  startUTC: '${startDate?.toISOString() || 'undefined'}',
-  endUTC: '${endDate?.toISOString() || 'undefined'}'
-}`);
+    logger.info('dashboard.dailySummary.start', {
+      dateRange,
+      startDate: startDate?.toISOString(),
+      endDate: endDate?.toISOString(),
+    });
 
     const revenueBreakdown = await paymentService.getRevenueBreakdown(dateRange, startDate, endDate);
     const intercardCurrent = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
@@ -61,10 +62,10 @@ export class DashboardService {
     const previousStart = new Date(start.getTime() - periodDuration - 1); // -1 to avoid overlapping
     const previousEnd = new Date(end.getTime() - periodDuration - 1);
     
-    console.log(`Previous period UTC dates: {
-  previousStartUTC: '${previousStart.toISOString()}',
-  previousEndUTC: '${previousEnd.toISOString()}'
-}`);
+    logger.info('dashboard.dailySummary.previousPeriod', {
+      previousStart: previousStart.toISOString(),
+      previousEnd: previousEnd.toISOString(),
+    });
     
     const previousSquareRevenue = await paymentService.getTotalRevenue('custom', previousStart, previousEnd);
     const previousIntercard = await intercardService.getRevenueForDateRange('custom', previousStart, previousEnd);
@@ -100,15 +101,11 @@ export class DashboardService {
     // Format date for display
     const date = new Date().toISOString().split('T')[0];
     
-    console.log(`Daily summary calculated with UTC: {
-  dateRange: '${dateRange}',
-  totalRevenue: ${totalRevenue},
-  giftCardSales: ${giftCardSales},
-  previousRevenue: ${previousRevenue},
-  previousGiftCardSales: ${previousGiftCardSales},
-  totalOrders: ${totalOrders},
-  previousOrders: ${previousOrders}
-}`);
+    logger.info('dashboard.dailySummary.done', {
+      dateRange,
+      totalOrders,
+      previousOrders,
+    });
 
     return {
       totalRevenue,
@@ -165,12 +162,12 @@ export class DashboardService {
     
     // If we have payment data, return it
     if (paymentHourlyRevenue && paymentHourlyRevenue.length > 0) {
-      console.log(`Found ${paymentHourlyRevenue.length} hourly revenue entries from payment service`);
+      logger.info('dashboard.hourlyRevenue.fromPayments', { count: paymentHourlyRevenue.length });
       return paymentHourlyRevenue;
     }
     
     // Fallback to order service if payment service returns no data
-    console.log('No hourly revenue data from payment service, falling back to order service');
+    logger.info('dashboard.hourlyRevenue.fallbackToOrders');
     return await orderService.getHourlyRevenue(dateRange, startDate, endDate);
   }
   
@@ -399,12 +396,18 @@ export class DashboardService {
         const classifiedSum = bowlingRedemptions + laserTagRedemptions + pureGcRedemptions;
         const hasMismatch = Math.abs(classifiedSum - giftCardRedemptionsTotal) > 0.01;
         if (hasMismatch) {
-          console.warn(`[GC-Redemption] Reconciliation mismatch: DB total=$${giftCardRedemptionsTotal}, classified=$${classifiedSum}`);
+          logger.warn('gcRedemption.reconciliation_mismatch');
         }
-        console.log(`[GC-Redemption] redeemFetch=OK total=$${giftCardRedemptionsTotal} | redeemEvents=${redeemActivities.length} dbResolved=${dbResolved} fallbackAttempted=${fallbackAttempted} fallbackOK=${fallbackSuccesses} fallbackFail=${fallbackFailures} | bowling=$${bowlingRedemptions} laserTag=$${laserTagRedemptions} pureGC=$${pureGcRedemptions}${hasMismatch ? ' MISMATCH' : ''}`);
+        logger.info('gcRedemption.fetched', {
+          count: redeemActivities.length,
+          dbResolved,
+          fallbackAttempted,
+          fallbackOk: fallbackSuccesses,
+          fallbackFail: fallbackFailures,
+          mismatch: hasMismatch,
+        });
       } catch (error) {
-        console.error('[GC-Redemption] REDEEM fetch failed, falling back to total:', error);
-        console.log(`[GC-Redemption] redeemFetch=FAIL total=$${giftCardRedemptionsTotal} | bowling=$0 laserTag=$0 pureGC=$${giftCardRedemptionsTotal} (fallback)`);
+        logger.error('gcRedemption.fetch_failed', errorContext(error));
         pureGcRedemptions = giftCardRedemptionsTotal;
       }
     }
@@ -457,21 +460,21 @@ export class DashboardService {
     try {
       processingFees = await payoutService.getProcessingFees(dateRange, startDate, endDate);
     } catch (err) {
-      console.error('Error fetching processing fees:', err);
+      logger.error('dashboard.processingFees.fetch_failed', errorContext(err));
     }
 
     let intercardBreakdown = { cash: 0, credit: 0, total: 0 };
     try {
       intercardBreakdown = await intercardService.getRevenueForDateRange(dateRange, startDate, endDate);
     } catch (err) {
-      console.error('Error fetching Intercard revenue:', err);
+      logger.error('dashboard.intercard.fetch_failed', errorContext(err));
     }
 
     let squareIntercardKioskCash = 0;
     try {
       squareIntercardKioskCash = await paymentService.getIntercardKioskCashTotal(dateRange, startDate, endDate);
     } catch (err) {
-      console.error('Error fetching Square Intercard Kiosk Cash:', err);
+      logger.error('dashboard.intercardKioskCash.fetch_failed', errorContext(err));
     }
 
     return {

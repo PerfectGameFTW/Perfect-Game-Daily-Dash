@@ -10,11 +10,16 @@
  *
  * For backwards compatibility / non-Replit hosts, a raw SENDGRID_API_KEY
  * env var is still honored. If neither path is available (typical dev),
- * the message is logged to the workflow console so the password-reset
- * flow can be exercised end-to-end without email infrastructure.
+ * the message is written to a developer-only file under the OS temp dir
+ * so the password-reset flow can be exercised end-to-end without email
+ * infrastructure — the message body never reaches workflow logs.
  */
 
 import sgMail from '@sendgrid/mail';
+import { promises as fs } from 'fs';
+import path from 'path';
+import os from 'os';
+import { logger, errorContext } from '../logger';
 
 const FROM_EMAIL_OVERRIDE = process.env.MAIL_FROM_EMAIL;
 const FROM_NAME = process.env.MAIL_FROM_NAME || 'Perfect Game Sales Dashboard';
@@ -88,10 +93,7 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
         if (!fromEmail) fromEmail = creds.fromEmail;
       }
     } catch (err) {
-      console.error(
-        '[emailService] Failed to fetch SendGrid credentials from connector:',
-        err,
-      );
+      logger.error('emailService.connector_fetch_failed', errorContext(err));
     }
   }
 
@@ -102,14 +104,33 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
         'SendGrid not configured: connect the SendGrid integration or set SENDGRID_API_KEY.',
       );
     }
-    // Dev / unconfigured: log to stdout so the developer can copy the
-    // reset link out of the workflow logs.
-    console.warn(
-      '[emailService] SendGrid not configured; falling back to console log. ' +
-        'Wire the SendGrid integration (or set SENDGRID_API_KEY) for real delivery.',
-    );
-    console.log(
-      `[emailService:dev-stub]\n  to:      ${msg.to}\n  from:    ${FROM_NAME} <${fromEmail || 'no-reply@perfectgame.local'}>\n  subject: ${msg.subject}\n  text:\n${msg.text}`,
+    // Dev / unconfigured: persist the outbound message to a developer-only
+    // file under the OS temp dir so the password-reset flow remains testable
+    // without a real SMTP/SendGrid backend, but the recipient address,
+    // subject, and reset link never reach the (workspace-visible) workflow
+    // logs. The structured log line carries only the file path so the
+    // developer can `cat` it out of band. Production refuses to silently
+    // swallow the email above.
+    const dir = path.join(os.tmpdir(), 'pg-dev-emails');
+    let filePath: string | null = null;
+    try {
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      filePath = path.join(
+        dir,
+        `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.txt`,
+      );
+      const body =
+        `to:      ${msg.to}\n` +
+        `from:    ${FROM_NAME} <${fromEmail || 'no-reply@perfectgame.local'}>\n` +
+        `subject: ${msg.subject}\n` +
+        `text:\n${msg.text}\n`;
+      await fs.writeFile(filePath, body, { mode: 0o600 });
+    } catch (err) {
+      logger.error('emailService.dev_stub_write_failed', errorContext(err));
+    }
+    logger.warn(
+      'emailService.dev_stub_used',
+      filePath ? { path: filePath } : undefined,
     );
     return;
   }

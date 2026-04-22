@@ -3,12 +3,13 @@ import { drizzle } from 'drizzle-orm/neon-serverless';
 import { sql } from 'drizzle-orm';
 import ws from "ws";
 import * as schema from "@shared/schema";
+import { logger, errorContext } from './logger';
 
 // Configure neon to use websockets
 neonConfig.webSocketConstructor = ws;
 
 // Add detailed startup logging
-console.log('Initializing database connection...');
+logger.info('db.init.start');
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -33,7 +34,7 @@ export const pool = new Pool({
 // truly gone, individual route handlers will surface that as 5xx and
 // the orchestrator's healthcheck can decide to recycle us.
 pool.on('error', (err) => {
-  console.error('[db] pool idle-client error (recoverable):', err);
+  logger.error('db.pool.idle_client_error', errorContext(err));
 });
 
 // Initialize Drizzle with the pool
@@ -45,11 +46,11 @@ export { sql };
 // Add connection verification
 pool.connect()
   .then(client => {
-    console.log('Successfully connected to database');
+    logger.info('db.connect.ok');
     client.release();
   })
   .catch(err => {
-    console.error('Error connecting to the database:', err);
+    logger.error('db.connect.failed', errorContext(err));
     process.exit(-1);
   });
 
@@ -147,9 +148,7 @@ export function ensureMcpReadRole(): Promise<void> {
           // Idempotent across providers with varying grant defaults.
         });
       }
-      console.log(
-        `[db] mcp read-only role '${MCP_READ_ROLE}' ready (SELECT on ${MCP_READ_TABLES.length} tables)`
-      );
+      logger.info('db.mcp_read_role.ready', { count: MCP_READ_TABLES.length });
     } finally {
       client.release();
     }

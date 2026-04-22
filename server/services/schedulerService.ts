@@ -23,12 +23,13 @@ import { giftCardService } from './giftCardService';
 import { payoutService } from './payoutService';
 import { intercardService } from './intercardService';
 import { broadcast } from '../ws';
+import { logger, errorContext } from '../logger';
 
 let schedulerStarted = false;
 
 export function startScheduler(): void {
   if (schedulerStarted) {
-    console.log('[Scheduler] Already running — skipping second start');
+    logger.info('scheduler.already_running');
     return;
   }
   schedulerStarted = true;
@@ -43,8 +44,8 @@ export function startScheduler(): void {
     timezone: 'America/New_York',
   });
 
-  console.log('[Scheduler] Frequent sync scheduled every 60 seconds');
-  console.log('[Scheduler] Nightly deep sync scheduled at 3:00 AM Eastern Time');
+  logger.info('scheduler.frequent_scheduled');
+  logger.info('scheduler.nightly_scheduled');
 
   // On startup: three-phase activation_square_order_id backfill (non-blocking, idempotent).
   //
@@ -63,79 +64,79 @@ export function startScheduler(): void {
   (async () => {
     try {
       const { scanned, linked } = await giftCardService.backfillActivationOrderIdsFromActivateHistory();
-      console.log(`[Scheduler] Phase 0 (ACTIVATE history scan): ${scanned} events, ${linked} order IDs linked`);
+      logger.info('scheduler.startup.phase0', { scanned, linked });
     } catch (err) {
-      console.error('[Scheduler] Phase 0 (ACTIVATE history scan) error:', err);
+      logger.error('scheduler.startup.phase0_error', errorContext(err));
     }
 
     try {
       const { inserted } = await giftCardService.syncMissingActivationOrders();
       if (inserted > 0) {
-        console.log(`[Scheduler] Phase 1 (missing-order sync): ${inserted} order(s) fetched from Square`);
+        logger.info('scheduler.startup.phase1', { inserted });
       } else {
-        console.log('[Scheduler] Phase 1 (missing-order sync): nothing to fetch');
+        logger.info('scheduler.startup.phase1_noop');
       }
     } catch (err) {
-      console.error('[Scheduler] Phase 1 (missing-order sync) error:', err);
+      logger.error('scheduler.startup.phase1_error', errorContext(err));
     }
 
     try {
       const { cleared, relinked } = await giftCardService.repairMislinkedActivationOrders();
       if (cleared > 0 || relinked > 0) {
-        console.log(`[Scheduler] Phase 1.5 (mislink repair): ${relinked} relinked, ${cleared} cleared`);
+        logger.info('scheduler.startup.phase1_5', { relinked, cleared });
       }
     } catch (err) {
-      console.error('[Scheduler] Phase 1.5 (mislink repair) error:', err);
+      logger.error('scheduler.startup.phase1_5_error', errorContext(err));
     }
 
     try {
       const { updated } = await giftCardService.backfillActivationSquareOrderIds();
       if (updated > 0) {
-        console.log(`[Scheduler] Phase 2 (heuristic backfill): ${updated} gift card(s) linked to orders`);
+        logger.info('scheduler.startup.phase2', { updated });
       } else {
-        console.log('[Scheduler] Phase 2 (heuristic backfill): all gift cards already linked — nothing to do');
+        logger.info('scheduler.startup.phase2_noop');
       }
     } catch (err) {
-      console.error('[Scheduler] Phase 2 (heuristic backfill) error:', err);
+      logger.error('scheduler.startup.phase2_error', errorContext(err));
     }
   })();
 
   // On startup: if the historical gift card backfill has never completed,
   // run it in the background until finished so the dashboard has complete data.
   runBackfillUntilComplete().catch(err => {
-    console.error('[Scheduler] Startup backfill error:', err);
+    logger.error('scheduler.startup.error', errorContext(err));
   });
 
   // On startup: auto-resume the historical orders/payments backfill if it was
   // in progress when the server last stopped (e.g. restart mid-chunk).
   resumeHistoricalOrdersPaymentsBackfillIfNeeded().catch(err => {
-    console.error('[Scheduler] Orders/payments backfill resume error:', err);
+    logger.error('scheduler.ordersPayments_resume_error', errorContext(err));
   });
 
   setTimeout(() => {
     backfill2024OrdersIfNeeded().catch(err => {
-      console.error('[Scheduler] 2024 orders backfill error:', err);
+      logger.error('scheduler.2024_orders_error', errorContext(err));
     });
   }, 15000);
 
   // On startup: sync payout fee data (non-blocking)
   (async () => {
     try {
-      console.log('[Scheduler] Starting payout fee sync in background...');
+      logger.info('scheduler.payoutFee.start');
       const result = await payoutService.syncPayoutFeesIncremental();
-      console.log(`[Scheduler] Payout fees synced: ${result.payoutsProcessed} payouts, ${result.entriesCreated} entries`);
+      logger.info('scheduler.payoutFee.done', { payoutsProcessed: result.payoutsProcessed, entriesCreated: result.entriesCreated });
     } catch (err) {
-      console.error('[Scheduler] Payout fee sync error:', err);
+      logger.error('scheduler.payoutFee.error', errorContext(err));
     }
   })();
 
   // On startup: run Intercard historical backfill if not yet complete (non-blocking)
   (async () => {
     try {
-      console.log('[Scheduler] Starting Intercard historical backfill in background...');
+      logger.info('scheduler.intercard.start');
       await intercardService.runHistoricalBackfill();
     } catch (err) {
-      console.error('[Scheduler] Intercard backfill error:', err);
+      logger.error('scheduler.intercard.error', errorContext(err));
     }
   })();
 }
@@ -144,7 +145,7 @@ async function backfill2024OrdersIfNeeded(): Promise<void> {
   const SYNC_KEY = 'orders_backfill_2024';
   const state = await syncService.getSyncState(SYNC_KEY);
   if (state?.isComplete && state.status === 'completed') {
-    console.log('[Scheduler] 2024 historical orders backfill already complete — skipping');
+    logger.info('scheduler.2024.already_complete');
     return;
   }
 
@@ -154,7 +155,7 @@ async function backfill2024OrdersIfNeeded(): Promise<void> {
   );
   const orderCount = parseInt(countResult.rows[0]?.cnt || '0', 10);
   if (orderCount > 10000) {
-    console.log(`[Scheduler] 2024 orders already present (${orderCount} orders) — marking complete and skipping`);
+    logger.info('scheduler.2024.already_present', { orderCount });
     if (state) {
       await syncService.updateSyncState(state.id, { isComplete: true, status: 'completed', lastSyncedAt: new Date() });
     } else {
@@ -165,11 +166,11 @@ async function backfill2024OrdersIfNeeded(): Promise<void> {
 
   const primaryBackfill = await syncService.getSyncState('orders_payments_backfill');
   if (primaryBackfill && !primaryBackfill.isComplete) {
-    console.log('[Scheduler] Primary backfill still running — deferring 2024 backfill to next restart');
+    logger.info('scheduler.2024.deferred');
     return;
   }
 
-  console.log('[Scheduler] Starting 2024 historical orders backfill (Mar 2024 – Dec 2024)...');
+  logger.info('scheduler.2024.start');
 
   const startDate = new Date('2024-03-01T00:00:00Z');
   const endDate = new Date('2025-01-01T00:00:00Z');
@@ -193,7 +194,7 @@ async function backfill2024OrdersIfNeeded(): Promise<void> {
 
   try {
     const result = await syncService.startHistoricalOrdersPaymentsBackfill(startDate, endDate, 30);
-    console.log(`[Scheduler] 2024 backfill: ${result.message}`);
+    logger.info('scheduler.2024.queued', { reason: result.message });
 
     if (!result.alreadyRunning) {
       const checkComplete = async () => {
@@ -201,7 +202,7 @@ async function backfill2024OrdersIfNeeded(): Promise<void> {
           await new Promise(r => setTimeout(r, 10000));
           const status = await syncService.getHistoricalBackfillStatus();
           if (status.isComplete || status.status === 'completed') {
-            console.log('[Scheduler] 2024 backfill complete — marking sync key');
+            logger.info('scheduler.2024.complete');
             const existingKey = await syncService.getSyncState(SYNC_KEY);
             if (existingKey) {
               await syncService.updateSyncState(existingKey.id, {
@@ -220,12 +221,12 @@ async function backfill2024OrdersIfNeeded(): Promise<void> {
             return;
           }
         }
-        console.warn('[Scheduler] 2024 backfill timed out waiting for completion');
+        logger.warn('scheduler.2024.timeout');
       };
-      checkComplete().catch(err => console.error('[Scheduler] 2024 backfill monitor error:', err));
+      checkComplete().catch(err => logger.error('scheduler.2024.monitor_error', errorContext(err)));
     }
   } catch (err) {
-    console.error('[Scheduler] 2024 backfill failed:', err);
+    logger.error('scheduler.2024.failed', errorContext(err));
   }
 }
 
@@ -237,7 +238,7 @@ async function resumeHistoricalOrdersPaymentsBackfillIfNeeded(): Promise<void> {
   const state = await syncService.getSyncState('orders_payments_backfill');
   if (!state) return;
   if (state.isComplete && state.status === 'completed') {
-    console.log('[Scheduler] Historical orders/payments backfill already complete — skipping resume');
+    logger.info('scheduler.ordersPayments.already_complete');
     return;
   }
   if (state.isComplete) return;
@@ -247,7 +248,7 @@ async function resumeHistoricalOrdersPaymentsBackfillIfNeeded(): Promise<void> {
   const endDate   = cp.endDate   ? new Date(cp.endDate)   : new Date();
   const chunkDays = 30;
 
-  console.log(`[Scheduler] Resuming historical orders/payments backfill from chunk ${cp.chunksCompleted ?? 0} of ${cp.totalChunks ?? '?'}`);
+  logger.info('scheduler.ordersPayments.resume', { chunksCompleted: cp.chunksCompleted ?? 0, totalChunks: cp.totalChunks ?? null });
 
   // Reset the stuck-detection timestamp so the guard lets us restart immediately
   await syncService.updateSyncState(state.id, {
@@ -256,9 +257,9 @@ async function resumeHistoricalOrdersPaymentsBackfillIfNeeded(): Promise<void> {
 
   try {
     const result = await syncService.startHistoricalOrdersPaymentsBackfill(startDate, endDate, chunkDays);
-    console.log(`[Scheduler] Backfill resumed: ${result.message}`);
+    logger.info('scheduler.ordersPayments.resumed', { reason: result.message });
   } catch (err) {
-    console.error('[Scheduler] Failed to resume backfill:', err);
+    logger.error('scheduler.ordersPayments.resume_failed', errorContext(err));
   }
 }
 
@@ -271,11 +272,11 @@ async function runBackfillUntilComplete(): Promise<void> {
   // Check if backfill is already done before doing any API work
   const existingState = await syncService.getSyncState('giftCards_historical');
   if (existingState?.isComplete && existingState.status === 'completed') {
-    console.log('[Scheduler] Gift card historical backfill already complete — skipping startup run');
+    logger.info('scheduler.giftCardHistorical.already_complete');
     return;
   }
 
-  console.log('[Scheduler] Starting gift card historical backfill in background...');
+  logger.info('scheduler.giftCardHistorical.start');
   let callCount = 0;
   const MAX_CALLS = 50; // safety cap — prevents infinite loops
 
@@ -283,20 +284,20 @@ async function runBackfillUntilComplete(): Promise<void> {
     callCount++;
     try {
       const result = await syncService.syncGiftCardsHistoricalBackfill();
-      console.log(`[Scheduler] Backfill pass ${callCount}: processed=${result.processed} created=${result.created} updated=${result.updated} pages=${result.pagesProcessed} finished=${result.finished}`);
+      logger.info('scheduler.giftCardHistorical.pass', { callCount, processed: result.processed, created: result.created, updated: result.updated, pagesProcessed: result.pagesProcessed, finished: result.finished });
       if (result.finished) {
-        console.log('[Scheduler] Gift card historical backfill complete.');
+        logger.info('scheduler.giftCardHistorical.complete');
         return;
       }
       // Brief pause between passes to avoid overwhelming Square API
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err) {
-      console.error(`[Scheduler] Backfill pass ${callCount} failed:`, err);
+      logger.error('scheduler.giftCardHistorical.pass_failed', { ...errorContext(err), callCount });
       // Wait 30 seconds before retrying after an error
       await new Promise(resolve => setTimeout(resolve, 30000));
     }
   }
-  console.warn(`[Scheduler] Backfill reached safety cap of ${MAX_CALLS} calls — will continue at next nightly run`);
+  logger.warn('scheduler.giftCardHistorical.safety_cap', { maxCalls: MAX_CALLS });
 }
 
 /**
@@ -317,71 +318,71 @@ export async function runFrequentSync(): Promise<void> {
   try {
     const result = await syncService.syncPayments(startOfTodayET);
     if (result.created > 0 || result.updated > 0) {
-      console.log(`${label} Payments: +${result.created} new, ${result.updated} updated`);
+      logger.info('scheduler.run.payments', { label, created: result.created, updated: result.updated });
     }
   } catch (err) {
-    console.error(`${label} Payments sync failed:`, err);
+    logger.error('scheduler.run.payments_failed', { ...errorContext(err), label });
   }
 
   try {
     const result = await syncService.syncOrders(startOfTodayET);
     if (result.created > 0 || result.updated > 0) {
-      console.log(`${label} Orders: +${result.created} new, ${result.updated} updated`);
+      logger.info('scheduler.run.orders', { label, created: result.created, updated: result.updated });
     }
   } catch (err) {
-    console.error(`${label} Orders sync failed:`, err);
+    logger.error('scheduler.run.orders_failed', { ...errorContext(err), label });
   }
 
   try {
     const result = await syncService.syncIncrementalGiftCards();
     if (result.created > 0 || result.updated > 0) {
-      console.log(`${label} Gift cards (incremental): +${result.created} new, ${result.updated} updated (since ${result.sinceDate})`);
+      logger.info('scheduler.run.giftCardIncremental', { label, created: result.created, updated: result.updated, sinceDate: result.sinceDate });
     }
   } catch (err) {
-    console.error(`${label} Incremental gift card sync failed:`, err);
+    logger.error('scheduler.run.giftCardIncremental_failed', { ...errorContext(err), label });
   }
 
   const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
   try {
     const result = await syncService.syncRefunds(fifteenMinutesAgo);
     if (result.created > 0 || result.updated > 0) {
-      console.log(`${label} Refunds: +${result.created} new, ${result.updated} updated`);
+      logger.info('scheduler.run.refunds', { label, created: result.created, updated: result.updated });
     }
   } catch (err) {
-    console.error(`${label} Refunds sync failed:`, err);
+    logger.error('scheduler.run.refunds_failed', { ...errorContext(err), label });
   }
 
   try {
     await intercardService.syncToday();
   } catch (err) {
-    console.error(`${label} Intercard sync failed:`, err);
+    logger.error('scheduler.run.intercard_failed', { ...errorContext(err), label });
   }
 
   try {
     const result = await syncService.syncGiftCardRedemptions(startOfTodayET);
     if (result.created > 0) {
-      console.log(`${label} Gift card redemptions: +${result.created} new`);
+      logger.info('scheduler.run.giftCardRedemptions', { label, created: result.created });
     }
     if (result.redeemedGiftCardIds && result.redeemedGiftCardIds.length > 0) {
       try {
         const uniqueIds = Array.from(new Set(result.redeemedGiftCardIds));
         const refreshResult = await giftCardService.refreshGiftCardBalancesByIds(uniqueIds);
-        console.log(`${label} Refreshed ${refreshResult.updated} redeemed gift card balance(s)`);
+      logger.info('scheduler.run.giftCardRedemption_refreshed', { label, updated: refreshResult.updated });
       } catch (refreshErr) {
-        console.error(`${label} Gift card balance refresh failed (non-fatal):`, refreshErr);
+        logger.error('scheduler.run.giftCardRedemption_refresh_failed', { ...errorContext(refreshErr), label });
       }
     }
   } catch (err) {
-    console.error(`${label} Gift card redemptions sync failed:`, err);
+    logger.error('scheduler.run.giftCardRedemptions_failed', { ...errorContext(err), label });
   }
 
   try {
     const result = await syncService.syncRedeemActivityBalances();
     if (result.redeemEvents > 0) {
-      console.log(`${label} Redeem monitor: ${result.redeemEvents} events, ${result.cardsRefreshed} balances refreshed`);
+      logger.info('scheduler.run.redeemMonitor', { label, redeemEvents: result.redeemEvents, cardsRefreshed: result.cardsRefreshed });
     }
   } catch (err) {
-    console.error(`${label} Redeem activity balance sync failed:`, err);
+    logger.error('scheduler.run.redeemMonitor_failed', { ...errorContext(err), label });
   }
 
   broadcast('data-updated', { syncType: 'frequent' });
@@ -406,110 +407,110 @@ function getStartOfBusinessDayEastern(): Date {
  */
 export async function runNightlySync(): Promise<void> {
   const label = `[Nightly ${new Date().toISOString()}]`;
-  console.log(`${label} Starting nightly deep sync...`);
+  logger.info('scheduler.nightly.start', { label });
 
   const threeDaysAgo = new Date();
   threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
   try {
-    console.log(`${label} Step 0: Gift card balance refresh (all cards from Square)`);
+    logger.info('scheduler.nightly.step0_start', { label });
     const br = await giftCardService.refreshAllGiftCardBalances();
-    console.log(`${label} Balance refresh: updated=${br.updated} total=${br.total}`);
+    logger.info('scheduler.nightly.step0_done', { label, updated: br.updated, total: br.total });
   } catch (err) {
-    console.error(`${label} Gift card balance refresh failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.step0_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Step 1/4: Gift card full reconciliation (Activities API)`);
+    logger.info('scheduler.nightly.step1_start', { label });
     const r = await syncService.syncGiftCardsHistoricalBackfill();
-    console.log(`${label} Gift cards: processed=${r.processed} created=${r.created} updated=${r.updated} failed=${r.failed} pages=${r.pagesProcessed} finished=${r.finished}`);
+    logger.info('scheduler.nightly.step1_done', { label, processed: r.processed, created: r.created, updated: r.updated, failed: r.failed, pagesProcessed: r.pagesProcessed, finished: r.finished });
   } catch (err) {
-    console.error(`${label} Gift card sync failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.step1_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Step 2/4: Payments sync (last 3 days)`);
+    logger.info('scheduler.nightly.step2_start', { label });
     const r = await syncService.syncPayments(threeDaysAgo);
-    console.log(`${label} Payments: processed=${r.processed} created=${r.created} updated=${r.updated} failed=${r.failed}`);
+    logger.info('scheduler.nightly.step2_done', { label, processed: r.processed, created: r.created, updated: r.updated, failed: r.failed });
   } catch (err) {
-    console.error(`${label} Payments sync failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.step2_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Step 3/4: Orders sync (last 3 days)`);
+    logger.info('scheduler.nightly.step3_start', { label });
     const r = await syncService.syncOrders(threeDaysAgo);
-    console.log(`${label} Orders: processed=${r.processed} created=${r.created} updated=${r.updated} failed=${r.failed}`);
+    logger.info('scheduler.nightly.step3_done', { label, processed: r.processed, created: r.created, updated: r.updated, failed: r.failed });
   } catch (err) {
-    console.error(`${label} Orders sync failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.step3_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Step 4/8: Refunds sync (last 3 days)`);
+    logger.info('scheduler.nightly.step4_start', { label });
     const rr = await syncService.syncRefunds(threeDaysAgo);
-    console.log(`${label} Refunds: processed=${rr.processed} created=${rr.created} updated=${rr.updated} failed=${rr.failed}`);
+    logger.info('scheduler.nightly.step4_done', { label, processed: rr.processed, created: rr.created, updated: rr.updated, failed: rr.failed });
   } catch (err) {
-    console.error(`${label} Refunds sync failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.step4_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Step 5/8: Activation amount backfill`);
+    logger.info('scheduler.nightly.step5_start', { label });
     const r = await backfillGiftCardActivationAmounts();
-    console.log(`${label} Backfill: filled=${r.updatedViaActivitiesApi} corrected=${r.correctedViaActivitiesApi} unresolved=${r.stillUnresolved}`);
+    logger.info('scheduler.nightly.step5_done', { label, filled: r.updatedViaActivitiesApi, corrected: r.correctedViaActivitiesApi, unresolved: r.stillUnresolved });
   } catch (err) {
-    console.error(`${label} Activation backfill failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.step5_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Step 5/6: Phase 0 — ACTIVATE history scan for order IDs`);
+    logger.info('scheduler.nightly.phase0_start', { label });
     const r = await giftCardService.backfillActivationOrderIdsFromActivateHistory();
-    console.log(`${label} Phase 0: ${r.scanned} events scanned, ${r.linked} order IDs linked`);
+    logger.info('scheduler.nightly.phase0_done', { label, scanned: r.scanned, linked: r.linked });
   } catch (err) {
-    console.error(`${label} Phase 0 (ACTIVATE history scan) failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.phase0_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Step 5b/6: Phase 1 — Sync missing activation orders from Square`);
+    logger.info('scheduler.nightly.phase1_start', { label });
     const r = await giftCardService.syncMissingActivationOrders();
-    console.log(`${label} Phase 1: ${r.inserted} missing order(s) inserted`);
+    logger.info('scheduler.nightly.phase1_done', { label, inserted: r.inserted });
   } catch (err) {
-    console.error(`${label} Phase 1 (missing-order sync) failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.phase1_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Phase 1.5 — Repair mislinked activation orders`);
+    logger.info('scheduler.nightly.phase1_5_start', { label });
     const repair = await giftCardService.repairMislinkedActivationOrders();
     if (repair.cleared > 0 || repair.relinked > 0) {
-      console.log(`${label} Phase 1.5: ${repair.relinked} relinked, ${repair.cleared} cleared`);
+      logger.info('scheduler.nightly.phase1_5_done', { label, relinked: repair.relinked, cleared: repair.cleared });
     }
   } catch (err) {
-    console.error(`${label} Phase 1.5 (mislink repair) failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.phase1_5_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Step 6/6: Phase 2 — Heuristic backfill (fallback)`);
+    logger.info('scheduler.nightly.phase2_start', { label });
     const r = await giftCardService.backfillActivationSquareOrderIds();
-    console.log(`${label} Phase 2: ${r.updated} gift card(s) linked via heuristic`);
+    logger.info('scheduler.nightly.phase2_done', { label, updated: r.updated });
   } catch (err) {
-    console.error(`${label} Phase 2 (heuristic backfill) failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.phase2_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Payout fee sync`);
+    logger.info('scheduler.nightly.payoutFee_start', { label });
     const r = await payoutService.syncPayoutFeesIncremental();
-    console.log(`${label} Payout fees: ${r.payoutsProcessed} payouts, ${r.entriesCreated} entries`);
+    logger.info('scheduler.nightly.payoutFee_done', { label, payoutsProcessed: r.payoutsProcessed, entriesCreated: r.entriesCreated });
   } catch (err) {
-    console.error(`${label} Payout fee sync failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.payoutFee_failed', { ...errorContext(err), label });
   }
 
   try {
-    console.log(`${label} Intercard revenue sync`);
+    logger.info('scheduler.nightly.intercard_start', { label });
     await intercardService.syncToday();
-    console.log(`${label} Intercard revenue synced`);
+    logger.info('scheduler.nightly.intercard_done', { label });
   } catch (err) {
-    console.error(`${label} Intercard sync failed (non-fatal):`, err);
+    logger.error('scheduler.nightly.intercard_failed', { ...errorContext(err), label });
   }
 
-  console.log(`${label} Nightly deep sync complete.`);
+  logger.info('scheduler.nightly.complete', { label });
 
   broadcast('data-updated', { syncType: 'nightly' });
 }

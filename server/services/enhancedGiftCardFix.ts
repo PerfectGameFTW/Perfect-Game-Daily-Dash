@@ -16,6 +16,7 @@ import { giftCards, orders, transactions } from '@shared/schema';
 import { and, count, eq, isNull } from 'drizzle-orm';
 import { fetchOrders, fetchGiftCards, fetchGiftCardActivitiesMap } from '../squareClient';
 import { pgStorage } from '../pgStorage';
+import { logger, errorContext } from '../logger';
 
 // Import the GiftCard type directly from schema
 import type { GiftCard as GiftCardType, Order } from '@shared/schema';
@@ -87,23 +88,23 @@ interface GiftCardFixResult {
  * @returns Detailed results of the fix operation
  */
 export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResult> {
-  console.log('Starting comprehensive gift card activation amount fix...');
+  logger.info('giftCardFix.comprehensive.start');
   
   // 1. Get all gift cards from database
   const allGiftCards = await db.select().from(giftCards);
-  console.log(`Found ${allGiftCards.length} gift cards in database`);
+  logger.info('giftCardFix.comprehensive.cards_loaded', { count: allGiftCards.length });
   
   // 2. Fetch fresh order and gift card data from Square API
   // Use a much longer date range (2 years) to ensure we capture all historical gift card activations
   const twoYearsAgo = new Date();
   twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
   
-  console.log(`Fetching orders with extended date range: ${twoYearsAgo.toISOString()} to ${new Date().toISOString()}`);
+  logger.info('giftCardFix.comprehensive.fetch_orders', { startDate: twoYearsAgo.toISOString(), endDate: new Date().toISOString() });
   const squareOrders = await fetchOrders(twoYearsAgo);
-  console.log(`Fetched ${squareOrders.length} orders from Square API`);
+  logger.info('giftCardFix.comprehensive.orders_fetched', { count: squareOrders.length });
   
   const { cards: squareGiftCards } = await fetchGiftCards();
-  console.log(`Fetched ${squareGiftCards.length} gift cards from Square API`);
+  logger.info('giftCardFix.comprehensive.cards_fetched', { count: squareGiftCards.length });
   
   // 3. Process each gift card
   const result: GiftCardFixResult = {
@@ -131,7 +132,7 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
       
       // Specifically target the suspicious pattern cards - default $50 activation amounts with $0 balance
       if (giftCard.activationAmount === 50 && giftCard.amount === 0) {
-        console.log(`Found suspicious gift card ${giftCard.id} with $50 activation_amount and $0 balance - will attempt to fix`);
+        logger.info('giftCardFix.suspicious_card', { giftCardId: giftCard.id });
       }
       
       // 3a. Try to match by Square Order ID if available
@@ -279,12 +280,12 @@ export async function fixAllGiftCardActivationAmounts(): Promise<GiftCardFixResu
       result.withoutActivation++;
       
     } catch (error) {
-      console.error(`Error processing gift card ${giftCard.id}:`, error);
+      logger.error('giftCardFix.process_error', { ...errorContext(error), giftCardId: giftCard.id });
       result.withoutActivation++;
     }
   }
   
-  console.log(`Gift card fix completed: ${result.updated} updated, ${result.alreadyCorrect} already correct, ${result.withoutActivation} without activation`);
+  logger.info('giftCardFix.comprehensive.done', { updated: result.updated, alreadyCorrect: result.alreadyCorrect, withoutActivation: result.withoutActivation });
   
   return result;
 }
@@ -306,7 +307,7 @@ export async function backfillGiftCardActivationAmounts(): Promise<{
   updatedViaOrderMatch: number;
   stillUnresolved: number;
 }> {
-  console.log('Starting backfill of gift card activation amounts via Activities API...');
+  logger.info('giftCardFix.activitiesBackfill.start');
 
   // 1. Fetch ALL cards from DB — both null/zero (missing) and positive (possibly wrong)
   //    Cards with trusted order links (activation_order_id IS NOT NULL) are skipped
@@ -327,11 +328,11 @@ export async function backfillGiftCardActivationAmounts(): Promise<{
   const cardsNeedingRepair = allCards.filter(c => c.activation_amount === null || c.activation_amount === 0);
   const cardsWithPositiveAmount = allCards.filter(c => c.activation_amount !== null && (c.activation_amount as number) > 0);
 
-  console.log(`${cardsNeedingRepair.length} cards missing activation amount, ${cardsWithPositiveAmount.length} cards with existing positive amount to cross-check`);
+  logger.info('giftCardFix.activitiesBackfill.cohort', { needingRepair: cardsNeedingRepair.length, crossCheck: cardsWithPositiveAmount.length });
 
   // 2. Fetch activation map from the Activities API (authoritative source)
   const activationMap = await fetchGiftCardActivitiesMap();
-  console.log(`Activities API returned activation amounts for ${activationMap.size} cards`);
+  logger.info('giftCardFix.activitiesBackfill.api_returned', { count: activationMap.size });
 
   let updatedViaActivitiesApi = 0;
   let correctedViaActivitiesApi = 0;
@@ -360,7 +361,7 @@ export async function backfillGiftCardActivationAmounts(): Promise<{
       const storedAmount = card.activation_amount as number;
       // Use a small tolerance (< $0.01) to avoid floating-point noise
       if (Math.abs(apiAmount - storedAmount) > 0.01) {
-        console.log(`Correcting card ${card.id}: stored $${storedAmount} → API $${apiAmount}`);
+        logger.info('giftCardFix.activitiesBackfill.correct', { giftCardId: card.id });
         await db.execute(sql`
           UPDATE gift_cards
           SET activation_amount = ${apiAmount}, updated_at = CURRENT_TIMESTAMP
@@ -371,18 +372,18 @@ export async function backfillGiftCardActivationAmounts(): Promise<{
     }
   }
 
-  console.log(`Activities API backfill: ${updatedViaActivitiesApi} filled, ${correctedViaActivitiesApi} corrected, ${remainingCards.length} still need order matching`);
+  logger.info('giftCardFix.activitiesBackfill.summary', { filled: updatedViaActivitiesApi, corrected: correctedViaActivitiesApi, remaining: remainingCards.length });
 
   // 4. For cards still unresolved, try order-matching — but ONLY for the unresolved
   //    subset so we never touch cards already fixed by the Activities API.
   let updatedViaOrderMatch = 0;
   if (remainingCards.length > 0) {
-    console.log(`Falling back to order-matching for ${remainingCards.length} remaining cards...`);
+    logger.info('giftCardFix.orderMatch.fallback', { remaining: remainingCards.length });
     updatedViaOrderMatch = await fixActivationAmountsViaOrderMatch(remainingCards);
   }
 
   const stillUnresolved = remainingCards.length - updatedViaOrderMatch;
-  console.log(`Backfill complete: ${updatedViaActivitiesApi} filled + ${correctedViaActivitiesApi} corrected via Activities API, ${updatedViaOrderMatch} via order matching, ${stillUnresolved} unresolved`);
+  logger.info('giftCardFix.backfill.complete', { filled: updatedViaActivitiesApi, corrected: correctedViaActivitiesApi, viaOrderMatch: updatedViaOrderMatch, unresolved: stillUnresolved });
 
   return {
     totalCards: cardsNeedingRepair.length + cardsWithPositiveAmount.length,
@@ -407,7 +408,7 @@ async function fixActivationAmountsViaOrderMatch(
   const twoYearsAgo = new Date();
   twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
   const squareOrders = await fetchOrders(twoYearsAgo);
-  console.log(`Order-match fallback: fetched ${squareOrders.length} Square orders`);
+  logger.info('giftCardFix.orderMatch.orders_fetched', { count: squareOrders.length });
 
   // Also fetch full DB records for the remaining cards (need createdAt for temporal match)
   const cardIds = cards.map(c => c.id);
@@ -490,7 +491,7 @@ async function fixActivationAmountsViaOrderMatch(
         }
       }
     } catch (err) {
-      console.error(`Order-match fallback error for card ${giftCard.id}:`, err);
+      logger.error('giftCardFix.orderMatch.error', { ...errorContext(err), giftCardId: giftCard.id });
     }
   }
 
@@ -516,7 +517,7 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
   source: string;
   error?: string;
 }> {
-  console.log(`Fixing activation amount for new gift card ${giftCardId}`);
+  logger.info('giftCardFix.newCard.start', { giftCardId });
   
   try {
     // 1. Get the gift card from database
@@ -564,7 +565,7 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
     oneDayAgo.setDate(oneDayAgo.getDate() - 1);
     
     const squareOrders = await fetchOrders(oneDayAgo);
-    console.log(`Fetched ${squareOrders.length} recent orders from Square API`);
+    logger.info('giftCardFix.newCard.orders_fetched', { count: squareOrders.length });
     
     // 3. Find orders with matching GAN or close timestamp
     const ganRaw = giftCard.gan;
@@ -580,17 +581,17 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
         // Fallback to current time minus 1 hour if no timestamp available
         createdAt = new Date();
         createdAt.setHours(createdAt.getHours() - 1);
-        console.log(`No created_at timestamp found, using fallback: ${createdAt.toISOString()}`);
+        logger.info('giftCardFix.newCard.no_created_at', { fallback: createdAt.toISOString() });
       }
     } catch (error) {
-      console.error(`Error parsing created_at timestamp: ${error}`);
+      logger.error('giftCardFix.newCard.parse_created_at_failed', errorContext(error));
       createdAt = new Date();
       createdAt.setHours(createdAt.getHours() - 1);
     }
     
     // 3a. Try GAN matching first
     if (gan) {
-      console.log(`Searching for orders with GAN ${gan}`);
+      logger.info('giftCardFix.newCard.search_by_gan');
       const orderWithGan = squareOrders.find(order => {
         // Check if this order contains a line item with this gift card's GAN
         return order.lineItems?.some((item: any) => {
@@ -601,7 +602,7 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
       });
       
       if (orderWithGan) {
-        console.log(`Found order with matching GAN: ${orderWithGan.id}`);
+        logger.info('giftCardFix.newCard.gan_match', { squareId: orderWithGan.id });
         const orderAmount = extractGiftCardAmountFromOrder(orderWithGan, gan);
         
         if (orderAmount > 0) {
@@ -629,7 +630,7 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
     }
     
     // 3b. Try temporal matching (order within 15 minutes of gift card creation)
-    console.log(`Searching for orders within 15 minutes of gift card creation time: ${createdAt.toISOString()}`);
+    logger.info('giftCardFix.newCard.time_window_search', { createdAt: createdAt.toISOString() });
     const giftCardTime = createdAt.getTime();
     const ordersWithinTimeWindow = squareOrders.filter(order => {
       const orderTime = new Date(order.createdAt).getTime();
@@ -647,7 +648,7 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
     });
     
     if (giftCardOrdersInTimeWindow.length > 0) {
-      console.log(`Found ${giftCardOrdersInTimeWindow.length} gift card orders within time window`);
+      logger.info('giftCardFix.newCard.time_window_results', { count: giftCardOrdersInTimeWindow.length });
       
       // Sort by closest time match
       giftCardOrdersInTimeWindow.sort((a, b) => {
@@ -658,7 +659,7 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
       
       // Get closest matching order
       const bestMatch = giftCardOrdersInTimeWindow[0];
-      console.log(`Best time match: Square order ${bestMatch.id} created at ${bestMatch.createdAt}`);
+      logger.info('giftCardFix.newCard.best_time_match', { squareId: bestMatch.id });
       
       // Extract correct activation amount from closest time-matching order
       const orderAmount = extractGiftCardAmountFromOrder(bestMatch, gan || undefined);
@@ -694,7 +695,7 @@ export async function fixNewGiftCardActivationAmount(giftCardId: number): Promis
       error: 'No matching order found'
     };
   } catch (error) {
-    console.error(`Error fixing new gift card ${giftCardId}:`, error);
+    logger.error('giftCardFix.newCard.error', { ...errorContext(error), giftCardId });
     return {
       id: giftCardId,
       updated: false,
@@ -721,7 +722,7 @@ export async function analyzeGiftCardLinkingStatus(): Promise<{
   orderLinkPercentage: number;
   activationAmountPercentage: number;
 }> {
-  console.log('Starting gift card linking status analysis...');
+  logger.info('giftCardFix.analysis.start');
   
   try {
     // Use a single SQL query to get all statistics at once
@@ -739,7 +740,7 @@ export async function analyzeGiftCardLinkingStatus(): Promise<{
     const withLink = Number(result.rows?.[0]?.with_link || 0);
     const avgAmount = Number(result.rows?.[0]?.avg_amount || 0);
     
-    console.log('Gift card statistics:', {
+    logger.info('giftCardFix.analysis.stats', {
       totalCards,
       withAmount,
       withLink,
@@ -758,11 +759,11 @@ export async function analyzeGiftCardLinkingStatus(): Promise<{
     };
     
     // Log comprehensive results
-    console.log('Gift card analysis complete:', report);
+    logger.info('giftCardFix.analysis.complete', report as Record<string, unknown>);
     
     return report;
   } catch (error) {
-    console.error('Error analyzing gift card linking status:', error);
+    logger.error('giftCardFix.analysis.error', errorContext(error));
     throw error;
   }
 }
@@ -825,27 +826,27 @@ async function getOrCreateOrderInDb(squareOrder: SquareOrder): Promise<{ id: num
       const existingOrder = await pgStorage.getOrderBySquareId(squareOrder.id);
       
       if (existingOrder) {
-        console.log(`Found existing order with ID ${existingOrder.id} for Square order ${squareOrder.id}`);
+        logger.info('giftCardFix.order.found_existing', { orderId: existingOrder.id, squareId: squareOrder.id });
         return { id: existingOrder.id };
       }
     } catch (findError) {
-      console.error(`Error finding order by Square ID ${squareOrder.id}:`, findError);
+      logger.error('giftCardFix.order.find_error', { ...errorContext(findError), squareId: squareOrder.id });
       // Continue to try creation
     }
     
     // If not found, try to create it
     try {
-      console.log(`Attempting to create order for Square ID ${squareOrder.id}`);
+      logger.info('giftCardFix.order.create_start', { squareId: squareOrder.id });
       const { convertSquareOrderToOrder } = await import('../squareClient');
       const orderData = convertSquareOrderToOrder(squareOrder);
       const newOrder = await pgStorage.createOrder(orderData);
-      console.log(`Created new order with ID ${newOrder.id}`);
+      logger.info('giftCardFix.order.created', { orderId: newOrder.id });
       return { id: newOrder.id };
     } catch (createError) {
-      console.error(`Error creating order for Square ID ${squareOrder.id}:`, createError);
+      logger.error('giftCardFix.order.create_error', { ...errorContext(createError), squareId: squareOrder.id });
       
       // If creation fails, use a safe fallback approach
-      console.log(`Using fallback approach to find order by Square ID ${squareOrder.id}`);
+      logger.info('giftCardFix.order.fallback_lookup', { squareId: squareOrder.id });
       
       try {
         // Use direct SQL query as a last resort
@@ -859,19 +860,19 @@ async function getOrCreateOrderInDb(squareOrder: SquareOrder): Promise<{ id: num
         const rows = result.rows;
         if (rows && rows.length > 0 && rows[0].id) {
           const orderId = Number(rows[0].id);
-          console.log(`Found order through fallback query: ${orderId}`);
+          logger.info('giftCardFix.order.fallback_match', { orderId });
           return { id: orderId };
         }
       } catch (fallbackError) {
-        console.error(`Fallback query failed:`, fallbackError);
+        logger.error('giftCardFix.order.fallback_failed', errorContext(fallbackError));
       }
       
       // As a last resort, create a temporary placeholder order
-      console.warn(`Could not find or create order for Square ID ${squareOrder.id}`);
+      logger.warn('giftCardFix.order.not_found', { squareId: squareOrder.id });
       throw new Error(`Cannot find or create order for Square ID ${squareOrder.id}`);
     }
   } catch (error) {
-    console.error(`Error in getOrCreateOrderInDb:`, error);
+    logger.error('giftCardFix.order.getOrCreate_error', errorContext(error));
     throw error;
   }
 }
@@ -895,9 +896,9 @@ async function updateGiftCardActivation(
       WHERE id = ${giftCardId}
     `);
     
-    console.log(`Successfully updated gift card ${giftCardId} with activation amount ${activationAmount} linked to order ${orderId}`);
+    logger.info('giftCardFix.update.linked', { giftCardId, orderId });
   } catch (error) {
-    console.error(`Error updating gift card ${giftCardId}:`, error);
+    logger.error('giftCardFix.update.error', { ...errorContext(error), giftCardId });
     throw error;
   }
 }

@@ -5,6 +5,7 @@ import { payoutFeeEntries } from '../../shared/schema';
 import { syncService } from './syncService';
 import { getEasternDateRange } from '../dateUtils';
 import type { DateRange, InsertPayoutFeeEntry } from '../../shared/schema';
+import { logger, errorContext } from '../logger';
 
 const squareClient = new SquareClient({
   token: process.env.SQUARE_ACCESS_TOKEN || '',
@@ -93,7 +94,7 @@ export class PayoutService {
               entriesCreated += inserted;
               entriesSkipped += batch.length - inserted;
             } catch (err) {
-              console.error(`[PayoutSync] Insert error for payout ${payout.id}:`, err instanceof Error ? err.message : err);
+              logger.error('payoutSync.insert_error', { ...errorContext(err), squareId: payout.id });
               entriesSkipped += batch.length;
             }
           }
@@ -121,7 +122,7 @@ export class PayoutService {
       sinceDate = new Date('2025-01-01T00:00:00Z');
     }
 
-    console.log(`[PayoutSync] Syncing payout fees since ${sinceDate.toISOString()}`);
+    logger.info('payoutSync.start', { sinceDate: sinceDate.toISOString() });
     const result = await this.syncPayoutFees(sinceDate);
 
     if (state) {

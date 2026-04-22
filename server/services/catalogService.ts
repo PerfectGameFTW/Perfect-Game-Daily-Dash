@@ -8,6 +8,7 @@ import {
   type InsertSquareCatalogItem,
   type SquareCatalogItem,
 } from '../../shared/schema';
+import { logger, errorContext } from '../logger';
 
 const squareClient = new SquareClient({
   token: process.env.SQUARE_ACCESS_TOKEN || '',
@@ -39,7 +40,7 @@ export function lookupCategorySync(catalogObjectId: string | null | undefined): 
 export async function preloadCatalogCache(): Promise<void> {
   cacheLoadedAt = 0;
   await ensureCacheLoaded();
-  console.log(`[CatalogService] Preloaded ${catalogItemCache.size} catalog items into memory`);
+  logger.info('catalog.cache.preloaded', { count: catalogItemCache.size });
 }
 
 export async function lookupCategoryByCatalogObjectId(
@@ -73,7 +74,7 @@ export async function syncCatalog(): Promise<{
   let itemCount = 0;
 
   try {
-    console.log('[CatalogSync] Starting catalog sync from Square...');
+    logger.info('catalog.sync.start');
 
     const categoryMap = new Map<string, string>();
 
@@ -110,10 +111,10 @@ export async function syncCatalog(): Promise<{
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       errors.push(`Error fetching categories: ${msg}`);
-      console.error('[CatalogSync] Error fetching categories:', msg);
+      logger.error('catalog.sync.categories_failed', errorContext(e));
     }
 
-    console.log(`[CatalogSync] Synced ${categoryCount} categories`);
+    logger.info('catalog.sync.categories_done', { count: categoryCount });
 
     try {
       let itemPage = await squareClient.catalog.list({ types: 'ITEM' });
@@ -220,10 +221,10 @@ export async function syncCatalog(): Promise<{
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       errors.push(`Error fetching items: ${msg}`);
-      console.error('[CatalogSync] Error fetching items:', msg);
+      logger.error('catalog.sync.items_failed', errorContext(e));
     }
 
-    console.log(`[CatalogSync] Synced ${itemCount} catalog items (including variations)`);
+    logger.info('catalog.sync.items_done', { count: itemCount });
 
     catalogItemCache.clear();
     cacheLoadedAt = 0;
@@ -232,7 +233,7 @@ export async function syncCatalog(): Promise<{
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     errors.push(`Catalog sync failed: ${msg}`);
-    console.error('[CatalogSync] Fatal error:', msg);
+    logger.error('catalog.sync.fatal', errorContext(e));
     return { categories: categoryCount, items: itemCount, errors };
   }
 }
@@ -247,7 +248,7 @@ export async function backfillCategories(): Promise<{
   let updatedTransactions = 0;
 
   try {
-    console.log('[CatalogBackfill] Starting category backfill...');
+    logger.info('catalog.backfill.start');
 
     await ensureCacheLoaded();
 
@@ -276,7 +277,7 @@ export async function backfillCategories(): Promise<{
       }
     }
 
-    console.log(`[CatalogBackfill] Updated ${updatedLineItems} line items`);
+    logger.info('catalog.backfill.lineItems_done', { count: updatedLineItems });
 
     const txResult = await db.execute<{
       id: number;
@@ -322,13 +323,13 @@ export async function backfillCategories(): Promise<{
       }
     }
 
-    console.log(`[CatalogBackfill] Updated ${updatedTransactions} transactions`);
+    logger.info('catalog.backfill.transactions_done', { count: updatedTransactions });
 
     return { updatedLineItems, updatedTransactions, errors };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     errors.push(`Backfill failed: ${msg}`);
-    console.error('[CatalogBackfill] Error:', msg);
+    logger.error('catalog.backfill.fatal', errorContext(e));
     return { updatedLineItems, updatedTransactions, errors };
   }
 }

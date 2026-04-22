@@ -14,6 +14,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services/authService';
 import type { User } from '../../shared/schema';
+import { logger, errorContext } from '../logger';
 
 // Augment express-session so `req.session.userId` (and the other auth
 // fields written by the login handler) are properly typed wherever a
@@ -77,7 +78,7 @@ export async function requireAuth(
     req.user = user;
     next();
   } catch (err) {
-    console.error('Error loading authenticated user:', err);
+    logger.error('auth.requireAuth.user_load_failed', errorContext(err));
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

@@ -3,6 +3,7 @@ import type { IncomingMessage, Server } from 'http';
 import type { Duplex } from 'stream';
 import { isAllowedOrigin } from './security/origin';
 import { sessionMiddleware, legacyCookieCompatMiddleware } from './session';
+import { logger, errorContext } from './logger';
 
 // Per-source concurrent connection cap.
 //
@@ -150,7 +151,7 @@ export function initWebSocket(server: Server): void {
         });
       })
       .catch((err) => {
-        console.error('[WS] Session lookup failed during upgrade:', err);
+        logger.error('ws.upgrade.session_lookup_failed', errorContext(err));
         rejectUpgrade(socket, '500 Internal Server Error');
       });
   });
@@ -178,7 +179,7 @@ export function initWebSocket(server: Server): void {
     });
 
     ws.on('error', (err) => {
-      console.error('[WS] Client error:', err.message);
+      logger.error('ws.client.error', errorContext(err));
     });
   });
 

@@ -31,6 +31,8 @@ import {
   type DateRange,
 } from "../shared/schema";
 import { getEasternDateRange, getEasternBusinessDateStrings } from "./dateUtils";
+import { logger, errorContext } from "./logger";
+import { createHash } from "crypto";
 
 const dateRangeValues = [
   "today",
@@ -135,25 +137,25 @@ function auditReadQuery(entry: {
   error: string | null;
   durationMs: number;
 }) {
-  // Structured server-side audit log. No PII beyond the admin's user_id
-  // and the request IP that opened the MCP session.
-  // eslint-disable-next-line no-console
-  console.log(
-    JSON.stringify({
-      ts: new Date().toISOString(),
-      event: "mcp.run_read_query",
-      adminUserId: entry.adminUserId,
-      ip: entry.ip,
-      durationMs: entry.durationMs,
-      rowCount: entry.rowCount,
-      error: entry.error,
-      query: entry.query,
-    })
-  );
+  // Structured server-side audit log. The full SQL text lives in the
+  // mcp_query_audit table; the structured log keeps only a short
+  // SHA-256 prefix and length so an attacker who only has log access
+  // cannot reconstruct query patterns / probed identifiers, but ops can
+  // still correlate a log line with a row in the audit table.
+  const queryHash = createHash("sha256").update(entry.query).digest("hex").slice(0, 16);
+  logger.info("mcp.run_read_query", {
+    adminUserId: entry.adminUserId,
+    ip: entry.ip,
+    durationMs: entry.durationMs,
+    rowCount: entry.rowCount,
+    queryHash,
+    queryLen: entry.query.length,
+    hasError: entry.error !== null,
+  });
 
   // Persist to the mcp_query_audit table so admins can review history
   // without shell access. Fire-and-forget: a DB hiccup must not break
-  // the MCP request. The console.log above is the durable fallback.
+  // the MCP request. The structured log above is the durable fallback.
   pgStorage
     .recordMcpQueryAudit({
       adminUserId: entry.adminUserId,
@@ -164,11 +166,7 @@ function auditReadQuery(entry: {
       durationMs: entry.durationMs,
     })
     .catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error(
-        "[mcp] failed to persist run_read_query audit row:",
-        err instanceof Error ? err.message : err
-      );
+      logger.error("mcp.audit_persist_failed", errorContext(err));
     });
 }
 
@@ -979,7 +977,7 @@ export function registerMcpRoutes(app: Express) {
       }
       await transport.handleRequest(req, res, req.body);
     } catch (err) {
-      console.error("MCP POST error:", err);
+      logger.error("mcp.post.error", errorContext(err));
       if (!res.headersSent) sendError(res, err);
     }
   });
@@ -994,7 +992,7 @@ export function registerMcpRoutes(app: Express) {
       touchSession(sessionId);
       await transports.get(sessionId)!.handleRequest(req, res);
     } catch (err) {
-      console.error("MCP GET error:", err);
+      logger.error("mcp.get.error", errorContext(err));
       if (!res.headersSent) sendError(res, err);
     }
   });
@@ -1010,7 +1008,7 @@ export function registerMcpRoutes(app: Express) {
       await transport.handleRequest(req, res);
       cleanupSession(sessionId);
     } catch (err) {
-      console.error("MCP DELETE error:", err);
+      logger.error("mcp.delete.error", errorContext(err));
       if (!res.headersSent) sendError(res, err);
     }
   });
@@ -1019,5 +1017,5 @@ export function registerMcpRoutes(app: Express) {
     res.json({ status: "ok", server: "perfect-game-mcp", sessions: transports.size });
   });
 
-  console.log("MCP routes registered at /mcp");
+  logger.info("mcp.routes.registered");
 }
