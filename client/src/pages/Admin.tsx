@@ -471,6 +471,13 @@ function TwoFactorAuthCard() {
   const [verifyCode, setVerifyCode] = useState('');
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [disablePassword, setDisablePassword] = useState('');
+  // Recovery-code regeneration (Task #101). The form is collapsed by
+  // default — users explicitly click "Regenerate recovery codes" to
+  // open it, which keeps the more dangerous password+TOTP prompt out
+  // of the way during normal admin work.
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [regenPassword, setRegenPassword] = useState('');
+  const [regenCode, setRegenCode] = useState('');
 
   // Render the QR whenever a fresh otpauth URL arrives. We do this in
   // an effect (rather than inline) so the (sync) qrcode call doesn't
@@ -541,6 +548,28 @@ function TwoFactorAuthCard() {
     onError: (err: unknown) => {
       const message = err instanceof Error ? err.message : 'Could not disable 2FA.';
       toast({ title: 'Disable failed', description: message, variant: 'destructive' });
+    },
+  });
+
+  const regenMutation = useMutation({
+    mutationFn: (vars: { password: string; code: string }) =>
+      apiRequest('POST', '/api/auth/totp/recovery-codes/regenerate', {
+        body: JSON.stringify(vars),
+      }) as Promise<{ success: boolean; recoveryCodes: string[] }>,
+    onSuccess: (data) => {
+      setRecoveryCodes(data.recoveryCodes);
+      setRegenOpen(false);
+      setRegenPassword('');
+      setRegenCode('');
+      queryClient.invalidateQueries({ queryKey: TOTP_STATUS_KEY });
+      toast({
+        title: 'New recovery codes generated',
+        description: 'Save them now — your previous codes no longer work.',
+      });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Could not regenerate recovery codes.';
+      toast({ title: 'Regenerate failed', description: message, variant: 'destructive' });
     },
   });
 
@@ -704,7 +733,75 @@ function TwoFactorAuthCard() {
                     {enrollMutation.isPending ? <Spinner className="h-4 w-4" /> : null}
                     Re-enroll device
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setRegenOpen((v) => !v);
+                      setRegenPassword('');
+                      setRegenCode('');
+                    }}
+                    className="gap-2"
+                  >
+                    {regenOpen ? 'Cancel regenerate' : 'Regenerate recovery codes'}
+                  </Button>
                 </div>
+
+                {regenOpen && (
+                  <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-sm">
+                      Generate a fresh batch of one-time recovery codes.
+                      Your previous codes will stop working immediately,
+                      and the new codes are <strong>shown only once</strong>
+                      {' '}— save them somewhere safe.
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="regen-pw" className="text-xs">
+                          Confirm your password
+                        </Label>
+                        <Input
+                          id="regen-pw"
+                          type="password"
+                          autoComplete="current-password"
+                          value={regenPassword}
+                          onChange={(e) => setRegenPassword(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="regen-code" className="text-xs">
+                          Current 6-digit authenticator code
+                        </Label>
+                        <Input
+                          id="regen-code"
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          value={regenCode}
+                          onChange={(e) => setRegenCode(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() =>
+                        regenMutation.mutate({
+                          password: regenPassword,
+                          code: regenCode,
+                        })
+                      }
+                      disabled={
+                        regenMutation.isPending ||
+                        !regenPassword ||
+                        regenCode.length < 6
+                      }
+                      className="gap-2"
+                    >
+                      {regenMutation.isPending ? <Spinner className="h-4 w-4" /> : null}
+                      Generate new codes
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : (
               <Button

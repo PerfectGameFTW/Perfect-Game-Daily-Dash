@@ -404,6 +404,47 @@ export function createAuthRouter(): Router {
     password: z.string().min(1).max(128),
   });
 
+  // Regenerate the recovery code batch for a user who's already
+  // enrolled (Task #101). Two gates: their current password (so a
+  // momentarily-unattended browser can't silently rotate the codes)
+  // AND a current authenticator code (so a stolen session without the
+  // physical second factor can't either). On success we return the new
+  // codes once — they are NOT recoverable later.
+  const regenerateRecoveryCodesSchema = z.object({
+    password: z.string().min(1).max(128),
+    code: z.string().min(1).max(20),
+  });
+
+  router.post(
+    '/totp/recovery-codes/regenerate',
+    requireAuth,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const parsed = regenerateRecoveryCodesSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+        const verified = await authService.loginUser(
+          req.user!.username,
+          parsed.data!.password,
+        );
+        if (!verified || verified.id !== req.user!.id) {
+          throw new UnauthorizedError('Password did not match');
+        }
+        const codes = await totpService.regenerateRecoveryCodes(
+          req.user!.id,
+          parsed.data!.code,
+        );
+        if (!codes) {
+          throw new ValidationError(
+            'That authenticator code did not match. Make sure your device clock is correct and try the next code.',
+          );
+        }
+        res.json({ success: true, recoveryCodes: codes });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
   router.post(
     '/totp/disable',
     requireAuth,

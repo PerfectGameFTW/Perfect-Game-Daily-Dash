@@ -158,6 +158,12 @@ export class TotpService {
    * password step. Used at login. A valid recovery code is consumed
    * (its hash removed from the array) so it cannot be reused.
    *
+   * The recovery-code path uses a SELECT ... FOR UPDATE row lock so a
+   * concurrent regeneration cannot be clobbered by a stale "remove this
+   * hash from the array" write computed against a pre-regenerate
+   * snapshot. Without the lock the read-modify-write here could
+   * resurrect a freshly-rotated batch (Task #101).
+   *
    * Returns true on success, false otherwise.
    */
   async verifyLoginCode(userId: number, code: string): Promise<boolean> {
@@ -169,7 +175,9 @@ export class TotpService {
 
     const cleaned = normalizeCode(code);
 
-    // Try TOTP first — the common path.
+    // Try TOTP first — the common path. This branch only stamps
+    // totpLastUsedAt and doesn't touch the recovery code array, so a
+    // simple update is safe.
     if (/^\d{6}$/.test(cleaned)) {
       const secret = Secret.fromBase32(decryptTotpSecret(row.totpSecretEncrypted));
       const totp = buildTotp(secret, row.username);
@@ -184,26 +192,112 @@ export class TotpService {
       }
     }
 
-    // Otherwise try recovery codes. Compare against every remaining
-    // hash; on a match, atomically remove that hash from the array.
-    const stored = row.totpRecoveryCodes ?? [];
-    if (stored.length === 0) return false;
-    for (const h of stored) {
-      // Strip the dash before comparing — we hash without the
-      // formatting separator so a user who omits the dash still works.
-      // eslint-disable-next-line no-await-in-loop
-      const ok = await verifyPassword(cleaned, h);
-      if (ok) {
-        const remaining = stored.filter((x) => x !== h);
-        await db
-          .update(users)
-          .set({ totpRecoveryCodes: remaining, totpLastUsedAt: new Date() })
-          .where(eq(users.id, userId));
-        invalidateUserCache(userId);
-        return true;
+    // Otherwise try recovery codes. Take a row lock and re-read the
+    // current batch inside the transaction so we never write a
+    // "remaining" computed from a snapshot that has since been
+    // rotated by regenerateRecoveryCodes.
+    return await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({ codes: users.totpRecoveryCodes })
+        .from(users)
+        .where(eq(users.id, userId))
+        .for('update');
+      const stored = locked?.codes ?? [];
+      if (stored.length === 0) return false;
+      for (const h of stored) {
+        // Strip the dash before comparing — we hash without the
+        // formatting separator so a user who omits the dash still works.
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await verifyPassword(cleaned, h);
+        if (ok) {
+          const remaining = stored.filter((x) => x !== h);
+          await tx
+            .update(users)
+            .set({ totpRecoveryCodes: remaining, totpLastUsedAt: new Date() })
+            .where(eq(users.id, userId));
+          invalidateUserCache(userId);
+          return true;
+        }
       }
-    }
-    return false;
+      return false;
+    });
+  }
+
+  /**
+   * Regenerate the one-time recovery code batch for an already-enrolled
+   * user (Task #101). The current authenticator code must validate
+   * before we replace anything — that proves the caller still has the
+   * second factor in hand and prevents an attacker who only has a
+   * stolen session from silently rotating away the codes that the real
+   * owner might be using to recover their account.
+   *
+   * On success, the previous hashes are wiped (so any leaked sheet of
+   * old codes stops working immediately), a fresh batch is generated,
+   * and the plaintext is returned ONCE for the user to write down.
+   *
+   * Returns the new codes on success, or null if the TOTP code didn't
+   * match or the account isn't enrolled. Password re-check is the
+   * caller's responsibility (mirrors how /totp/disable splits the
+   * password gate from the TOTP code gate).
+   */
+  async regenerateRecoveryCodes(
+    userId: number,
+    totpCode: string,
+  ): Promise<string[] | null> {
+    // Validate the TOTP code outside the transaction (cheap, doesn't
+    // touch the row) so we don't hold a row lock across CPU-bound
+    // crypto. Only accept a live authenticator code here — explicitly
+    // NOT a recovery code, because using one of the soon-to-be-replaced
+    // recovery codes to unlock regeneration would let an attacker who
+    // grabbed the recovery sheet from a desk drawer rotate the codes
+    // and lock out the real owner without ever seeing the authenticator
+    // app.
+    const cleaned = normalizeCode(totpCode);
+    if (!/^\d{6}$/.test(cleaned)) return null;
+
+    const [row] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId));
+    if (!row || !row.totpEnabled || !row.totpSecretEncrypted) return null;
+    const secret = Secret.fromBase32(decryptTotpSecret(row.totpSecretEncrypted));
+    const totp = buildTotp(secret, row.username);
+    const delta = totp.validate({ token: cleaned, window: 1 });
+    if (delta === null) return null;
+
+    const plaintextCodes = Array.from({ length: RECOVERY_CODE_COUNT }, () =>
+      generateRecoveryCode(),
+    );
+    const hashedCodes = await Promise.all(
+      plaintextCodes.map((c) => hashPassword(c.replace('-', ''))),
+    );
+
+    // Lock the row before writing so an in-flight recovery-code login
+    // (which read the old batch and is about to write its "consumed
+    // one" filter) cannot land after this write and resurrect old
+    // hashes. Postgres serializes the FOR UPDATE wait with whichever
+    // transaction got the lock first, so the loser's read will see the
+    // new batch and the user-visible behaviour is "the old recovery
+    // code was rejected" — exactly what we want once regeneration
+    // commits (Task #101).
+    await db.transaction(async (tx) => {
+      await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.id, userId))
+        .for('update');
+      await tx
+        .update(users)
+        .set({
+          totpRecoveryCodes: hashedCodes,
+          // The TOTP code we just verified counts as a use, same as a
+          // login flow.
+          totpLastUsedAt: new Date(),
+        })
+        .where(eq(users.id, userId));
+    });
+    invalidateUserCache(userId);
+    return plaintextCodes;
   }
 
   /**
