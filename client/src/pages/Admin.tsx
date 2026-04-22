@@ -898,7 +898,10 @@ function AdminSecurityOverviewCard() {
               <tbody>
                 {(rows ?? []).map((row) => {
                   const isSelf = user?.id === row.id;
-                  const canDisable = !isSelf && row.totpEnabled;
+                  // Server already restricts the disable endpoint to
+                  // admin targets; mirror that in the UI so the button
+                  // never appears for a row the API would refuse.
+                  const canDisable = !isSelf && row.totpEnabled && row.role === 'admin';
                   return (
                     <tr key={row.id} className="border-t">
                       <td className="px-3 py-2 font-medium">{row.username}</td>

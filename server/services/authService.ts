@@ -478,6 +478,11 @@ export class AuthService {
       totpLastUsedAt: Date | null;
     }>
   > {
+    // Scope to admin accounts only — this view exists so admins can see
+    // which of their peers have a second factor and act on the gaps;
+    // non-admin accounts have their own self-service flow and the
+    // disable endpoint already refuses them, so listing them here would
+    // just be misleading clutter (Task #100).
     const rows = await db
       .select({
         id: users.id,
@@ -487,7 +492,8 @@ export class AuthService {
         codes: users.totpRecoveryCodes,
         totpLastUsedAt: users.totpLastUsedAt,
       })
-      .from(users);
+      .from(users)
+      .where(eq(users.role, 'admin'));
     return rows.map((r) => ({
       id: r.id,
       username: r.username,

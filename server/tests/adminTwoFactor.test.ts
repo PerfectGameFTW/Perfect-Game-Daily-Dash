@@ -135,7 +135,10 @@ describe('Admin Security overview + require-2FA toggle (Task #100)', () => {
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body)).toBe(true);
     const ids = r.body.map((row: any) => row.id);
-    expect(ids).toEqual(expect.arrayContaining([adminAId, adminBId, normalUserId]));
+    // Overview is scoped to admin accounts only — normal users are
+    // explicitly excluded.
+    expect(ids).toEqual(expect.arrayContaining([adminAId, adminBId]));
+    expect(ids).not.toContain(normalUserId);
     const a = r.body.find((row: any) => row.id === adminAId);
     expect(a).toMatchObject({
       username: ADMIN_A,
