@@ -190,6 +190,17 @@ const ALLOWED_FIELDS = new Set<string>([
   'cacheMisses',
   'cacheSize',
   'ttlMs',
+  // 2FA / TOTP audit (Task #102). `factor` distinguishes a successful
+  // login by authenticator code vs. consumed recovery code; `attemptCount`
+  // is the running per-pending-session failure counter so an operator
+  // grepping `auth.totp.login_failure` can see whether an account is
+  // being hammered. `actorRole` records who initiated an admin-side
+  // disable; `recoveryCodesRemaining` is the post-action count so the
+  // operator can spot a near-empty batch.
+  'factor',
+  'attemptCount',
+  'actorRole',
+  'recoveryCodesRemaining',
   // error context
   'code',
   'errorMessage',

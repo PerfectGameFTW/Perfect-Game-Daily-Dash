@@ -30,6 +30,7 @@ import { db } from '../db';
 import { users, type User } from '../../shared/schema';
 import { invalidateUserCache } from './authService';
 import { encryptTotpSecret, decryptTotpSecret } from './totpCrypto';
+import { logger } from '../logger';
 // Recovery codes use the same hashing primitive as user passwords so
 // the codebase has a single hash policy. The verifyPassword helper
 // auto-dispatches between argon2id and any legacy bcrypt-hashed code,
@@ -83,6 +84,40 @@ export interface TotpEnrollmentResult {
   otpauthUrl: string;
 }
 
+/**
+ * Optional caller-supplied request context for the audit trail
+ * (Task #102). Routes pass this so each emitted log line carries the
+ * request id and source IP that the rest of the request pipeline
+ * already records — that way an operator chasing a 2FA event can pivot
+ * directly from the security log to the rest of the request's lines.
+ */
+export interface TotpAuditContext {
+  requestId?: string;
+  ip?: string;
+  /**
+   * Per-pending-session failure counter for the login flow. Routes
+   * track and increment this on each /totp/verify failure so a single
+   * stolen pending cookie being used for guessing is visible from the
+   * log alone.
+   */
+  attemptCount?: number;
+  /**
+   * For admin-initiated disables: the role of the actor (so the log
+   * line is self-describing without joining against the users table).
+   */
+  actorRole?: string;
+}
+
+/**
+ * Outcome of a `verifyLoginCode` call. The route layer needs to know
+ * which factor was actually used so it can emit the right audit event
+ * (a recovery-code consumption is operationally more interesting than
+ * a normal TOTP login).
+ */
+export type TotpLoginResult =
+  | { ok: true; factor: 'totp' | 'recovery'; recoveryCodesRemaining: number }
+  | { ok: false };
+
 export class TotpService {
   /**
    * Begin enrollment: generates a fresh secret, stores its encrypted
@@ -92,7 +127,10 @@ export class TotpService {
    * pending secret — but does NOT disable an active 2FA factor.
    * Disabling requires a separate explicit call.
    */
-  async beginEnrollment(user: User): Promise<TotpEnrollmentResult> {
+  async beginEnrollment(
+    user: User,
+    ctx: TotpAuditContext = {},
+  ): Promise<TotpEnrollmentResult> {
     const secret = new Secret({ size: 20 }); // 160-bit, RFC 6238 recommendation
     const totp = buildTotp(secret, user.username);
     const encrypted = encryptTotpSecret(secret.base32);
@@ -109,6 +147,12 @@ export class TotpService {
       })
       .where(eq(users.id, user.id));
     invalidateUserCache(user.id);
+    logger.info('auth.totp.enrollment_started', {
+      event: 'enrollment_started',
+      userId: user.id,
+      requestId: ctx.requestId,
+      ip: ctx.ip,
+    });
     return {
       secret: secret.base32,
       otpauthUrl: totp.toString(),
@@ -124,7 +168,11 @@ export class TotpService {
    * Returns the recovery codes on success, or null on failure (caller
    * should respond with a generic "code did not match" message).
    */
-  async verifyAndEnable(userId: number, code: string): Promise<string[] | null> {
+  async verifyAndEnable(
+    userId: number,
+    code: string,
+    ctx: TotpAuditContext = {},
+  ): Promise<string[] | null> {
     const [row] = await db
       .select()
       .from(users)
@@ -133,7 +181,19 @@ export class TotpService {
     const secret = Secret.fromBase32(decryptTotpSecret(row.totpSecretEncrypted));
     const totp = buildTotp(secret, row.username);
     const delta = totp.validate({ token: normalizeCode(code), window: 1 });
-    if (delta === null) return null;
+    if (delta === null) {
+      // Distinct from a regular login failure so an operator can spot a
+      // failing-enrollment loop separately (someone whose authenticator
+      // app is out of sync, or someone trying to brute-force a pending
+      // secret that another user just generated).
+      logger.warn('auth.totp.enrollment_verify_failed', {
+        event: 'enrollment_verify_failed',
+        userId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+      });
+      return null;
+    }
 
     const plaintextCodes = Array.from({ length: RECOVERY_CODE_COUNT }, () =>
       generateRecoveryCode(),
@@ -150,6 +210,13 @@ export class TotpService {
       })
       .where(eq(users.id, userId));
     invalidateUserCache(userId);
+    logger.info('auth.totp.enrollment_verified', {
+      event: 'enrollment_verified',
+      userId,
+      requestId: ctx.requestId,
+      ip: ctx.ip,
+      recoveryCodesRemaining: plaintextCodes.length,
+    });
     return plaintextCodes;
   }
 
@@ -166,14 +233,29 @@ export class TotpService {
    *
    * Returns true on success, false otherwise.
    */
-  async verifyLoginCode(userId: number, code: string): Promise<boolean> {
+  async verifyLoginCode(
+    userId: number,
+    code: string,
+    ctx: TotpAuditContext = {},
+  ): Promise<TotpLoginResult> {
     const [row] = await db
       .select()
       .from(users)
       .where(eq(users.id, userId));
-    if (!row || !row.totpEnabled || !row.totpSecretEncrypted) return false;
+    if (!row || !row.totpEnabled || !row.totpSecretEncrypted) {
+      logger.warn('auth.totp.login_failure', {
+        event: 'totp_login_failure',
+        userId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+        attemptCount: ctx.attemptCount,
+        reason: 'not_enrolled',
+      });
+      return { ok: false };
+    }
 
     const cleaned = normalizeCode(code);
+    const remainingBefore = row.totpRecoveryCodes?.length ?? 0;
 
     // Try TOTP first — the common path. This branch only stamps
     // totpLastUsedAt and doesn't touch the recovery code array, so a
@@ -188,7 +270,15 @@ export class TotpService {
           .set({ totpLastUsedAt: new Date() })
           .where(eq(users.id, userId));
         invalidateUserCache(userId);
-        return true;
+        logger.info('auth.totp.login_success', {
+          event: 'totp_login_success',
+          factor: 'totp',
+          userId,
+          requestId: ctx.requestId,
+          ip: ctx.ip,
+          recoveryCodesRemaining: remainingBefore,
+        });
+        return { ok: true, factor: 'totp', recoveryCodesRemaining: remainingBefore };
       }
     }
 
@@ -196,14 +286,14 @@ export class TotpService {
     // current batch inside the transaction so we never write a
     // "remaining" computed from a snapshot that has since been
     // rotated by regenerateRecoveryCodes.
-    return await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const [locked] = await tx
         .select({ codes: users.totpRecoveryCodes })
         .from(users)
         .where(eq(users.id, userId))
         .for('update');
       const stored = locked?.codes ?? [];
-      if (stored.length === 0) return false;
+      if (stored.length === 0) return { matched: false, remaining: 0 };
       for (const h of stored) {
         // Strip the dash before comparing — we hash without the
         // formatting separator so a user who omits the dash still works.
@@ -216,11 +306,38 @@ export class TotpService {
             .set({ totpRecoveryCodes: remaining, totpLastUsedAt: new Date() })
             .where(eq(users.id, userId));
           invalidateUserCache(userId);
-          return true;
+          return { matched: true, remaining: remaining.length };
         }
       }
-      return false;
+      return { matched: false, remaining: stored.length };
     });
+
+    if (result.matched) {
+      // Recovery-code consumption is treated as a distinct, more
+      // operationally interesting event than a normal TOTP login —
+      // hitting this path means the user couldn't produce an
+      // authenticator code, so it's worth surfacing on its own log
+      // line. We also include the remaining-count so an operator can
+      // tell at a glance when an account is running low on codes.
+      logger.warn('auth.totp.recovery_code_used', {
+        event: 'recovery_code_used',
+        factor: 'recovery',
+        userId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+        recoveryCodesRemaining: result.remaining,
+      });
+      return { ok: true, factor: 'recovery', recoveryCodesRemaining: result.remaining };
+    }
+
+    logger.warn('auth.totp.login_failure', {
+      event: 'totp_login_failure',
+      userId,
+      requestId: ctx.requestId,
+      ip: ctx.ip,
+      attemptCount: ctx.attemptCount,
+    });
+    return { ok: false };
   }
 
   /**
@@ -243,6 +360,7 @@ export class TotpService {
   async regenerateRecoveryCodes(
     userId: number,
     totpCode: string,
+    ctx: TotpAuditContext = {},
   ): Promise<string[] | null> {
     // Validate the TOTP code outside the transaction (cheap, doesn't
     // touch the row) so we don't hold a row lock across CPU-bound
@@ -297,6 +415,13 @@ export class TotpService {
         .where(eq(users.id, userId));
     });
     invalidateUserCache(userId);
+    logger.info('auth.totp.recovery_codes_regenerated', {
+      event: 'recovery_codes_regenerated',
+      userId,
+      requestId: ctx.requestId,
+      ip: ctx.ip,
+      recoveryCodesRemaining: plaintextCodes.length,
+    });
     return plaintextCodes;
   }
 
@@ -306,7 +431,10 @@ export class TotpService {
    * responsible for any additional confirmation (e.g. requiring a
    * fresh password check) before invoking this.
    */
-  async disable(userId: number): Promise<void> {
+  async disable(
+    userId: number,
+    ctx: TotpAuditContext = {},
+  ): Promise<void> {
     await db
       .update(users)
       .set({
@@ -316,6 +444,18 @@ export class TotpService {
       })
       .where(eq(users.id, userId));
     invalidateUserCache(userId);
+    logger.warn('auth.totp.disabled', {
+      event: 'totp_disabled',
+      userId,
+      requestId: ctx.requestId,
+      ip: ctx.ip,
+      // actorRole = 'self' when the user disables their own factor,
+      // 'admin' for the admin-disable path. Distinguishing these in
+      // the log line lets an operator filter for "someone else flipped
+      // off my 2FA" without having to join against the security audit
+      // table.
+      actorRole: ctx.actorRole ?? 'self',
+    });
   }
 
   /**

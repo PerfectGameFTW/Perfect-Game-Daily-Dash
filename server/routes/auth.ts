@@ -290,13 +290,28 @@ export function createAuthRouter(): Router {
         throwOnInvalidInput(parsed);
         const candidateId = req.session.pendingTotpUserId;
 
-        const ok = await totpService.verifyLoginCode(
+        // Per-pending-session failure counter (Task #102). Surfaces in
+        // the audit line so an operator grepping login_failure can see
+        // when one stuck pending cookie is being hammered. Reset on
+        // success below; the pending state is also cleared on TTL
+        // expiry / re-login so the counter cannot persist past the
+        // pending window.
+        const priorAttempts = (req.session.totpFailedAttempts as number | undefined) ?? 0;
+        const ctx = {
+          requestId: (req as any).requestId as string | undefined,
+          ip: req.ip,
+          attemptCount: priorAttempts + 1,
+        };
+        const result = await totpService.verifyLoginCode(
           candidateId,
           parsed.data!.code,
+          ctx,
         );
-        if (!ok) {
+        if (!result.ok) {
+          req.session.totpFailedAttempts = priorAttempts + 1;
           throw new UnauthorizedError('Invalid verification code');
         }
+        req.session.totpFailedAttempts = undefined;
 
         const user = await authService.getUserById(candidateId);
         if (!user) {
@@ -365,7 +380,10 @@ export function createAuthRouter(): Router {
     requireAdmin,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const result = await totpService.beginEnrollment(req.user!);
+        const result = await totpService.beginEnrollment(req.user!, {
+          requestId: (req as any).requestId,
+          ip: req.ip,
+        });
         res.json(result);
       } catch (error) {
         logger.error('auth.totpEnroll.error', errorContext(error));
@@ -385,6 +403,7 @@ export function createAuthRouter(): Router {
         const codes = await totpService.verifyAndEnable(
           req.user!.id,
           parsed.data!.code,
+          { requestId: (req as any).requestId, ip: req.ip },
         );
         if (!codes) {
           throw new ValidationError(
@@ -432,6 +451,7 @@ export function createAuthRouter(): Router {
         const codes = await totpService.regenerateRecoveryCodes(
           req.user!.id,
           parsed.data!.code,
+          { requestId: (req as any).requestId, ip: req.ip },
         );
         if (!codes) {
           throw new ValidationError(
@@ -459,7 +479,11 @@ export function createAuthRouter(): Router {
         if (!verified || verified.id !== req.user!.id) {
           throw new UnauthorizedError('Password did not match');
         }
-        await totpService.disable(req.user!.id);
+        await totpService.disable(req.user!.id, {
+          requestId: (req as any).requestId,
+          ip: req.ip,
+          actorRole: 'self',
+        });
         res.json({ success: true });
       } catch (error) {
         next(error);
@@ -864,6 +888,19 @@ export function createAuthRouter(): Router {
           },
         });
         authService.invalidateUserCache(targetId);
+        // Mirror the admin-initiated disable into the structured log
+        // stream alongside the DB security_audit_log row (Task #102).
+        // The DB row is the canonical record; the log line is what an
+        // operator sees when grepping live container output. `userId`
+        // is the *target* (whose 2FA was turned off) so the line
+        // matches the shape of the self-disable event.
+        logger.warn('auth.totp.disabled', {
+          event: 'totp_disabled',
+          userId: targetId,
+          requestId: (req as any).requestId,
+          ip: req.ip,
+          actorRole: 'admin',
+        });
         res.json({ success: true });
       } catch (error) {
         logger.error('auth.admin.disable_totp_error', errorContext(error));

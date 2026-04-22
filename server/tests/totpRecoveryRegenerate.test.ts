@@ -178,7 +178,7 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     expect(verifyResult).not.toBeNull();
     const oldCodes = verifyResult!;
     // Sanity: the seeded code verifies.
-    expect(await totpService.verifyLoginCode(userId, oldCodes[0])).toBe(true);
+    expect((await totpService.verifyLoginCode(userId, oldCodes[0])).ok).toBe(true);
     // Re-seed a second usable code (the verify above consumed one).
     const verifyResult2 = await totpService.verifyAndEnable(userId, currentCode(secretBase32));
     const oldBatch = verifyResult2!;
@@ -195,12 +195,12 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     // Every previously-issued code should now be rejected.
     for (const c of oldBatch) {
       // eslint-disable-next-line no-await-in-loop
-      expect(await totpService.verifyLoginCode(userId, c)).toBe(false);
+      expect((await totpService.verifyLoginCode(userId, c)).ok).toBe(false);
     }
     // A code from the new batch should be accepted exactly once.
     const newCode = (r.body.recoveryCodes as string[])[0];
-    expect(await totpService.verifyLoginCode(userId, newCode)).toBe(true);
-    expect(await totpService.verifyLoginCode(userId, newCode)).toBe(false);
+    expect((await totpService.verifyLoginCode(userId, newCode)).ok).toBe(true);
+    expect((await totpService.verifyLoginCode(userId, newCode)).ok).toBe(false);
   });
 
   it('rejects with 401 when the password is wrong (and does not rotate codes)', async () => {
@@ -280,7 +280,7 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     const beforeRegen = await db.select().from(users).where(eq(users.id, userId));
     const oldHashes = beforeRegen[0]!.totpRecoveryCodes ?? [];
 
-    const [verifyResult, regenResp] = await Promise.all([
+    const [verifyOutcome, regenResp] = await Promise.all([
       totpService.verifyLoginCode(userId, oldBatch[0]),
       jsonReq(
         `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
@@ -308,8 +308,8 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     }
     // The verify either succeeded (race won) or failed (regen won), but
     // the second old code must NEVER work after this point.
-    expect(verifyResult === true || verifyResult === false).toBe(true);
-    expect(await totpService.verifyLoginCode(userId, oldBatch[1])).toBe(false);
+    expect(typeof verifyOutcome.ok === 'boolean').toBe(true);
+    expect((await totpService.verifyLoginCode(userId, oldBatch[1])).ok).toBe(false);
   });
 
   it('sanity: secret and password column not exposed in the response', async () => {
