@@ -9,6 +9,7 @@ import Register from "@/pages/Register";
 import ResetPassword from "@/pages/ResetPassword";
 import VerifyEmail from "@/pages/VerifyEmail";
 import ForcePasswordChange from "@/pages/ForcePasswordChange";
+import ForceEnable2FA from "@/pages/ForceEnable2FA";
 import Admin from "@/pages/Admin";
 import McpAudit from "@/pages/McpAudit";
 import SyncAudit from "@/pages/SyncAudit";
@@ -51,6 +52,23 @@ function Router() {
     location !== '/verify-email'
   ) {
     return <ForcePasswordChange />;
+  }
+
+  // Forced TOTP enrollment (Task #100): an admin without a second
+  // factor cannot reach any page once the deployment-wide require-2FA
+  // toggle is on. Same gating pattern as mustRotatePassword above; we
+  // intentionally still allow /reset and /verify-email so an admin who
+  // cannot enrol can still rotate their password or verify their email
+  // and then ask another admin to disable the requirement on their
+  // behalf.
+  if (
+    !isLoading &&
+    isAuthenticated &&
+    user?.mustEnrollTotp &&
+    location !== '/reset' &&
+    location !== '/verify-email'
+  ) {
+    return <ForceEnable2FA />;
   }
 
   return (

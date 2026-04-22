@@ -7,7 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
-import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone, Database } from 'lucide-react';
+import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone, Database, ShieldAlert, ShieldOff } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import QRCode from 'qrcode';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -255,6 +256,7 @@ export default function Admin() {
 
           <TabsContent value="security" className="mt-0 space-y-6">
             <TwoFactorAuthCard />
+            <AdminSecurityOverviewCard />
           </TabsContent>
         </Tabs>
       </div>
@@ -716,6 +718,295 @@ function TwoFactorAuthCard() {
               </Button>
             )}
           </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface AdminSecurityOverviewRow {
+  id: number;
+  username: string;
+  role: string;
+  totpEnabled: boolean;
+  recoveryCodesRemaining: number;
+  totpLastUsedAt: string | null;
+}
+
+interface RequireTwoFactorResponse {
+  enabled: boolean;
+}
+
+const SECURITY_OVERVIEW_KEY = ['/api/auth/admin/security/overview'] as const;
+const REQUIRE_2FA_KEY = ['/api/auth/admin/security/require-2fa'] as const;
+
+/**
+ * Admin-only Security overview (Task #100). Renders one row per account
+ * with its 2FA state, recovery codes remaining, and last-used timestamp,
+ * a deployment-wide toggle to require 2FA on every admin login, and a
+ * per-row "Disable 2FA" button for other admins (re-checks the calling
+ * admin's own password and is server-side audit-logged).
+ */
+function AdminSecurityOverviewCard() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [disableTarget, setDisableTarget] = useState<AdminSecurityOverviewRow | null>(null);
+  const [disablePassword, setDisablePassword] = useState('');
+
+  const {
+    data: rows,
+    isLoading: rowsLoading,
+    isError: rowsError,
+    error: rowsErrorObj,
+    refetch: refetchRows,
+  } = useQuery<AdminSecurityOverviewRow[]>({
+    queryKey: SECURITY_OVERVIEW_KEY,
+  });
+  const {
+    data: requireSetting,
+    isLoading: settingLoading,
+    isError: settingError,
+    error: settingErrorObj,
+    refetch: refetchSetting,
+  } = useQuery<RequireTwoFactorResponse>({
+    queryKey: REQUIRE_2FA_KEY,
+  });
+
+  const requireMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      apiRequest('PUT', '/api/auth/admin/security/require-2fa', {
+        body: JSON.stringify({ enabled }),
+      }) as Promise<RequireTwoFactorResponse>,
+    onSuccess: (data) => {
+      queryClient.setQueryData(REQUIRE_2FA_KEY, data);
+      toast({
+        title: data.enabled
+          ? 'Two-factor authentication is now required for all admins'
+          : 'Two-factor authentication is no longer required',
+      });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Could not update setting.';
+      toast({ title: 'Update failed', description: message, variant: 'destructive' });
+    },
+  });
+
+  const disableMutation = useMutation({
+    mutationFn: ({ targetId, password }: { targetId: number; password: string }) =>
+      apiRequest('POST', `/api/auth/admin/security/users/${targetId}/disable-totp`, {
+        body: JSON.stringify({ password }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: SECURITY_OVERVIEW_KEY });
+      setDisableTarget(null);
+      setDisablePassword('');
+      toast({ title: 'Two-factor authentication disabled for that account' });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Could not disable 2FA.';
+      toast({ title: 'Disable failed', description: message, variant: 'destructive' });
+    },
+  });
+
+  const formatLastUsed = (ts: string | null) => {
+    if (!ts) return 'Never';
+    const d = new Date(ts);
+    return `${formatDistanceToNow(d, { addSuffix: true })}`;
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-muted-foreground" />
+          Admin 2FA Overview
+        </CardTitle>
+        <CardDescription>
+          See which accounts have a second factor enrolled and require
+          every admin to use one. Disabling another admin&apos;s 2FA is
+          recorded in the security audit log.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="flex items-start justify-between gap-4 rounded-md border p-4">
+          <div className="space-y-1">
+            <Label htmlFor="require-2fa-toggle" className="text-sm font-medium">
+              Require 2FA for all admin logins
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              When on, any admin who hasn&apos;t enrolled an authenticator
+              app will be forced through enrollment on their next sign-in
+              before they can use the dashboard.
+            </p>
+          </div>
+          {settingLoading ? (
+            <Spinner className="h-4 w-4" />
+          ) : settingError ? (
+            <div className="flex flex-col items-end gap-1">
+              <span className="text-xs text-destructive">
+                {settingErrorObj instanceof Error
+                  ? settingErrorObj.message
+                  : 'Failed to load setting.'}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() => refetchSetting()}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <Switch
+              id="require-2fa-toggle"
+              checked={Boolean(requireSetting?.enabled)}
+              disabled={requireMutation.isPending}
+              onCheckedChange={(checked) => requireMutation.mutate(checked)}
+            />
+          )}
+        </div>
+
+        {rowsError ? (
+          <div className="flex items-center justify-between rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              <span>
+                {rowsErrorObj instanceof Error
+                  ? rowsErrorObj.message
+                  : 'Failed to load accounts.'}
+              </span>
+            </div>
+            <Button type="button" size="sm" variant="outline" onClick={() => refetchRows()}>
+              Retry
+            </Button>
+          </div>
+        ) : rowsLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="h-4 w-4" />
+            <span>Loading accounts...</span>
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">User</th>
+                  <th className="px-3 py-2">Role</th>
+                  <th className="px-3 py-2">2FA</th>
+                  <th className="px-3 py-2">Recovery codes</th>
+                  <th className="px-3 py-2">Last used</th>
+                  <th className="px-3 py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(rows ?? []).map((row) => {
+                  const isSelf = user?.id === row.id;
+                  const canDisable = !isSelf && row.totpEnabled;
+                  return (
+                    <tr key={row.id} className="border-t">
+                      <td className="px-3 py-2 font-medium">{row.username}</td>
+                      <td className="px-3 py-2">
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${
+                          row.role === 'admin'
+                            ? 'bg-purple-100 text-purple-800'
+                            : 'bg-gray-100 text-gray-700'
+                        }`}>
+                          {row.role}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.totpEnabled ? (
+                          <span className="inline-flex items-center gap-1 text-green-700">
+                            <ShieldCheck className="h-4 w-4" /> Enabled
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-amber-700">
+                            <ShieldAlert className="h-4 w-4" /> Not enabled
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.totpEnabled ? row.recoveryCodesRemaining : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {row.totpEnabled ? formatLastUsed(row.totpLastUsedAt) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {canDisable && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="gap-1"
+                            onClick={() => {
+                              setDisableTarget(row);
+                              setDisablePassword('');
+                            }}
+                          >
+                            <ShieldOff className="h-3.5 w-3.5" />
+                            Disable
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {(rows ?? []).length === 0 && (
+                  <tr>
+                    <td className="px-3 py-4 text-center text-muted-foreground" colSpan={6}>
+                      No accounts found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {disableTarget && (
+          <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm">
+              Disable 2FA for <strong>{disableTarget.username}</strong>?
+              They&apos;ll be able to sign in with just their password
+              until they re-enroll. This action is logged.
+            </p>
+            <div className="max-w-xs space-y-1.5">
+              <Label htmlFor="admin-disable-pw" className="text-xs">
+                Confirm your password
+              </Label>
+              <Input
+                id="admin-disable-pw"
+                type="password"
+                autoComplete="current-password"
+                value={disablePassword}
+                onChange={(e) => setDisablePassword(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={disableMutation.isPending || !disablePassword}
+                onClick={() =>
+                  disableMutation.mutate({
+                    targetId: disableTarget.id,
+                    password: disablePassword,
+                  })
+                }
+                className="gap-2"
+              >
+                {disableMutation.isPending ? <Spinner className="h-4 w-4" /> : null}
+                Disable 2FA
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDisableTarget(null);
+                  setDisablePassword('');
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>

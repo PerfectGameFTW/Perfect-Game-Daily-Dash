@@ -3,14 +3,14 @@ import { sql, eq, and, desc } from 'drizzle-orm';
 import { 
   users, transactions, giftCards, giftCardRedemptions, 
   orders, orderLineItems, orderModifiers, orderDiscounts, syncState,
-  mcpQueryAudit, appSettings, syncAudit,
+  mcpQueryAudit, appSettings, syncAudit, securityAuditLog,
   DateRange, TransactionStatus, Order, OrderLineItem, OrderModifier, OrderDiscount,
   InsertUser, User, InsertTransaction, Transaction,
   InsertGiftCard, GiftCard, InsertGiftCardRedemption, GiftCardRedemption,
   InsertOrder, InsertOrderLineItem, InsertOrderModifier, InsertOrderDiscount,
   OrderSummary, InsertSyncState, SyncState,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
-  InsertMcpQueryAudit,
+  InsertMcpQueryAudit, InsertSecurityAuditLog,
   appSettingsRegistry, AppSettingKey, AppSettingValue,
 } from '@shared/schema';
 import { getEasternDateRange, formatEasternDate, formatHour, EASTERN_TIMEZONE } from './dateUtils';
@@ -412,6 +412,53 @@ class PgStorage implements IStorage {
   // MCP read-query audit log
   async recordMcpQueryAudit(entry: InsertMcpQueryAudit): Promise<void> {
     await db.insert(mcpQueryAudit).values(entry);
+  }
+
+  // Security audit log (Task #100). One row per admin security action;
+  // append-only by design — we never expose a delete or update route.
+  async recordSecurityAudit(entry: InsertSecurityAuditLog): Promise<void> {
+    await db.insert(securityAuditLog).values(entry);
+  }
+
+  // Transactional helpers (Task #100). Audit integrity demands the
+  // state mutation and audit-log row commit (or fail) together — if the
+  // audit insert blew up after the setting/disable already landed, we'd
+  // silently lose the trail of who did what.
+  async setAppSettingWithAudit<K extends AppSettingKey>(
+    key: K,
+    value: AppSettingValue<K>,
+    audit: InsertSecurityAuditLog,
+  ): Promise<void> {
+    const schema = appSettingsRegistry[key];
+    const parsed = schema.parse(value);
+    await db.transaction(async (tx) => {
+      await tx
+        .insert(appSettings)
+        .values({ key, value: parsed })
+        .onConflictDoUpdate({
+          target: appSettings.key,
+          set: { value: parsed, updatedAt: sql`CURRENT_TIMESTAMP` },
+        });
+      await tx.insert(securityAuditLog).values(audit);
+    });
+  }
+
+  async disableUserTotpWithAudit(
+    targetUserId: number,
+    audit: InsertSecurityAuditLog,
+  ): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        .set({
+          totpEnabled: false,
+          totpSecretEncrypted: null,
+          totpRecoveryCodes: null,
+          totpLastUsedAt: null,
+        })
+        .where(eq(users.id, targetUserId));
+      await tx.insert(securityAuditLog).values(audit);
+    });
   }
 
   async pruneMcpQueryAudit(maxAgeDays: number): Promise<number> {

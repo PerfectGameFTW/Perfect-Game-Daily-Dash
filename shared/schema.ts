@@ -306,6 +306,11 @@ export const users = pgTable(
     totpSecretEncrypted: text("totp_secret_encrypted"),
     totpEnabled: boolean("totp_enabled").default(false).notNull(),
     totpRecoveryCodes: text("totp_recovery_codes").array(),
+    // Stamped on every successful TOTP/recovery-code verification (login
+    // and re-enroll). Surfaced in the admin Security overview (Task #100)
+    // so operators can spot stale enrolments — an "Enabled but never
+    // used in 90 days" admin is a red flag.
+    totpLastUsedAt: timestamp("totp_last_used_at", { withTimezone: true }),
   },
   (table) => ({
     // Case-insensitive uniqueness on the recovery email so two accounts
@@ -601,6 +606,34 @@ export const insertSyncAuditSchema = createInsertSchema(syncAudit).omit({
 export type InsertSyncAudit = z.infer<typeof insertSyncAuditSchema>;
 export type SyncAudit = typeof syncAudit.$inferSelect;
 
+// Audit log of admin security actions (Task #100). Anything one admin
+// does that affects another account's authentication posture (toggling
+// the require-2FA-for-admins setting, disabling another admin's TOTP)
+// is recorded here so a compromised admin can be reconstructed after
+// the fact. Action is a free-form short string ("require_admin_2fa.set",
+// "user.totp_disabled_by_admin"); metadata captures the before/after
+// state in JSON so the UI doesn't need a parallel column for every
+// action variant.
+export const securityAuditLog = pgTable("security_audit_log", {
+  id: serial("id").primaryKey(),
+  actorUserId: integer("actor_user_id"),
+  actorIp: text("actor_ip"),
+  action: text("action").notNull(),
+  targetUserId: integer("target_user_id"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+});
+
+export const insertSecurityAuditLogSchema = createInsertSchema(securityAuditLog).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertSecurityAuditLog = z.infer<typeof insertSecurityAuditLogSchema>;
+export type SecurityAuditLog = typeof securityAuditLog.$inferSelect;
+
 // Per-UTC-day Square page-fetch budget shared across every backfill /
 // historical sync run. A single compromised admin can no longer hammer
 // Square indefinitely — once the daily cap is hit the sync loop pauses
@@ -646,6 +679,21 @@ export type SquareRateLimitAlertSettings = z.infer<
 
 export const SQUARE_RATE_LIMIT_ALERT_SETTING_KEY = 'square_rate_limit_alert' as const;
 
+// Toggle: when enabled, every admin account must have TOTP enrolled. The
+// login flow lets admins authenticate with a password as usual but the
+// frontend gates the rest of the app behind enrollment, and the
+// /api/auth/me payload exposes a `mustEnrollTotp: true` flag for the
+// router to act on. Defaults to disabled so the feature is opt-in.
+export const requireAdminTwoFactorSettingsSchema = z.object({
+  enabled: z.boolean(),
+});
+
+export type RequireAdminTwoFactorSettings = z.infer<
+  typeof requireAdminTwoFactorSettingsSchema
+>;
+
+export const REQUIRE_ADMIN_2FA_SETTING_KEY = 'require_admin_2fa' as const;
+
 // Typed registry of every persisted app_settings key -> its zod schema.
 // This is the single source of truth for what shape each setting key
 // stores, and powers the typed `getAppSetting` / `setAppSetting`
@@ -657,6 +705,7 @@ export const SQUARE_RATE_LIMIT_ALERT_SETTING_KEY = 'square_rate_limit_alert' as 
 // key/value type automatically.
 export const appSettingsRegistry = {
   [SQUARE_RATE_LIMIT_ALERT_SETTING_KEY]: squareRateLimitAlertSettingsSchema,
+  [REQUIRE_ADMIN_2FA_SETTING_KEY]: requireAdminTwoFactorSettingsSchema,
 } as const;
 
 export type AppSettingsRegistry = typeof appSettingsRegistry;

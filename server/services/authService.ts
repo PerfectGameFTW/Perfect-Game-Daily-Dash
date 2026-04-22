@@ -464,6 +464,41 @@ export class AuthService {
   }
 
   /**
+   * Admin-only Security overview row (Task #100). One row per user with
+   * just the fields the admin Security page renders — never includes the
+   * password hash, encrypted TOTP secret, or recovery code hashes.
+   */
+  async getAdminSecurityOverview(): Promise<
+    Array<{
+      id: number;
+      username: string;
+      role: string;
+      totpEnabled: boolean;
+      recoveryCodesRemaining: number;
+      totpLastUsedAt: Date | null;
+    }>
+  > {
+    const rows = await db
+      .select({
+        id: users.id,
+        username: users.username,
+        role: users.role,
+        totpEnabled: users.totpEnabled,
+        codes: users.totpRecoveryCodes,
+        totpLastUsedAt: users.totpLastUsedAt,
+      })
+      .from(users);
+    return rows.map((r) => ({
+      id: r.id,
+      username: r.username,
+      role: r.role,
+      totpEnabled: r.totpEnabled,
+      recoveryCodesRemaining: r.codes?.length ?? 0,
+      totpLastUsedAt: r.totpLastUsedAt,
+    }));
+  }
+
+  /**
    * Issue a password-reset link to the account owner.
    *
    * Looks up the user by either username or email. If a matching account

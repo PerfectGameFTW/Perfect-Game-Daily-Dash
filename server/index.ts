@@ -677,6 +677,35 @@ async function exitWithError(error: unknown) {
     END$$;`);
     log('✓ must_rotate_password column verified');
 
+    // Last-used-at timestamp for TOTP verification (Task #100). Self-
+    // bootstraps the column when the deployment hasn't run db:push yet
+    // so the admin Security overview can render "last used" without
+    // 500ing on a missing column. Defaults to NULL — the next
+    // successful TOTP/recovery verification stamps it.
+    log('Bootstrapping totp_last_used_at column...');
+    await db.execute(sql`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS totp_last_used_at TIMESTAMPTZ
+    `);
+    log('✓ totp_last_used_at column verified');
+
+    // Append-only audit log of admin security actions (Task #100). Same
+    // self-bootstrap pattern as mcp_query_audit so the new admin
+    // endpoints don't 500 on a missing relation in environments that
+    // haven't run db:push.
+    log('Bootstrapping security audit log schema...');
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS security_audit_log (
+      id SERIAL PRIMARY KEY,
+      actor_user_id INTEGER,
+      actor_ip TEXT,
+      action TEXT NOT NULL,
+      target_user_id INTEGER,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_security_audit_log_created_at ON security_audit_log (created_at)`);
+    log('✓ Security audit log schema verified');
+
     log('Registering routes...');
     const server = await registerRoutes(app);
     httpServer = server;

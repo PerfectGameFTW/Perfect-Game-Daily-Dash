@@ -12,6 +12,7 @@ import {
   OrderDiscount, InsertOrderDiscount,
   OrderSummary,
   InsertMcpQueryAudit,
+  InsertSecurityAuditLog,
   McpQueryAudit,
   SyncAudit,
   AppSettingKey,
@@ -116,6 +117,11 @@ export interface IStorage {
 
   // Sync audit log (historical/backfill triggers)
   listSyncAudit(filters: SyncAuditFilters): Promise<SyncAuditPage>;
+
+  // Security audit log (admin 2FA actions, Task #100). Append-only —
+  // there is intentionally no "delete" or "update" entry point so a
+  // compromised admin cannot scrub their own actions.
+  recordSecurityAudit(entry: InsertSecurityAuditLog): Promise<void>;
 
   // Per-deployment runtime settings (app_settings table). The key is
   // constrained to the typed registry in `shared/schema.ts`, and the

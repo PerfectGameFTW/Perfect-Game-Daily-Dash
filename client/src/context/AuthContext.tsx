@@ -13,6 +13,12 @@ interface User {
   // hasn't been enrolled in account recovery yet). Set/cleared by an
   // admin from the user-management page (Task #59).
   email?: string | null;
+  // Server-reported TOTP state. `mustEnrollTotp` is true only when the
+  // user is an admin without TOTP enrolled AND the deployment-wide
+  // require-admin-2FA setting is on (Task #100). The router gates the
+  // rest of the app behind a forced-enrollment screen when set.
+  totpEnabled?: boolean;
+  mustEnrollTotp?: boolean;
 }
 
 interface AuthContextType {

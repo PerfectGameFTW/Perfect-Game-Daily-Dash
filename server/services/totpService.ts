@@ -143,7 +143,11 @@ export class TotpService {
     );
     await db
       .update(users)
-      .set({ totpEnabled: true, totpRecoveryCodes: hashedCodes })
+      .set({
+        totpEnabled: true,
+        totpRecoveryCodes: hashedCodes,
+        totpLastUsedAt: new Date(),
+      })
       .where(eq(users.id, userId));
     invalidateUserCache(userId);
     return plaintextCodes;
@@ -170,7 +174,14 @@ export class TotpService {
       const secret = Secret.fromBase32(decryptTotpSecret(row.totpSecretEncrypted));
       const totp = buildTotp(secret, row.username);
       const delta = totp.validate({ token: cleaned, window: 1 });
-      if (delta !== null) return true;
+      if (delta !== null) {
+        await db
+          .update(users)
+          .set({ totpLastUsedAt: new Date() })
+          .where(eq(users.id, userId));
+        invalidateUserCache(userId);
+        return true;
+      }
     }
 
     // Otherwise try recovery codes. Compare against every remaining
@@ -186,7 +197,7 @@ export class TotpService {
         const remaining = stored.filter((x) => x !== h);
         await db
           .update(users)
-          .set({ totpRecoveryCodes: remaining })
+          .set({ totpRecoveryCodes: remaining, totpLastUsedAt: new Date() })
           .where(eq(users.id, userId));
         invalidateUserCache(userId);
         return true;

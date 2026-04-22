@@ -14,7 +14,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authService } from '../services/authService';
 import { totpService } from '../services/totpService';
-import { createSafeUser, requireAuth, requireAdmin } from '../middleware/auth';
+import { createSafeUser, createSafeUserAsync, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
 import {
   adminCreateUserSchema,
@@ -22,7 +22,10 @@ import {
   confirmRecoveryEmailSchema,
   selfProposeRecoveryEmailSchema,
   strongPasswordSchema,
+  REQUIRE_ADMIN_2FA_SETTING_KEY,
+  requireAdminTwoFactorSettingsSchema,
 } from '../../shared/schema';
+import { pgStorage } from '../pgStorage';
 import {
   AuthError,
   ConflictError,
@@ -115,7 +118,7 @@ export function createAuthRouter(): Router {
         return res.json(null);
       }
 
-      res.json(createSafeUser(user));
+      res.json(await createSafeUserAsync(user));
     } catch (error) {
       logger.error('auth.me.error', errorContext(error));
       next(error);
@@ -216,7 +219,7 @@ export function createAuthRouter(): Router {
 
       res.json({
         success: true,
-        user: createSafeUser(user)
+        user: await createSafeUserAsync(user),
       });
     } catch (error) {
       logger.error('auth.login.error', errorContext(error));
@@ -336,7 +339,7 @@ export function createAuthRouter(): Router {
           throw new Error('Session initialization failed');
         }
 
-        res.json({ success: true, user: createSafeUser(user) });
+        res.json({ success: true, user: await createSafeUserAsync(user) });
       } catch (error) {
         next(error);
       }
@@ -674,6 +677,148 @@ export function createAuthRouter(): Router {
       next(error);
     }
   });
+
+  // ---------------------------------------------------------------------
+  // Admin Security overview (Task #100)
+  // ---------------------------------------------------------------------
+  //
+  // Three endpoints for the admin Security tab:
+  //   GET  /admin/security/overview     — table of every account with
+  //        2FA status, recovery codes remaining, last 2FA usage.
+  //   GET  /admin/security/require-2fa  — current toggle value.
+  //   PUT  /admin/security/require-2fa  — set the toggle. Audit-logged.
+  //   POST /admin/security/users/:id/disable-totp — disable another
+  //        admin's 2FA after the calling admin re-confirms their own
+  //        password. Audit-logged. Cannot target self (the
+  //        self-service /totp/disable endpoint exists for that).
+
+  router.get(
+    '/admin/security/overview',
+    requireAuth,
+    requireAdmin,
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rows = await authService.getAdminSecurityOverview();
+        res.json(rows);
+      } catch (error) {
+        logger.error('auth.admin.security_overview_error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
+  router.get(
+    '/admin/security/require-2fa',
+    requireAuth,
+    requireAdmin,
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const setting = await pgStorage.getAppSetting(REQUIRE_ADMIN_2FA_SETTING_KEY);
+        res.json({ enabled: Boolean(setting?.enabled) });
+      } catch (error) {
+        logger.error('auth.admin.require2fa_get_error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
+  router.put(
+    '/admin/security/require-2fa',
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const parsed = requireAdminTwoFactorSettingsSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+        const previous = await pgStorage.getAppSetting(REQUIRE_ADMIN_2FA_SETTING_KEY);
+        // Setting + audit row commit together so an audit-write failure
+        // can't leave a security toggle silently changed (Task #100).
+        await pgStorage.setAppSettingWithAudit(
+          REQUIRE_ADMIN_2FA_SETTING_KEY,
+          parsed.data!,
+          {
+            actorUserId: req.user!.id,
+            actorIp: req.ip ?? null,
+            action: 'require_admin_2fa.set',
+            targetUserId: null,
+            metadata: {
+              previous: Boolean(previous?.enabled),
+              next: parsed.data!.enabled,
+            },
+          },
+        );
+        res.json({ enabled: parsed.data!.enabled });
+      } catch (error) {
+        logger.error('auth.admin.require2fa_set_error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
+  const adminDisableTotpSchema = z.object({
+    // Re-check the calling admin's own password before letting them
+    // disable someone else's second factor — same defence-in-depth as
+    // the self-service disable route.
+    password: z.string().min(1).max(128),
+  });
+
+  router.post(
+    '/admin/security/users/:id/disable-totp',
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const targetId = parseInt(req.params.id, 10);
+        if (Number.isNaN(targetId)) {
+          throw new ValidationError('Invalid user ID');
+        }
+        if (targetId === req.user!.id) {
+          // Self-disable goes through /totp/disable so the actor's own
+          // password gate is the same code path as user-initiated
+          // disable. Refusing here also keeps the audit log honest:
+          // self-disable is recorded by /totp/disable, admin-disable is
+          // recorded here.
+          throw new ValidationError(
+            'Use the personal Two-Factor Authentication card to disable your own 2FA.',
+          );
+        }
+        const parsed = adminDisableTotpSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+        const verified = await authService.loginUser(
+          req.user!.username,
+          parsed.data!.password,
+        );
+        if (!verified || verified.id !== req.user!.id) {
+          throw new UnauthorizedError('Password did not match');
+        }
+        const target = await authService.getUserById(targetId);
+        if (!target) {
+          throw new NotFoundError('User not found');
+        }
+        const wasEnabled = target.totpEnabled;
+        // Same atomicity argument as the require-2fa toggle above:
+        // disabling another admin's 2FA and writing the audit row must
+        // succeed or fail together so we never have an unaudited
+        // security state change (Task #100).
+        await pgStorage.disableUserTotpWithAudit(targetId, {
+          actorUserId: req.user!.id,
+          actorIp: req.ip ?? null,
+          action: 'user.totp_disabled_by_admin',
+          targetUserId: targetId,
+          metadata: {
+            targetUsername: target.username,
+            targetRole: target.role,
+            wasEnabled,
+          },
+        });
+        authService.invalidateUserCache(targetId);
+        res.json({ success: true });
+      } catch (error) {
+        logger.error('auth.admin.disable_totp_error', errorContext(error));
+        next(error);
+      }
+    },
+  );
 
   // Get all users (admin only)
   router.get('/users', requireAuth, requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {

@@ -19,6 +19,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services/authService';
 import type { User } from '../../shared/schema';
+import { REQUIRE_ADMIN_2FA_SETTING_KEY } from '../../shared/schema';
+import { pgStorage } from '../pgStorage';
 import { logger, errorContext } from '../logger';
 
 // Augment express-session so `req.session.userId` (and the other auth
@@ -105,37 +107,65 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-/**
- * Creates a user object for frontend with safe data
- * Returns null if user is falsy
- */
-export function createSafeUser(
-  user: any,
-): {
+export interface SafeUser {
   id: number;
   username: string;
   role: string;
   mustRotatePassword: boolean;
   email: string | null;
-} | null {
-  if (!user) return null;
+  totpEnabled: boolean;
+  /**
+   * True when this user is an admin, has not enrolled TOTP, and the
+   * deployment-wide "require 2FA for admins" toggle is on (Task #100).
+   * The frontend gates the rest of the app behind an enrollment screen
+   * when this is set, similar to `mustRotatePassword`. Always false
+   * for non-admins and for admins who already have TOTP enrolled.
+   */
+  mustEnrollTotp: boolean;
+}
 
-  // Return only safe user data (exclude password). `mustRotatePassword`
-  // is exposed so the client can gate the rest of the app behind a
-  // forced password-change screen for accounts whose password predates
-  // the strong-password policy (see Task #55). Defaults to false for
-  // any legacy code path that hands us a user shape missing the field.
-  // `email` is the recovery email shown in the admin user-management
-  // table so operators can see at a glance which accounts are enrolled
-  // in the password-reset flow (see Task #59). Normalized to null when
-  // the column is missing or empty so the client can render a single
-  // empty-state consistently.
+/**
+ * Creates a user object for frontend with safe data
+ * Returns null if user is falsy.
+ *
+ * The synchronous form intentionally does NOT compute `mustEnrollTotp`
+ * — that requires a storage round-trip for the deployment-wide
+ * require-admin-2FA toggle. Use `createSafeUserAsync` from the login /
+ * /me / totp-verify handlers where the gate is enforced; everywhere
+ * else (admin user list, email update response) the field stays
+ * `false` because the value isn't user-actionable from those screens.
+ */
+export function createSafeUser(user: any): SafeUser | null {
+  if (!user) return null;
   const rawEmail = typeof user.email === 'string' ? user.email.trim() : '';
   return {
     id: user.id,
     username: user.username,
-    role: user.role || 'user', // Default to 'user' if role is missing
+    role: user.role || 'user',
     mustRotatePassword: Boolean(user.mustRotatePassword),
     email: rawEmail === '' ? null : rawEmail,
+    totpEnabled: Boolean(user.totpEnabled),
+    mustEnrollTotp: false,
   };
+}
+
+/**
+ * Async variant that additionally computes `mustEnrollTotp` for admin
+ * accounts by consulting the deployment-wide require-admin-2FA toggle.
+ * Falls back to `false` if the storage lookup fails so a transient DB
+ * hiccup never locks an admin out of every page.
+ */
+export async function createSafeUserAsync(user: any): Promise<SafeUser | null> {
+  const safe = createSafeUser(user);
+  if (!safe) return null;
+  if (safe.role !== 'admin' || safe.totpEnabled) return safe;
+  try {
+    const setting = await pgStorage.getAppSetting(REQUIRE_ADMIN_2FA_SETTING_KEY);
+    if (setting?.enabled) {
+      safe.mustEnrollTotp = true;
+    }
+  } catch (err) {
+    logger.warn('auth.require_admin_2fa.lookup_failed', errorContext(err));
+  }
+  return safe;
 }
