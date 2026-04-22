@@ -38,6 +38,9 @@ export interface AlertConfig {
   threshold: number;
   windowMs: number;
   cooldownMs: number;
+  /** How long the rolling window must stay empty after an alert
+   *  before we send the "all-clear" recovery message. */
+  recoveryQuietPeriodMs: number;
 }
 
 /** Subset of `AlertConfig` admins can tune at runtime. The webhook
@@ -61,10 +64,28 @@ function loadEnvBaseline(): AlertConfig {
     threshold: intFromEnv('SQUARE_RATE_LIMIT_ALERT_THRESHOLD', 1),
     windowMs: intFromEnv('SQUARE_RATE_LIMIT_ALERT_WINDOW_MS', 5 * 60 * 1000),
     cooldownMs: intFromEnv('SQUARE_RATE_LIMIT_ALERT_COOLDOWN_MS', 15 * 60 * 1000),
+    recoveryQuietPeriodMs: intFromEnv(
+      'SQUARE_RATE_LIMIT_ALERT_RECOVERY_QUIET_MS',
+      10 * 60 * 1000,
+    ),
   };
 }
 
 type Notifier = (payload: { text: string }) => Promise<void>;
+
+/** Schedules `cb` to run after `delayMs`. Returns a cancel function.
+ *  Pluggable so unit tests can drive the recovery timer manually
+ *  without resorting to real timers. */
+export type RecoveryScheduler = (delayMs: number, cb: () => void) => () => void;
+
+const defaultScheduler: RecoveryScheduler = (delayMs, cb) => {
+  const h = setTimeout(cb, delayMs);
+  // Don't keep the Node event loop alive solely for this watchdog.
+  if (typeof (h as unknown as { unref?: () => void }).unref === 'function') {
+    (h as unknown as { unref: () => void }).unref();
+  }
+  return () => clearTimeout(h);
+};
 
 async function defaultNotifier(url: string, payload: { text: string }): Promise<void> {
   try {
@@ -88,6 +109,12 @@ async function defaultNotifier(url: string, payload: { text: string }): Promise<
 class RateLimitAlerter {
   private events: RateLimitEvent[] = [];
   private lastAlertAt: number | null = null;
+  // Tracks whether we're currently inside an "alert episode" — i.e.
+  // an alert has fired and we have not yet sent the matching recovery
+  // notification. Used to gate the all-clear so we send exactly one
+  // recovery per episode (no flapping).
+  private episodeActive = false;
+  private cancelRecoveryCheck: (() => void) | null = null;
   // `envBaseline` is the env-derived defaults (webhook URL + initial
   // threshold/window/cooldown). `runtimeOverride` is the admin-tuned
   // subset that takes precedence when present. Effective config is
@@ -98,6 +125,7 @@ class RateLimitAlerter {
   private runtimeOverride: AlertTunableConfig | null = null;
   private notifier: Notifier | null = null;
   private now: () => number = () => Date.now();
+  private scheduler: RecoveryScheduler = defaultScheduler;
 
   private effectiveConfig(): AlertConfig {
     const o = this.runtimeOverride;
@@ -107,6 +135,7 @@ class RateLimitAlerter {
       threshold: o.threshold,
       windowMs: o.windowMs,
       cooldownMs: o.cooldownMs,
+      recoveryQuietPeriodMs: this.envBaseline.recoveryQuietPeriodMs,
     };
   }
 
@@ -133,25 +162,33 @@ class RateLimitAlerter {
     this.lastAlertAt = null;
   }
 
-  /** Test-only: override config, notifier, and clock. */
+  /** Test-only: override config, notifier, scheduler, and clock. */
   reconfigure(opts: {
     config?: Partial<AlertConfig>;
     notifier?: Notifier | null;
     now?: () => number;
+    scheduler?: RecoveryScheduler;
   }): void {
     if (opts.config) this.envBaseline = { ...this.envBaseline, ...opts.config };
     if (opts.notifier !== undefined) this.notifier = opts.notifier;
     if (opts.now) this.now = opts.now;
+    if (opts.scheduler) this.scheduler = opts.scheduler;
   }
 
   /** Test-only: clear in-memory state. */
   reset(): void {
+    if (this.cancelRecoveryCheck) {
+      this.cancelRecoveryCheck();
+      this.cancelRecoveryCheck = null;
+    }
     this.events = [];
     this.lastAlertAt = null;
+    this.episodeActive = false;
     this.envBaseline = loadEnvBaseline();
     this.runtimeOverride = null;
     this.notifier = null;
     this.now = () => Date.now();
+    this.scheduler = defaultScheduler;
   }
 
   record(syncType: string, source: string): void {
@@ -163,6 +200,69 @@ class RateLimitAlerter {
       this.events.shift();
     }
     this.maybeFire(t, cfg);
+    // While an alert episode is in flight, every fresh 429 pushes the
+    // recovery watchdog out: we only call "all-clear" once the rolling
+    // window has been quiet for the configured period. The reschedule
+    // also covers the case where `maybeFire` was suppressed by the
+    // cooldown — the episode is still active, so the timer must keep
+    // tracking the latest event.
+    if (this.episodeActive) {
+      this.scheduleRecoveryCheck(cfg);
+    }
+  }
+
+  private scheduleRecoveryCheck(cfg: AlertConfig): void {
+    if (this.cancelRecoveryCheck) this.cancelRecoveryCheck();
+    this.cancelRecoveryCheck = this.scheduler(cfg.recoveryQuietPeriodMs, () => {
+      this.cancelRecoveryCheck = null;
+      this.fireRecovery();
+    });
+  }
+
+  private fireRecovery(): void {
+    if (!this.episodeActive) return;
+    const cfg = this.effectiveConfig();
+    const now = this.now();
+    // Defensive: only declare recovery if the window really has been
+    // empty for the full quiet period. If a late-arriving event slipped
+    // in between the timer firing and us getting CPU time, push the
+    // watchdog out instead of sending a premature all-clear.
+    const cutoff = now - cfg.windowMs;
+    while (this.events.length > 0 && this.events[0].ts < cutoff) {
+      this.events.shift();
+    }
+    const mostRecent = this.events.length > 0
+      ? this.events[this.events.length - 1].ts
+      : null;
+    if (mostRecent !== null && now - mostRecent < cfg.recoveryQuietPeriodMs) {
+      const remaining = cfg.recoveryQuietPeriodMs - (now - mostRecent);
+      this.cancelRecoveryCheck = this.scheduler(remaining, () => {
+        this.cancelRecoveryCheck = null;
+        this.fireRecovery();
+      });
+      return;
+    }
+
+    // One recovery message per episode — flip the flag *before*
+    // dispatching so a re-entrant record() during send() can't trigger
+    // a duplicate.
+    this.episodeActive = false;
+
+    if (!cfg.webhookUrl && !this.notifier) return;
+
+    const quietMin = Math.round(cfg.recoveryQuietPeriodMs / 60000);
+    const text =
+      `:white_check_mark: Square rate-limit recovered: no HTTP 429s for ` +
+      `${quietMin}m`;
+
+    const send = this.notifier ?? ((p: { text: string }) =>
+      defaultNotifier(cfg.webhookUrl!, p));
+
+    void send({ text });
+
+    logger.info('square.rate_limit_recovered', {
+      source: 'squareRateLimitAlert',
+    });
   }
 
   private maybeFire(now: number, cfg: AlertConfig): void {
@@ -171,6 +271,11 @@ class RateLimitAlerter {
     if (!cfg.webhookUrl && !this.notifier) return;
 
     this.lastAlertAt = now;
+    // From this point we owe on-call exactly one matching "all-clear"
+    // once traffic quiets down. `record()` keeps pushing the recovery
+    // watchdog forward as long as new 429s arrive.
+    this.episodeActive = true;
+    this.scheduleRecoveryCheck(cfg);
 
     // Aggregate by syncType+source so the alert tells on-call which path
     // is hot, not just that *something* is throttling.
