@@ -18,29 +18,24 @@
 import { pgStorage } from '../pgStorage';
 import {
   SQUARE_RATE_LIMIT_ALERT_SETTING_KEY,
-  squareRateLimitAlertSettingsSchema,
   type SquareRateLimitAlertSettings,
 } from '@shared/schema';
 import { logger } from '../logger';
 import { squareRateLimitAlerter } from './squareRateLimitAlert';
 
 export async function loadSquareRateLimitAlertOverride(): Promise<void> {
-  const raw = await pgStorage.getAppSetting(SQUARE_RATE_LIMIT_ALERT_SETTING_KEY);
-  if (raw === undefined) return;
-  const parsed = squareRateLimitAlertSettingsSchema.safeParse(raw);
-  if (!parsed.success) {
-    // A bad/legacy row should not crash boot; log and ignore so the
-    // alerter keeps using env defaults.
-    logger.warn('square.rate_limit_alert_settings_invalid', {
-      source: 'loadSquareRateLimitAlertOverride',
-    });
-    return;
-  }
-  squareRateLimitAlerter.setRuntimeOverride(parsed.data);
+  // The typed registry-backed accessor returns the validated, narrowly
+  // typed value (or undefined if absent / row is malformed). No
+  // safeParse needed at this layer.
+  const settings = await pgStorage.getAppSetting(
+    SQUARE_RATE_LIMIT_ALERT_SETTING_KEY,
+  );
+  if (settings === undefined) return;
+  squareRateLimitAlerter.setRuntimeOverride(settings);
   logger.info('square.rate_limit_alert_settings_loaded', {
-    threshold: parsed.data.threshold,
-    windowMs: parsed.data.windowMs,
-    cooldownMs: parsed.data.cooldownMs,
+    threshold: settings.threshold,
+    windowMs: settings.windowMs,
+    cooldownMs: settings.cooldownMs,
   });
 }
 

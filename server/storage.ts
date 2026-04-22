@@ -13,7 +13,9 @@ import {
   OrderSummary,
   InsertMcpQueryAudit,
   McpQueryAudit,
-  SyncAudit
+  SyncAudit,
+  AppSettingKey,
+  AppSettingValue,
 } from "@shared/schema";
 
 export interface McpQueryAuditFilters {
@@ -115,12 +117,20 @@ export interface IStorage {
   // Sync audit log (historical/backfill triggers)
   listSyncAudit(filters: SyncAuditFilters): Promise<SyncAuditPage>;
 
-  // Generic per-deployment runtime settings (app_settings table). Values
-  // are JSON-typed and intentionally untyped at the storage layer; each
-  // caller is responsible for validating with its own zod schema before
-  // using the result.
-  getAppSetting(key: string): Promise<unknown | undefined>;
-  setAppSetting(key: string, value: unknown): Promise<void>;
+  // Per-deployment runtime settings (app_settings table). The key is
+  // constrained to the typed registry in `shared/schema.ts`, and the
+  // value is the zod-inferred shape for that key — no `unknown` or
+  // `as object` casts at the call site. Implementations validate the
+  // stored row against the registry schema before returning so a
+  // malformed/legacy row surfaces as `undefined` rather than a wrong-
+  // shape value reaching the consumer.
+  getAppSetting<K extends AppSettingKey>(
+    key: K,
+  ): Promise<AppSettingValue<K> | undefined>;
+  setAppSetting<K extends AppSettingKey>(
+    key: K,
+    value: AppSettingValue<K>,
+  ): Promise<void>;
 }
 
 // No MemStorage implementation - we now exclusively use PgStorage for all data storage

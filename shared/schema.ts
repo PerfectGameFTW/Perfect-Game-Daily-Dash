@@ -584,6 +584,25 @@ export type SquareRateLimitAlertSettings = z.infer<
 
 export const SQUARE_RATE_LIMIT_ALERT_SETTING_KEY = 'square_rate_limit_alert' as const;
 
+// Typed registry of every persisted app_settings key -> its zod schema.
+// This is the single source of truth for what shape each setting key
+// stores, and powers the typed `getAppSetting` / `setAppSetting`
+// accessors on the storage layer so callers cannot accidentally store
+// the wrong shape under a key, or read a key without validating.
+//
+// To add a new setting: add its key constant + schema above, then
+// register both here. The storage methods will pick up the new
+// key/value type automatically.
+export const appSettingsRegistry = {
+  [SQUARE_RATE_LIMIT_ALERT_SETTING_KEY]: squareRateLimitAlertSettingsSchema,
+} as const;
+
+export type AppSettingsRegistry = typeof appSettingsRegistry;
+export type AppSettingKey = keyof AppSettingsRegistry;
+export type AppSettingValue<K extends AppSettingKey> = z.infer<
+  AppSettingsRegistry[K]
+>;
+
 // Add Order Summary type for dashboard
 export interface OrderSummary {
   totalOrders: number;

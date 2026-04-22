@@ -10,9 +10,11 @@ import {
   InsertOrder, InsertOrderLineItem, InsertOrderModifier, InsertOrderDiscount,
   OrderSummary, InsertSyncState, SyncState,
   DailySummary, CategoryRevenue, HourlyRevenue, GiftCardSummary,
-  InsertMcpQueryAudit
+  InsertMcpQueryAudit,
+  appSettingsRegistry, AppSettingKey, AppSettingValue,
 } from '@shared/schema';
 import { getEasternDateRange, formatEasternDate, formatHour, EASTERN_TIMEZONE } from './dateUtils';
+import { logger } from './logger';
 import { formatInTimeZone } from 'date-fns-tz';
 // Note: validateInsertData function needs to be implemented separately
 // We're just doing a simple validation check in createOrder for now
@@ -538,26 +540,55 @@ class PgStorage implements IStorage {
     };
   }
 
-  // Generic per-deployment runtime settings. The JSON is returned
-  // exactly as stored; callers must validate before use.
-  async getAppSetting(key: string): Promise<unknown | undefined> {
+  // Per-deployment runtime settings. The key/value pair is constrained
+  // by `appSettingsRegistry` in shared/schema.ts so callers get a typed
+  // value back and cannot accidentally store the wrong shape under a
+  // key. The stored JSON is re-validated against the registered schema
+  // on read; a malformed/legacy row is logged and surfaces as
+  // `undefined` so consumers fall back to their defaults rather than
+  // receive a wrong-shape value.
+  async getAppSetting<K extends AppSettingKey>(
+    key: K,
+  ): Promise<AppSettingValue<K> | undefined> {
     const rows = await db
       .select({ value: appSettings.value })
       .from(appSettings)
       .where(eq(appSettings.key, key));
-    return rows[0]?.value;
+    if (rows.length === 0) return undefined;
+    const schema = appSettingsRegistry[key];
+    const parsed = schema.safeParse(rows[0].value);
+    if (!parsed.success) {
+      logger.warn('app_settings.invalid_row', {
+        key,
+        issues: parsed.error.issues.map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+      });
+      return undefined;
+    }
+    return parsed.data as AppSettingValue<K>;
   }
 
-  async setAppSetting(key: string, value: unknown): Promise<void> {
+  async setAppSetting<K extends AppSettingKey>(
+    key: K,
+    value: AppSettingValue<K>,
+  ): Promise<void> {
+    // Defence-in-depth: validate against the registered schema even
+    // though TypeScript already narrows `value`, so a bad runtime
+    // payload (e.g. from a future caller bypassing types) is rejected
+    // before it reaches the DB.
+    const schema = appSettingsRegistry[key];
+    const parsed = schema.parse(value);
     // Upsert keeps the table at most one row per key. updated_at is
     // refreshed on every write so admins can audit when a setting last
     // changed via DB inspection.
     await db
       .insert(appSettings)
-      .values({ key, value: value as object })
+      .values({ key, value: parsed })
       .onConflictDoUpdate({
         target: appSettings.key,
-        set: { value: value as object, updatedAt: sql`CURRENT_TIMESTAMP` },
+        set: { value: parsed, updatedAt: sql`CURRENT_TIMESTAMP` },
       });
   }
 }
