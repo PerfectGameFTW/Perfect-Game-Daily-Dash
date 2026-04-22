@@ -352,6 +352,39 @@ export const insertPasswordResetTokenSchema = createInsertSchema(
 export type InsertPasswordResetToken = z.infer<typeof insertPasswordResetTokenSchema>;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 
+// Self-service recovery-email verification tokens (Task #98). When an
+// authenticated user proposes a new recovery email for their own
+// account, we email a one-time link to that proposed address; the
+// email is only attached to the user record once the link is clicked
+// (proving the user controls the inbox). Schema mirrors
+// password_reset_tokens — only the SHA-256 hash of the raw token is
+// persisted, the raw token is delivered exactly once via email and
+// never stored.
+export const emailVerificationTokens = pgTable(
+  "email_verification_tokens",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => users.id, {
+      onDelete: 'cascade',
+    }),
+    // The proposed email address the user wants to attach. Held here
+    // (not on `users`) so the user's existing recovery email keeps
+    // working until the new one is verified.
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => ({
+    userIdIdx: index("idx_email_verification_tokens_user_id").on(table.userId),
+  }),
+);
+
+export type EmailVerificationToken = typeof emailVerificationTokens.$inferSelect;
+
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
@@ -424,6 +457,35 @@ export const adminUpdateUserEmailSchema = z.object({
 });
 
 export type AdminUpdateUserEmailInput = z.infer<typeof adminUpdateUserEmailSchema>;
+
+// Self-service recovery-email proposal (Task #98). A signed-in user
+// proposes a new recovery email for their own account; the address is
+// only attached after they click the verification link delivered to
+// it. Empty string is intentionally NOT accepted here — clearing your
+// own recovery email would lock you out of the reset flow without an
+// admin's help, which is exactly the dead-end we're trying to remove.
+export const selfProposeRecoveryEmailSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .min(3, 'Email is required')
+    .max(254, 'Email is too long')
+    .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Must be a valid email address'),
+});
+
+export type SelfProposeRecoveryEmailInput = z.infer<
+  typeof selfProposeRecoveryEmailSchema
+>;
+
+// Confirmation step of the recovery-email flow: the raw token from
+// the verification link.
+export const confirmRecoveryEmailSchema = z.object({
+  token: z.string().min(1).max(256),
+});
+
+export type ConfirmRecoveryEmailInput = z.infer<
+  typeof confirmRecoveryEmailSchema
+>;
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type SelfRegisterInput = z.infer<typeof selfRegisterSchema>;

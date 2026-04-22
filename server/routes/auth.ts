@@ -19,6 +19,8 @@ import { z } from 'zod';
 import {
   adminCreateUserSchema,
   adminUpdateUserEmailSchema,
+  confirmRecoveryEmailSchema,
+  selfProposeRecoveryEmailSchema,
   strongPasswordSchema,
 } from '../../shared/schema';
 import {
@@ -32,6 +34,8 @@ import {
 } from '../errors';
 import {
   authLimiter,
+  emailVerificationConfirmLimiter,
+  emailVerificationRequestLimiter,
   passwordResetRequestLimiter,
   totpVerifyLimiter,
 } from '../middleware/rateLimiter';
@@ -499,6 +503,118 @@ export function createAuthRouter(): Router {
         res.json({ success: true });
       } catch (error) {
         logger.error('auth.completeReset.error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // Self-service recovery-email verification (Task #98)
+  //
+  // Lets a signed-in user attach a recovery email to their own
+  // account without an admin in the loop. Two-step:
+  //   POST /me/email/start-verification { email } → email link sent
+  //   POST /me/email/confirm           { token } → email applied
+  // GET /me/email/pending → "is there an outstanding verification?"
+  //
+  // The confirm endpoint is intentionally unauthenticated — the link
+  // target is opened by whichever browser receives the email, which
+  // may not have the user's session. Possession of a 256-bit token
+  // delivered to the proposed inbox proves email control.
+  // ---------------------------------------------------------------
+  router.post(
+    '/me/email/start-verification',
+    requireAuth,
+    emailVerificationRequestLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const userId = req.session?.userId;
+        if (!userId) {
+          throw new UnauthorizedError('Not authenticated');
+        }
+        const parsed = selfProposeRecoveryEmailSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+
+        // Same baseUrl resolution as the password-reset endpoint:
+        // require APP_BASE_URL in production, fall back to the
+        // request host in dev. Never trust the Host header in prod —
+        // an attacker could otherwise forge the link domain in the
+        // outbound email by sending a poisoned Host header.
+        let baseUrl = process.env.APP_BASE_URL;
+        if (!baseUrl) {
+          if (process.env.NODE_ENV === 'production') {
+            logger.error('auth.emailVerification.missing_app_base_url');
+            throw new Error(
+              'Email verification is not configured on this server.',
+            );
+          }
+          baseUrl = `${req.protocol}://${req.get('host')}`;
+        }
+
+        await authService.requestEmailVerification(
+          userId,
+          parsed.data!.email,
+          baseUrl,
+        );
+        res.json({
+          success: true,
+          message:
+            'Verification link sent. Check your inbox and click the link to confirm.',
+          pendingEmail: parsed.data!.email,
+        });
+      } catch (error) {
+        logger.error(
+          'auth.emailVerification.request_error',
+          errorContext(error),
+        );
+        next(error);
+      }
+    },
+  );
+
+  router.post(
+    '/me/email/confirm',
+    emailVerificationConfirmLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const parsed = confirmRecoveryEmailSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+
+        const result = await authService.confirmEmailVerification(
+          parsed.data!.token,
+        );
+        if (!result) {
+          throw new ValidationError(
+            'This verification link is invalid or has expired. Please request a new one.',
+          );
+        }
+        res.json({ success: true, email: result.email });
+      } catch (error) {
+        logger.error(
+          'auth.emailVerification.confirm_error',
+          errorContext(error),
+        );
+        next(error);
+      }
+    },
+  );
+
+  router.get(
+    '/me/email/pending',
+    requireAuth,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const userId = req.session?.userId;
+        if (!userId) {
+          throw new UnauthorizedError('Not authenticated');
+        }
+        const status = await authService.hasPendingEmailVerification(userId);
+        res.json(status);
+      } catch (error) {
+        logger.error(
+          'auth.emailVerification.pending_error',
+          errorContext(error),
+        );
         next(error);
       }
     },

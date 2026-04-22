@@ -637,6 +637,25 @@ async function exitWithError(error: unknown) {
     )`);
     log('✓ App settings schema verified');
 
+    // Recovery-email verification tokens (Task #98). Same self-bootstrap
+    // pattern as the other tables in this block: schema lives in
+    // shared/schema.ts and is the source of truth, but a freshly-deployed
+    // environment without `npm run db:push` still gets the table so the
+    // new self-service /me/email/* endpoints don't 500 on a missing
+    // relation.
+    log('Bootstrapping email verification tokens schema...');
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS email_verification_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_id ON email_verification_tokens (user_id)`);
+    log('✓ Email verification tokens schema verified');
+
     // Forced-rotation flag for users whose password predates the
     // strong-password policy (Task #55). Self-bootstrap pattern: in a
     // single DO block, add the column if missing and — only on that

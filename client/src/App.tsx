@@ -7,6 +7,7 @@ import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import ResetPassword from "@/pages/ResetPassword";
+import VerifyEmail from "@/pages/VerifyEmail";
 import ForcePasswordChange from "@/pages/ForcePasswordChange";
 import Admin from "@/pages/Admin";
 import McpAudit from "@/pages/McpAudit";
@@ -31,7 +32,8 @@ function Router() {
         !isAuthenticated &&
         location !== '/login' &&
         location !== '/register' &&
-        location !== '/reset') {
+        location !== '/reset' &&
+        location !== '/verify-email') {
       navigate('/login');
     }
   }, [isLoading, isAuthenticated, location, navigate]);
@@ -45,7 +47,8 @@ function Router() {
     !isLoading &&
     isAuthenticated &&
     user?.mustRotatePassword &&
-    location !== '/reset'
+    location !== '/reset' &&
+    location !== '/verify-email'
   ) {
     return <ForcePasswordChange />;
   }
@@ -56,6 +59,7 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/reset" component={ResetPassword} />
+      <Route path="/verify-email" component={VerifyEmail} />
       
       {/* Protected routes */}
       <Route path="/">

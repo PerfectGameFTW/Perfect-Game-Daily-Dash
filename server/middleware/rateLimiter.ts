@@ -55,6 +55,33 @@ export const passwordResetRequestLimiter = rateLimit({
   message: { error: 'Too many password reset requests, please try again later.' },
 });
 
+// Recovery-email verification request limiter (Task #98). Same shape
+// as passwordResetRequestLimiter — every successful call triggers an
+// outbound email to a user-supplied address, so a loose limit would
+// turn the endpoint into a free outbound-mail relay. 5 requests per
+// IP per hour leaves room for legitimate retries (typo + correction +
+// resend) while keeping abuse cheap to spot.
+export const emailVerificationRequestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many verification email requests, please try again later.' },
+});
+
+// Confirm endpoint is unauthenticated (the link target is hit by
+// whichever browser opens the email), so it needs its own brute-force
+// cap on token guesses. The token is 256 bits of entropy — guessing
+// is implausible — but the endpoint also gates a writable mutation,
+// so we still cap it.
+export const emailVerificationConfirmLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many verification attempts, please try again later.' },
+});
+
 export const syncLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 5,

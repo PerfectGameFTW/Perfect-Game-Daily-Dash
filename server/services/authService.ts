@@ -21,6 +21,7 @@ import { db } from '../db';
 import {
   users,
   passwordResetTokens,
+  emailVerificationTokens,
   type InsertUser,
   type User,
 } from '../../shared/schema';
@@ -625,6 +626,231 @@ export class AuthService {
     // invalidate and the COMMIT.
     if (ok && resetUserId !== null) invalidateUserCache(resetUserId);
     return ok;
+  }
+
+  /**
+   * Self-service: an authenticated user proposes a new recovery email
+   * for their own account. We generate a one-time verification token,
+   * store its SHA-256 hash with a 30-minute expiry alongside the
+   * proposed email (NOT yet attached to `users.email`), and deliver
+   * the raw token to the proposed address. The email is only attached
+   * to the account once the user clicks the link and `confirmEmailVerification`
+   * succeeds — proving they control the inbox.
+   *
+   * Pre-checks case-insensitive uniqueness against *other* accounts.
+   * On collision we silently no-op (log + return) rather than 409 to
+   * avoid handing any authenticated user an email-enumeration oracle.
+   * The user receives the same generic ack as a successful request;
+   * if they typed an address belonging to someone else, no email is
+   * ever delivered and the link cannot be confirmed. The DB-level
+   * partial unique index on LOWER(email) is the ultimate enforcer.
+   *
+   * Any prior unused tokens for the same user are invalidated so only
+   * the most recently issued link is valid — cleans up after the
+   * "user typed wrong, retried" path automatically.
+   */
+  async requestEmailVerification(
+    userId: number,
+    proposedEmail: string,
+    baseUrl: string,
+  ): Promise<void> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      // Caller should have verified auth, but guard anyway. Treating
+      // this as a precondition failure rather than an Auth/NotFound
+      // error keeps it from leaking past the route layer's generic
+      // error handler in surprising ways.
+      throw new AuthError('User not found');
+    }
+
+    const normalized = proposedEmail.trim();
+    // Case-insensitive collision check against *other* accounts. We
+    // do NOT surface this to the caller — that would create an
+    // enumeration oracle (any authenticated user could probe whether
+    // an arbitrary address is registered). Instead, log it and bail
+    // silently; the caller still gets the generic "verification sent"
+    // ack at the route layer.
+    const collision = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        and(
+          sql`LOWER(${users.email}) = LOWER(${normalized})`,
+          sql`${users.id} <> ${userId}`,
+        ),
+      )
+      .limit(1);
+    if (collision.length > 0) {
+      logger.warn('authService.email_verification_collision_suppressed', {
+        userId,
+        otherUserId: collision[0]!.id,
+      });
+      return;
+    }
+
+    // Invalidate any prior unused tokens for this user so only the
+    // most recently issued link works.
+    await db
+      .update(emailVerificationTokens)
+      .set({ usedAt: new Date() })
+      .where(
+        and(
+          eq(emailVerificationTokens.userId, userId),
+          isNull(emailVerificationTokens.usedAt),
+        ),
+      );
+
+    const rawToken = randomBytes(RESET_TOKEN_BYTES).toString('hex');
+    const tokenHash = hashResetToken(rawToken);
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+
+    await db.insert(emailVerificationTokens).values({
+      userId,
+      email: normalized,
+      tokenHash,
+      expiresAt,
+    });
+
+    const verifyUrl = `${baseUrl.replace(/\/$/, '')}/verify-email?token=${rawToken}`;
+    const subject = 'Confirm your Perfect Game Sales Dashboard recovery email';
+    const text =
+      `Hi ${user.username},\n\n` +
+      `You (or someone signed in to your account) asked to set this address as the ` +
+      `recovery email for your Perfect Game Sales Dashboard account. ` +
+      `Click the link below within 30 minutes to confirm:\n\n` +
+      `${verifyUrl}\n\n` +
+      `If you didn't expect this, you can ignore this email — your account will ` +
+      `not be changed unless the link is clicked.\n`;
+    const safeUsername = escapeHtml(user.username);
+    const safeVerifyUrl = escapeHtml(verifyUrl);
+    const html =
+      `<p>Hi ${safeUsername},</p>` +
+      `<p>You (or someone signed in to your account) asked to set this address as the ` +
+      `recovery email for your Perfect Game Sales Dashboard account. ` +
+      `Click the link below within 30 minutes to confirm:</p>` +
+      `<p><a href="${safeVerifyUrl}">${safeVerifyUrl}</a></p>` +
+      `<p>If you didn't expect this, you can ignore this email — your account will ` +
+      `not be changed unless the link is clicked.</p>`;
+
+    try {
+      await sendEmail({ to: normalized, subject, text, html });
+    } catch (err) {
+      // Same posture as the password-reset email: log and move on.
+      // The route layer returns a generic ack so a transient SendGrid
+      // outage doesn't leak provider state to the caller.
+      logger.error(
+        'authService.email_verification_send_failed',
+        errorContext(err),
+      );
+    }
+  }
+
+  /**
+   * Whether the caller has an outstanding (unused, unexpired)
+   * verification token. The route uses this to decide whether to
+   * render "check your inbox" vs. the empty form on the recovery-
+   * email screen after a refresh.
+   */
+  async hasPendingEmailVerification(userId: number): Promise<{
+    pending: boolean;
+    pendingEmail: string | null;
+  }> {
+    const rows = await db
+      .select({
+        email: emailVerificationTokens.email,
+        expiresAt: emailVerificationTokens.expiresAt,
+      })
+      .from(emailVerificationTokens)
+      .where(
+        and(
+          eq(emailVerificationTokens.userId, userId),
+          isNull(emailVerificationTokens.usedAt),
+          gt(emailVerificationTokens.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+    const row = rows[0];
+    return {
+      pending: Boolean(row),
+      pendingEmail: row?.email ?? null,
+    };
+  }
+
+  /**
+   * Confirm a recovery-email verification token. Atomically (in one
+   * DB transaction):
+   *   1. Validates the token (exists, unused, unexpired).
+   *   2. Marks it used so it can never be redeemed twice.
+   *   3. Sets users.email to the address the token was issued for.
+   *
+   * Returns the confirmed email on success. Returns null when the
+   * token is unknown / expired / already used. Throws ConflictError
+   * if another account claimed the same email between the request
+   * and the confirm — in which case the transaction rolls back so
+   * the token remains *unused* and the user can retry with a fresh
+   * address (no token-burn defect).
+   */
+  async confirmEmailVerification(
+    rawToken: string,
+  ): Promise<{ email: string; userId: number } | null> {
+    if (!rawToken || typeof rawToken !== 'string') return null;
+    const tokenHash = hashResetToken(rawToken);
+    const now = new Date();
+
+    let result: { email: string; userId: number } | null = null;
+    try {
+      await db.transaction(async (tx) => {
+        // Atomically claim the token. The WHERE clause guarantees only
+        // one concurrent caller wins, and the RETURNING gives us the
+        // userId + proposed email in the same round trip.
+        const claimed = await tx
+          .update(emailVerificationTokens)
+          .set({ usedAt: now })
+          .where(
+            and(
+              eq(emailVerificationTokens.tokenHash, tokenHash),
+              isNull(emailVerificationTokens.usedAt),
+              gt(emailVerificationTokens.expiresAt, now),
+            ),
+          )
+          .returning({
+            userId: emailVerificationTokens.userId,
+            email: emailVerificationTokens.email,
+          });
+        const record = claimed[0];
+        if (!record) return;
+
+        const updated = await tx
+          .update(users)
+          .set({ email: record.email })
+          .where(eq(users.id, record.userId))
+          .returning({ id: users.id });
+        if (updated.length === 0) {
+          // User row vanished between request and confirm. Roll back
+          // so the token isn't silently burned — a re-issued token
+          // against a still-extant user can succeed cleanly.
+          throw new Error('email_verification_user_missing');
+        }
+
+        result = { email: record.email, userId: record.userId };
+      });
+    } catch (err) {
+      // Postgres 23505 = unique-violation on uniq_users_email_lower.
+      // Another account claimed the same address between request and
+      // confirm. The transaction rolled back so the token is still
+      // unused; surface a 409 so the route returns a clean error.
+      if (err && typeof err === 'object' && (err as any).code === '23505') {
+        throw new ConflictError('Email already in use by another account');
+      }
+      // Internal sentinel for the missing-user rollback above.
+      if (err instanceof Error && err.message === 'email_verification_user_missing') {
+        return null;
+      }
+      throw err;
+    }
+
+    if (result) invalidateUserCache((result as { userId: number }).userId);
+    return result;
   }
 
   /**

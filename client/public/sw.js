@@ -38,14 +38,26 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (request.method === 'GET') {
+    // Never cache the recovery-email verification page or any request
+    // carrying a `token` query param — the URL itself is sensitive
+    // (single-use credential) and would otherwise be persisted in
+    // Cache Storage keyed by the full URL.
+    const isSensitive =
+      url.pathname === '/verify-email' || url.searchParams.has('token');
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          if (!isSensitive) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
           return response;
         })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
+        .catch(() =>
+          isSensitive
+            ? new Response('', { status: 504 })
+            : caches.match(request).then((cached) => cached || caches.match('/'))
+        )
     );
     return;
   }

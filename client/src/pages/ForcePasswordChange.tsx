@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { apiRequest } from '@/lib/queryClient';
 
@@ -8,20 +8,48 @@ import { apiRequest } from '@/lib/queryClient';
  * Displayed in place of the rest of the app whenever the authenticated
  * user's `mustRotatePassword` flag is true — meaning their stored
  * password predates the current strong-password policy. The user can:
- *   1. Trigger the existing email-verified reset flow against their own
+ *   1. Set or update their own recovery email (Task #98) so the reset
+ *      flow has somewhere to send the link to.
+ *   2. Trigger the existing email-verified reset flow against their own
  *      account, then click the link from their inbox to complete
- *      rotation on the public /reset page; or
- *   2. Sign out.
+ *      rotation on the public /reset page.
+ *   3. Sign out.
  *
  * The rotation itself happens via the unchanged
  * /api/auth/complete-reset endpoint, which clears `mustRotatePassword`
  * on success. The next /api/auth/me call will then unlock the app.
  */
 export default function ForcePasswordChange() {
-  const { user, logout } = useAuth();
+  const { user, logout, checkAuth } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Recovery-email management state.
+  const [emailInput, setEmailInput] = useState('');
+  const [emailSubmitting, setEmailSubmitting] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+
+  // On mount (and whenever user.email changes after a confirm),
+  // ask the server whether there's an outstanding verification so we
+  // can render the "check your inbox" hint after a refresh.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest('GET', '/api/auth/me/email/pending');
+        if (!cancelled && res?.pending) {
+          setPendingEmail(res.pendingEmail || null);
+        }
+      } catch {
+        // Non-fatal — UI just won't show the hint.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.email]);
 
   const onRequestReset = async () => {
     if (!user?.username) return;
@@ -47,8 +75,38 @@ export default function ForcePasswordChange() {
     }
   };
 
+  const onRequestEmailVerification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEmailError(null);
+    const proposed = emailInput.trim();
+    // Cheap client-side sanity check; the server enforces the real rule.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(proposed)) {
+      setEmailError('Please enter a valid email address.');
+      return;
+    }
+    setEmailSubmitting(true);
+    try {
+      const res = await apiRequest('POST', '/api/auth/me/email/start-verification', {
+        body: JSON.stringify({ email: proposed }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      setPendingEmail(res?.pendingEmail || proposed);
+      setEmailInput('');
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Unable to send a verification email. Please try again later.';
+      setEmailError(msg);
+    } finally {
+      setEmailSubmitting(false);
+    }
+  };
+
+  const hasEmail = Boolean(user?.email);
+
   return (
-    <div className="flex h-screen items-center justify-center bg-gray-50">
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 py-8">
       <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
         <div className="mb-6 text-center">
           <img src="/images/PG_logo_web.PNG" alt="Perfect Game Logo" className="mx-auto h-24" />
@@ -70,16 +128,74 @@ export default function ForcePasswordChange() {
           </div>
         )}
 
+        {/* Recovery email management. Always visible so a user with an
+            email on file can still update it (e.g. after losing access to
+            the original inbox). */}
+        <div className="mb-6 rounded border border-gray-200 bg-gray-50 p-4">
+          <h2 className="text-sm font-semibold text-gray-800">
+            Recovery email
+          </h2>
+          {hasEmail ? (
+            <p className="mt-1 text-sm text-gray-600">
+              Current: <span className="font-mono">{user?.email}</span>
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-amber-700">
+              No recovery email is on file for your account. Add one below so
+              we have somewhere to send your reset link.
+            </p>
+          )}
+
+          {pendingEmail && (
+            <p className="mt-2 rounded bg-blue-50 p-2 text-sm text-blue-800">
+              We've sent a verification link to{' '}
+              <span className="font-mono">{pendingEmail}</span>. Click the
+              link in that email to attach it to your account, then come back
+              and request your reset link.
+            </p>
+          )}
+
+          <form onSubmit={onRequestEmailVerification} className="mt-3 space-y-2">
+            <label htmlFor="recovery-email" className="block text-xs font-medium text-gray-700">
+              {hasEmail ? 'Change recovery email' : 'Set recovery email'}
+            </label>
+            <input
+              id="recovery-email"
+              type="email"
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              autoComplete="email"
+              placeholder="you@example.com"
+              className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 text-black"
+            />
+            {emailError && (
+              <p className="text-sm text-red-600">{emailError}</p>
+            )}
+            <button
+              type="submit"
+              disabled={emailSubmitting || emailInput.trim() === ''}
+              className="w-full rounded-md bg-gray-700 px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:bg-gray-400"
+            >
+              {emailSubmitting ? 'Sending verification...' : 'Send verification email'}
+            </button>
+            <p className="text-xs text-gray-500">
+              We'll send a one-time link to that address. Click it within
+              30 minutes to attach the email to your account.
+            </p>
+          </form>
+        </div>
+
         <div className="space-y-3 text-sm text-gray-700">
           <p>
             Click the button below and we'll email you a one-time link to
             choose a new password. The link expires in 30 minutes.
           </p>
-          <p className="text-gray-500">
-            If we don't have a recovery email on file for your account,
-            no email will arrive — please contact an administrator to set
-            one up.
-          </p>
+          {!hasEmail && (
+            <p className="text-amber-700">
+              You'll need to verify a recovery email above before this can
+              deliver anything.
+            </p>
+          )}
         </div>
 
         <button
@@ -93,7 +209,12 @@ export default function ForcePasswordChange() {
 
         <button
           type="button"
-          onClick={() => logout()}
+          onClick={() => {
+            // Best-effort refresh in case the user verified their email
+            // in another tab and just wants to re-render with the new state.
+            checkAuth().catch(() => {});
+            logout();
+          }}
           className="mt-3 w-full rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
         >
           Sign out
