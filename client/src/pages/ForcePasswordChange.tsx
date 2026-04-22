@@ -20,7 +20,7 @@ import { apiRequest } from '@/lib/queryClient';
  * on success. The next /api/auth/me call will then unlock the app.
  */
 export default function ForcePasswordChange() {
-  const { user, logout, checkAuth } = useAuth();
+  const { user, logout } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -210,9 +210,6 @@ export default function ForcePasswordChange() {
         <button
           type="button"
           onClick={() => {
-            // Best-effort refresh in case the user verified their email
-            // in another tab and just wants to re-render with the new state.
-            checkAuth().catch(() => {});
             logout();
           }}
           className="mt-3 w-full rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
