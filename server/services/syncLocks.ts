@@ -172,11 +172,16 @@ function utcDayKey(d: Date = new Date()): string {
  * current UTC day. Returns `{ ok: false }` if granting the request would
  * push us over `MAX_SQUARE_PAGES_PER_DAY` for the day; the counter is
  * left unchanged in that case so the caller can stop cleanly.
+ *
+ * `dayOverride` exists solely so the test suite can exercise the
+ * conditional-UPDATE guard without mutating today's real budget row in
+ * a shared dev DB. Production callers always omit it.
  */
 export async function consumeDailyBudget(
   pages: number,
+  dayOverride?: string,
 ): Promise<{ ok: boolean; used: number; cap: number }> {
-  const day = utcDayKey();
+  const day = dayOverride ?? utcDayKey();
   // Ensure today's row exists so the conditional UPDATE below has
   // something to operate on.
   await db.execute(sql`

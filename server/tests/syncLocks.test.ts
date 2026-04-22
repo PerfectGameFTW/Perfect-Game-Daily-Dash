@@ -31,11 +31,15 @@ import {
 } from '../services/syncLocks';
 import { syncService } from '../services/syncService';
 
-// Today's UTC day key, matching the private `utcDayKey` helper inside
-// syncLocks.ts. Kept local so we don't need to widen the public API
-// just to test the budget.
-function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+// Synthetic day key used for budget tests. Using a fake far-future
+// date keeps the test from ever colliding with the real current-day
+// budget row in the shared dev DB, addressing the architect's note
+// about test isolation. The implementation under test treats `day`
+// as an opaque text key, so any unique string works.
+const SYNTHETIC_TEST_DAY = '9999-12-31';
+
+function testDay(): string {
+  return SYNTHETIC_TEST_DAY;
 }
 
 // All test traffic uses RFC5737 TEST-NET-3 addresses (203.0.113.0/24)
@@ -43,16 +47,10 @@ function todayKey(): string {
 // operator-triggered audit history.
 const TEST_ACTOR_IP_PREFIX = '203.0.113.';
 
-async function clearTodayBudget() {
-  // The budget tests need to start from a known counter value. There
-  // is no way around mutating the real day row — tests run against
-  // the dev DB the rest of the team shares. The window where this
-  // matters is the few seconds the suite is running, and a
-  // legitimate backfill triggered during the test run would simply
-  // start its budget accounting from the next consume call. This is
-  // documented so a future maintainer doesn't conclude it's
-  // accidental.
-  await db.delete(syncDailyBudget).where(eq(syncDailyBudget.day, todayKey()));
+async function clearTestBudget() {
+  // Only touches the synthetic test day — never the real current-day
+  // row, even when the suite runs against a shared dev DB.
+  await db.delete(syncDailyBudget).where(eq(syncDailyBudget.day, testDay()));
 }
 
 async function clearTestAuditRows() {
@@ -68,12 +66,12 @@ async function clearTestAuditRows() {
 
 describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
   beforeEach(async () => {
-    await clearTodayBudget();
+    await clearTestBudget();
     await clearTestAuditRows();
   });
 
   afterAll(async () => {
-    await clearTodayBudget();
+    await clearTestBudget();
     await clearTestAuditRows();
   });
 
@@ -150,7 +148,7 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
 
   describe('per-UTC-day Square page budget', () => {
     it('returns ok:false and leaves the counter unchanged when a request would exceed the cap', async () => {
-      const day = todayKey();
+      const day = testDay();
       // Seed the day's budget one page below the cap so a 2-page
       // request must be rejected.
       await db.insert(syncDailyBudget).values({
@@ -158,7 +156,7 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
         pagesUsed: MAX_SQUARE_PAGES_PER_DAY - 1,
       });
 
-      const result = await consumeDailyBudget(2);
+      const result = await consumeDailyBudget(2, testDay());
 
       expect(result.ok).toBe(false);
       expect(result.cap).toBe(MAX_SQUARE_PAGES_PER_DAY);
@@ -177,17 +175,17 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
     });
 
     it('grants a request that fits exactly to the cap and rejects the next page', async () => {
-      const day = todayKey();
+      const day = testDay();
       await db.insert(syncDailyBudget).values({
         day,
         pagesUsed: MAX_SQUARE_PAGES_PER_DAY - 1,
       });
 
-      const allowed = await consumeDailyBudget(1);
+      const allowed = await consumeDailyBudget(1, testDay());
       expect(allowed.ok).toBe(true);
       expect(allowed.used).toBe(MAX_SQUARE_PAGES_PER_DAY);
 
-      const rejected = await consumeDailyBudget(1);
+      const rejected = await consumeDailyBudget(1, testDay());
       expect(rejected.ok).toBe(false);
       expect(rejected.used).toBe(MAX_SQUARE_PAGES_PER_DAY);
 
@@ -206,15 +204,15 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
       // that exactly one wins — anything else (e.g. a SELECT-then-
       // UPDATE refactor) would let both proceed and silently exceed
       // the cap.
-      const day = todayKey();
+      const day = testDay();
       await db.insert(syncDailyBudget).values({
         day,
         pagesUsed: MAX_SQUARE_PAGES_PER_DAY - 1,
       });
 
       const [a, b] = await Promise.all([
-        consumeDailyBudget(1),
-        consumeDailyBudget(1),
+        consumeDailyBudget(1, testDay()),
+        consumeDailyBudget(1, testDay()),
       ]);
 
       const wins = [a, b].filter((r) => r.ok);
@@ -234,14 +232,14 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
     it('creates the day row on first call when none exists', async () => {
       // Day row is cleared in beforeEach; first call should INSERT it
       // and grant the request.
-      const result = await consumeDailyBudget(5);
+      const result = await consumeDailyBudget(5, testDay());
       expect(result.ok).toBe(true);
       expect(result.used).toBe(5);
 
       const stored = await db
         .select()
         .from(syncDailyBudget)
-        .where(eq(syncDailyBudget.day, todayKey()))
+        .where(eq(syncDailyBudget.day, testDay()))
         .limit(1);
       expect(stored[0]?.pagesUsed).toBe(5);
     });
