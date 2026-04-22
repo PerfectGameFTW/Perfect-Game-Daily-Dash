@@ -1,19 +1,22 @@
 /**
  * Email Service
  *
- * Provider-agnostic outbound email. Today we support SendGrid via its
- * REST API when SENDGRID_API_KEY is set; otherwise (dev / unconfigured)
- * we log the message to the server console and return success. This lets
- * the password-reset flow be exercised end-to-end in development without
- * requiring email infrastructure, while production deployments simply
- * need to set SENDGRID_API_KEY (and optionally MAIL_FROM_EMAIL).
+ * Provider-agnostic outbound email. In production we send via the
+ * Replit SendGrid integration (connector_name=sendgrid), which exposes
+ * the SendGrid API key and verified sender address through the Replit
+ * connectors API. The integration is the recommended production path
+ * because it handles credential rotation centrally — no SENDGRID_API_KEY
+ * env var needs to be managed by hand.
  *
- * Wiring SendGrid via the Replit integrations system is the
- * recommended production path — that path also populates
- * SENDGRID_API_KEY, so this code does not need to change.
+ * For backwards compatibility / non-Replit hosts, a raw SENDGRID_API_KEY
+ * env var is still honored. If neither path is available (typical dev),
+ * the message is logged to the workflow console so the password-reset
+ * flow can be exercised end-to-end without email infrastructure.
  */
 
-const FROM_EMAIL = process.env.MAIL_FROM_EMAIL || 'no-reply@perfectgame.local';
+import sgMail from '@sendgrid/mail';
+
+const FROM_EMAIL_OVERRIDE = process.env.MAIL_FROM_EMAIL;
 const FROM_NAME = process.env.MAIL_FROM_NAME || 'Perfect Game Sales Dashboard';
 
 export interface EmailMessage {
@@ -23,52 +26,106 @@ export interface EmailMessage {
   html?: string;
 }
 
+interface SendGridCredentials {
+  apiKey: string;
+  fromEmail: string;
+}
+
+/**
+ * Fetch SendGrid credentials from the Replit connectors API. Returns
+ * null when the integration is not wired (so the caller can fall back
+ * to the raw env var or the dev console stub). Throws only on a real
+ * runtime error talking to the connectors API.
+ *
+ * Tokens behind the connectors API can rotate, so this is intentionally
+ * uncached — every send re-fetches.
+ */
+async function getSendGridCredentialsFromConnector(): Promise<SendGridCredentials | null> {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  if (!hostname) return null;
+
+  const xReplitToken = process.env.REPL_IDENTITY
+    ? 'repl ' + process.env.REPL_IDENTITY
+    : process.env.WEB_REPL_RENEWAL
+      ? 'depl ' + process.env.WEB_REPL_RENEWAL
+      : null;
+  if (!xReplitToken) return null;
+
+  const res = await fetch(
+    'https://' +
+      hostname +
+      '/api/v2/connection?include_secrets=true&connector_names=sendgrid',
+    {
+      headers: {
+        Accept: 'application/json',
+        'X-Replit-Token': xReplitToken,
+      },
+    },
+  );
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as { items?: Array<{ settings?: Record<string, string> }> };
+  const settings = data.items?.[0]?.settings;
+  if (!settings || !settings.api_key || !settings.from_email) return null;
+
+  return { apiKey: settings.api_key, fromEmail: settings.from_email };
+}
+
 /**
  * Send an email. Resolves on a delivery attempt; throws only on a hard
  * configuration error (e.g. SendGrid returns 4xx with the API key set).
  * The console fallback always succeeds so dev flows are never blocked.
  */
 export async function sendEmail(msg: EmailMessage): Promise<void> {
-  const apiKey = process.env.SENDGRID_API_KEY;
+  let apiKey = process.env.SENDGRID_API_KEY || '';
+  let fromEmail = FROM_EMAIL_OVERRIDE || '';
 
   if (!apiKey) {
+    try {
+      const creds = await getSendGridCredentialsFromConnector();
+      if (creds) {
+        apiKey = creds.apiKey;
+        if (!fromEmail) fromEmail = creds.fromEmail;
+      }
+    } catch (err) {
+      console.error(
+        '[emailService] Failed to fetch SendGrid credentials from connector:',
+        err,
+      );
+    }
+  }
+
+  if (!apiKey) {
+    if (process.env.NODE_ENV === 'production') {
+      // In production, refuse to silently swallow recovery emails.
+      throw new Error(
+        'SendGrid not configured: connect the SendGrid integration or set SENDGRID_API_KEY.',
+      );
+    }
     // Dev / unconfigured: log to stdout so the developer can copy the
-    // reset link out of the workflow logs. Never log this to a shared
-    // console in production — but in production SENDGRID_API_KEY will be
-    // set and this branch will not execute.
+    // reset link out of the workflow logs.
     console.warn(
-      '[emailService] SENDGRID_API_KEY not set; falling back to console log. ' +
-        'Set the env var (or wire the SendGrid integration) for real delivery.',
+      '[emailService] SendGrid not configured; falling back to console log. ' +
+        'Wire the SendGrid integration (or set SENDGRID_API_KEY) for real delivery.',
     );
     console.log(
-      `[emailService:dev-stub]\n  to:      ${msg.to}\n  from:    ${FROM_NAME} <${FROM_EMAIL}>\n  subject: ${msg.subject}\n  text:\n${msg.text}`,
+      `[emailService:dev-stub]\n  to:      ${msg.to}\n  from:    ${FROM_NAME} <${fromEmail || 'no-reply@perfectgame.local'}>\n  subject: ${msg.subject}\n  text:\n${msg.text}`,
     );
     return;
   }
 
-  const body = {
-    personalizations: [{ to: [{ email: msg.to }] }],
-    from: { email: FROM_EMAIL, name: FROM_NAME },
-    subject: msg.subject,
-    content: [
-      { type: 'text/plain', value: msg.text },
-      ...(msg.html ? [{ type: 'text/html', value: msg.html }] : []),
-    ],
-  };
-
-  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
+  if (!fromEmail) {
     throw new Error(
-      `SendGrid send failed: ${res.status} ${res.statusText} ${text.slice(0, 200)}`,
+      'SendGrid sender address is not configured: set MAIL_FROM_EMAIL or wire the SendGrid integration with a verified sender.',
     );
   }
+
+  sgMail.setApiKey(apiKey);
+  await sgMail.send({
+    to: msg.to,
+    from: { email: fromEmail, name: FROM_NAME },
+    subject: msg.subject,
+    text: msg.text,
+    ...(msg.html ? { html: msg.html } : {}),
+  });
 }
