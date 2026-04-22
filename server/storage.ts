@@ -11,8 +11,30 @@ import {
   OrderModifier, InsertOrderModifier,
   OrderDiscount, InsertOrderDiscount,
   OrderSummary,
-  InsertMcpQueryAudit
+  InsertMcpQueryAudit,
+  McpQueryAudit
 } from "@shared/schema";
+
+export interface McpQueryAuditFilters {
+  adminUsername?: string;
+  outcome?: 'success' | 'error';
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+export interface McpQueryAuditEntry extends McpQueryAudit {
+  adminUsername: string | null;
+}
+
+export interface McpQueryAuditPage {
+  entries: McpQueryAuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
 
 export interface IStorage {
@@ -69,6 +91,7 @@ export interface IStorage {
   // MCP read-query audit log
   recordMcpQueryAudit(entry: InsertMcpQueryAudit): Promise<void>;
   pruneMcpQueryAudit(maxAgeDays: number): Promise<number>;
+  listMcpQueryAudit(filters: McpQueryAuditFilters): Promise<McpQueryAuditPage>;
 
   // Generic per-deployment runtime settings (app_settings table). Values
   // are JSON-typed and intentionally untyped at the storage layer; each

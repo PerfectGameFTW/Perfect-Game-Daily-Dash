@@ -763,6 +763,48 @@ export function createApiRouter(): Router {
     },
   );
 
+  // Admin: paginated browser for the MCP read-query audit log. Backed by
+  // pgStorage.listMcpQueryAudit; supports filtering by admin username
+  // substring, success/error outcome, and date range.
+  router.get(
+    '/admin/mcp-audit',
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const querySchema = z.object({
+          adminUsername: z.string().trim().max(100).optional(),
+          outcome: z.enum(['success', 'error']).optional(),
+          startDate: z.string().datetime().optional(),
+          endDate: z.string().datetime().optional(),
+          limit: z.coerce.number().int().min(1).max(200).optional(),
+          offset: z.coerce.number().int().min(0).optional(),
+        });
+        const parsed = querySchema.safeParse(req.query);
+        if (!parsed.success) {
+          return res.status(400).json({
+            error: 'Invalid query parameters',
+            issues: parsed.error.issues.map((i) => ({
+              path: i.path.join('.'),
+              message: i.message,
+            })),
+          });
+        }
+        const { adminUsername, outcome, startDate, endDate, limit, offset } = parsed.data;
+        const page = await pgStorage.listMcpQueryAudit({
+          adminUsername,
+          outcome,
+          startDate: startDate ? new Date(startDate) : undefined,
+          endDate: endDate ? new Date(endDate) : undefined,
+          limit,
+          offset,
+        });
+        res.json(page);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // NOTE: do NOT attach the error middleware here — `server/routes.ts`
   // adds more routes to this router AFTER createApiRouter() returns,
   // and Express won't dispatch an error middleware to a route that was

@@ -19,7 +19,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { InvalidOrderDataError, OrderNotFoundError } from './errors';
 
 // Import IStorage interface from './storage'
-import { IStorage } from './storage';
+import { IStorage, McpQueryAuditFilters, McpQueryAuditPage } from './storage';
 
 class PgStorage implements IStorage {
   // User methods
@@ -418,6 +418,69 @@ class PgStorage implements IStorage {
       WHERE created_at < NOW() - (${maxAgeDays} || ' days')::interval
     `);
     return result.rowCount ?? 0;
+  }
+
+  async listMcpQueryAudit(filters: McpQueryAuditFilters): Promise<McpQueryAuditPage> {
+    const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+    const offset = Math.max(filters.offset ?? 0, 0);
+
+    const conditions: any[] = [];
+    if (filters.adminUsername && filters.adminUsername.trim() !== '') {
+      const needle = `%${filters.adminUsername.trim().toLowerCase()}%`;
+      conditions.push(sql`LOWER(u.username) LIKE ${needle}`);
+    }
+    if (filters.outcome === 'success') {
+      conditions.push(sql`a.error IS NULL`);
+    } else if (filters.outcome === 'error') {
+      conditions.push(sql`a.error IS NOT NULL`);
+    }
+    if (filters.startDate) {
+      conditions.push(sql`a.created_at >= ${filters.startDate.toISOString()}::timestamptz`);
+    }
+    if (filters.endDate) {
+      conditions.push(sql`a.created_at <= ${filters.endDate.toISOString()}::timestamptz`);
+    }
+
+    const whereClause = conditions.length === 0
+      ? sql``
+      : sql`WHERE ${sql.join(conditions, sql` AND `)}`;
+
+    const rowsResult = await db.execute(sql`
+      SELECT a.id, a.admin_user_id, a.ip, a.query, a.row_count,
+             a.error, a.duration_ms, a.created_at,
+             u.username AS admin_username
+      FROM mcp_query_audit a
+      LEFT JOIN users u ON u.id = a.admin_user_id
+      ${whereClause}
+      ORDER BY a.created_at DESC, a.id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+
+    const totalResult = await db.execute(sql`
+      SELECT COUNT(*)::int AS total
+      FROM mcp_query_audit a
+      LEFT JOIN users u ON u.id = a.admin_user_id
+      ${whereClause}
+    `);
+
+    const entries = rowsResult.rows.map((row) => ({
+      id: Number(row.id),
+      adminUserId: row.admin_user_id === null ? null : Number(row.admin_user_id),
+      ip: (row.ip as string | null) ?? null,
+      query: row.query as string,
+      rowCount: row.row_count === null ? null : Number(row.row_count),
+      error: (row.error as string | null) ?? null,
+      durationMs: Number(row.duration_ms),
+      createdAt: new Date(row.created_at as string),
+      adminUsername: (row.admin_username as string | null) ?? null,
+    }));
+
+    return {
+      entries,
+      total: Number(totalResult.rows[0]?.total ?? 0),
+      limit,
+      offset,
+    };
   }
 
   // Generic per-deployment runtime settings. The JSON is returned

@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
-import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone } from 'lucide-react';
+import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone, Database } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -102,13 +102,22 @@ export default function Admin() {
             <ShieldCheck className="mr-2 h-8 w-8 text-purple-600" />
             <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
           </div>
-          <button
-            onClick={() => navigate('/')}
-            className="flex items-center rounded-md bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/admin/mcp-audit')}
+              className="flex items-center rounded-md bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
+            >
+              <Database className="mr-2 h-4 w-4" />
+              SQL Query History
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="flex items-center rounded-md bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Dashboard
+            </button>
+          </div>
         </div>
 
         <Card className="mb-8">
