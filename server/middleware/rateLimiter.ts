@@ -30,6 +30,20 @@ export const authLimiter = rateLimit({
   message: { error: 'Too many login attempts, please try again later.' },
 });
 
+// TOTP code-verification limiter for the login second-factor step.
+// 6-digit TOTP codes are 1-in-1,000,000 per attempt. Combine that with
+// 10 attempts / 15 min / IP and the brute-force expectation drops well
+// below the 30-second TOTP window. The route also uses a per-session
+// pending state with a short TTL so the practical attack window is
+// much narrower than the rate-limit alone suggests.
+export const totpVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many verification attempts, please try again later.' },
+});
+
 // Password-reset request limiter. Tighter than authLimiter because each
 // successful request triggers an outbound email — we cannot let an
 // attacker spam the inbox of a known account. 3 requests per IP per hour.

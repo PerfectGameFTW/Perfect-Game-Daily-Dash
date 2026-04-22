@@ -7,7 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
-import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell } from 'lucide-react';
+import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone } from 'lucide-react';
+import QRCode from 'qrcode';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
@@ -120,7 +121,7 @@ export default function Admin() {
         </Card>
 
         <Tabs defaultValue="users" value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6 grid w-full grid-cols-1 md:w-auto md:grid-cols-3">
+          <TabsList className="mb-6 grid w-full grid-cols-1 md:w-auto md:grid-cols-4">
             <TabsTrigger value="users" className="flex items-center">
               <Users className="mr-2 h-4 w-4" />
               <span>Users</span>
@@ -132,6 +133,10 @@ export default function Admin() {
             <TabsTrigger value="alerts" className="flex items-center">
               <Bell className="mr-2 h-4 w-4" />
               <span>Alerts</span>
+            </TabsTrigger>
+            <TabsTrigger value="security" className="flex items-center">
+              <KeyRound className="mr-2 h-4 w-4" />
+              <span>Security</span>
             </TabsTrigger>
           </TabsList>
 
@@ -230,6 +235,10 @@ export default function Admin() {
 
           <TabsContent value="alerts" className="mt-0 space-y-6">
             <SquareRateLimitAlertSettingsCard />
+          </TabsContent>
+
+          <TabsContent value="security" className="mt-0 space-y-6">
+            <TwoFactorAuthCard />
           </TabsContent>
         </Tabs>
       </div>
@@ -400,6 +409,297 @@ function SquareRateLimitAlertSettingsCard() {
               </Button>
             </div>
           </form>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Two-factor authentication (TOTP) — Task #56
+// ---------------------------------------------------------------------------
+//
+// Self-service enrollment screen for the signed-in admin. Three states:
+//   1. Not enrolled            — show "Enable 2FA" button.
+//   2. Pending enrollment      — show QR + secret + 6-digit verification.
+//   3. Enabled                 — show recovery-code count + "Disable 2FA"
+//      button (re-prompts for the current password).
+// Recovery codes are only shown once, immediately after a successful
+// verification — never re-fetched, never persisted client-side beyond
+// the lifetime of the current page render.
+
+interface TotpStatusResponse {
+  enabled: boolean;
+  pendingEnrollment: boolean;
+  recoveryCodesRemaining: number;
+}
+
+interface TotpEnrollResponse {
+  secret: string;
+  otpauthUrl: string;
+}
+
+const TOTP_STATUS_KEY = ['/api/auth/totp/status'] as const;
+
+function TwoFactorAuthCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data: status, isLoading } = useQuery<TotpStatusResponse>({
+    queryKey: TOTP_STATUS_KEY,
+  });
+
+  const [enrollment, setEnrollment] = useState<TotpEnrollResponse | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [verifyCode, setVerifyCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [disablePassword, setDisablePassword] = useState('');
+
+  // Render the QR whenever a fresh otpauth URL arrives. We do this in
+  // an effect (rather than inline) so the (sync) qrcode call doesn't
+  // run on every re-render.
+  useEffect(() => {
+    if (!enrollment) {
+      setQrDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    QRCode.toDataURL(enrollment.otpauthUrl, { width: 240, margin: 1 })
+      .then((url) => {
+        if (!cancelled) setQrDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setQrDataUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enrollment]);
+
+  const enrollMutation = useMutation({
+    mutationFn: () =>
+      apiRequest('POST', '/api/auth/totp/enroll', { body: '{}' }) as Promise<TotpEnrollResponse>,
+    onSuccess: (data) => {
+      setEnrollment(data);
+      setRecoveryCodes(null);
+      setVerifyCode('');
+      queryClient.invalidateQueries({ queryKey: TOTP_STATUS_KEY });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Could not start enrollment.';
+      toast({ title: 'Enrollment failed', description: message, variant: 'destructive' });
+    },
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: (code: string) =>
+      apiRequest('POST', '/api/auth/totp/enroll/verify', {
+        body: JSON.stringify({ code }),
+      }) as Promise<{ success: boolean; recoveryCodes: string[] }>,
+    onSuccess: (data) => {
+      setRecoveryCodes(data.recoveryCodes);
+      setEnrollment(null);
+      setQrDataUrl(null);
+      setVerifyCode('');
+      queryClient.invalidateQueries({ queryKey: TOTP_STATUS_KEY });
+      toast({ title: 'Two-factor authentication enabled', description: 'Save your recovery codes — they will not be shown again.' });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'That code did not match.';
+      toast({ title: 'Verification failed', description: message, variant: 'destructive' });
+    },
+  });
+
+  const disableMutation = useMutation({
+    mutationFn: (password: string) =>
+      apiRequest('POST', '/api/auth/totp/disable', {
+        body: JSON.stringify({ password }),
+      }),
+    onSuccess: () => {
+      setDisablePassword('');
+      setRecoveryCodes(null);
+      queryClient.invalidateQueries({ queryKey: TOTP_STATUS_KEY });
+      toast({ title: 'Two-factor authentication disabled' });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Could not disable 2FA.';
+      toast({ title: 'Disable failed', description: message, variant: 'destructive' });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Smartphone className="h-5 w-5 text-muted-foreground" />
+          Two-Factor Authentication (TOTP)
+        </CardTitle>
+        <CardDescription>
+          Add a 6-digit one-time code from an authenticator app (Google
+          Authenticator, 1Password, Authy, etc.) to your sign-in. Even
+          if your password leaks, an attacker still needs your phone.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="h-4 w-4" />
+            <span>Checking 2FA status...</span>
+          </div>
+        ) : (
+          <>
+            {/* Status banner */}
+            <div
+              className={`rounded-md border px-3 py-2 text-sm ${
+                status?.enabled
+                  ? 'border-green-200 bg-green-50 text-green-800'
+                  : 'border-amber-200 bg-amber-50 text-amber-800'
+              }`}
+            >
+              {status?.enabled ? (
+                <>
+                  <strong>Enabled.</strong> You have{' '}
+                  {status.recoveryCodesRemaining} recovery code
+                  {status.recoveryCodesRemaining === 1 ? '' : 's'} remaining.
+                </>
+              ) : (
+                <>
+                  <strong>Not enabled.</strong> Your account is currently
+                  protected by your password only.
+                </>
+              )}
+            </div>
+
+            {/* Freshly-generated recovery codes */}
+            {recoveryCodes && (
+              <div className="space-y-2 rounded-md border border-blue-200 bg-blue-50 p-4">
+                <p className="text-sm font-semibold text-blue-900">
+                  Save these recovery codes somewhere safe:
+                </p>
+                <p className="text-xs text-blue-900/80">
+                  Each code works exactly once. Use them to sign in if you
+                  lose access to your authenticator. They will not be shown
+                  again.
+                </p>
+                <ul className="mt-2 grid grid-cols-2 gap-1 font-mono text-sm text-blue-900">
+                  {recoveryCodes.map((c) => (
+                    <li key={c}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Pending enrollment: show QR + verify form */}
+            {enrollment ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Scan this QR code with your authenticator app, then enter
+                  the 6-digit code it shows to finish setup.
+                </p>
+                <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+                  {qrDataUrl ? (
+                    <img
+                      src={qrDataUrl}
+                      alt="TOTP QR code"
+                      className="h-60 w-60 rounded border"
+                    />
+                  ) : (
+                    <div className="flex h-60 w-60 items-center justify-center rounded border text-sm text-muted-foreground">
+                      <Spinner className="h-4 w-4" />
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <Label className="text-xs">Or enter this secret manually:</Label>
+                    <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+                      {enrollment.secret}
+                    </div>
+                  </div>
+                </div>
+                <div className="max-w-xs space-y-1.5">
+                  <Label htmlFor="totp-enroll-code">6-digit code</Label>
+                  <Input
+                    id="totp-enroll-code"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={verifyCode}
+                    onChange={(e) => setVerifyCode(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => verifyMutation.mutate(verifyCode)}
+                    disabled={verifyMutation.isPending || verifyCode.length < 6}
+                    className="gap-2"
+                  >
+                    {verifyMutation.isPending ? <Spinner className="h-4 w-4" /> : null}
+                    {verifyMutation.isPending ? 'Verifying...' : 'Verify and enable'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setEnrollment(null);
+                      setVerifyCode('');
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : status?.enabled ? (
+              // Enabled state: offer to disable (after password re-check)
+              // or to re-enroll (which replaces the secret only after the
+              // new code is verified, so the old factor stays live until
+              // then).
+              <div className="space-y-3">
+                <div className="max-w-xs space-y-1.5">
+                  <Label htmlFor="totp-disable-pw">
+                    Confirm your password to disable
+                  </Label>
+                  <Input
+                    id="totp-disable-pw"
+                    type="password"
+                    autoComplete="current-password"
+                    value={disablePassword}
+                    onChange={(e) => setDisablePassword(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => disableMutation.mutate(disablePassword)}
+                    disabled={disableMutation.isPending || !disablePassword}
+                    className="gap-2"
+                  >
+                    {disableMutation.isPending ? <Spinner className="h-4 w-4" /> : null}
+                    Disable 2FA
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => enrollMutation.mutate()}
+                    disabled={enrollMutation.isPending}
+                    className="gap-2"
+                  >
+                    {enrollMutation.isPending ? <Spinner className="h-4 w-4" /> : null}
+                    Re-enroll device
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                onClick={() => enrollMutation.mutate()}
+                disabled={enrollMutation.isPending}
+                className="gap-2"
+              >
+                {enrollMutation.isPending ? <Spinner className="h-4 w-4" /> : null}
+                Enable 2FA
+              </Button>
+            )}
+          </>
         )}
       </CardContent>
     </Card>

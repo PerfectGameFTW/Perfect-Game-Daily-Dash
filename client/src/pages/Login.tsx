@@ -26,16 +26,32 @@ const resetSchema = z.object({
     .max(254),
 });
 
+// TOTP step. Accepts either a 6-digit numeric code OR a formatted
+// recovery code like "ABCDE-FGHIJ". The server normalises spacing/
+// dashes/case before comparing.
+const totpSchema = z.object({
+  code: z
+    .string()
+    .min(6, 'Enter the 6-digit code from your authenticator app')
+    .max(32),
+});
+
 type LoginFormValues = z.infer<typeof loginSchema>;
 type ResetFormValues = z.infer<typeof resetSchema>;
+type TotpFormValues = z.infer<typeof totpSchema>;
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, checkAuth } = useAuth();
   const [, navigate] = useLocation();
-  const [mode, setMode] = useState<'login' | 'reset'>('login');
+  const [mode, setMode] = useState<'login' | 'totp' | 'reset'>('login');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const totpForm = useForm<TotpFormValues>({
+    resolver: zodResolver(totpSchema),
+    defaultValues: { code: '' },
+  });
 
   const loginForm = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -47,7 +63,7 @@ export default function Login() {
     defaultValues: { usernameOrEmail: '' },
   });
 
-  const switchMode = (next: 'login' | 'reset') => {
+  const switchMode = (next: 'login' | 'totp' | 'reset') => {
     setErrorMessage(null);
     setSuccessMessage(null);
     setMode(next);
@@ -57,15 +73,71 @@ export default function Login() {
     try {
       setIsSubmitting(true);
       setErrorMessage(null);
-      const success = await login(data.username, data.password);
-      if (success) {
-        navigate('/');
-      } else {
-        setErrorMessage('Invalid username or password');
+      // We talk to /api/auth/login directly (rather than the
+      // AuthContext.login helper) so we can detect the
+      // requiresTotp branch and pivot to the second-factor form
+      // without committing the auth context to a logged-in state.
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body?.requiresTotp) {
+        totpForm.reset();
+        switchMode('totp');
+        return;
       }
+      if (response.ok && body?.success && body?.user) {
+        // Same effect as useAuth().login() — refresh context state.
+        await checkAuth();
+        navigate('/');
+        return;
+      }
+      setErrorMessage(body?.error || 'Invalid username or password');
     } catch (error) {
       console.error('Login error:', error);
       setErrorMessage('An error occurred during login');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const onTotp = async (data: TotpFormValues) => {
+    try {
+      setIsSubmitting(true);
+      setErrorMessage(null);
+      const response = await fetch('/api/auth/totp/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body?.success) {
+        await checkAuth();
+        navigate('/');
+        return;
+      }
+      // 401 with the "expired" message means the pending login
+      // window closed — bounce back to the username/password
+      // step instead of stranding the user on the TOTP form.
+      if (response.status === 401 && /expired|pending/i.test(body?.error || '')) {
+        switchMode('login');
+        setErrorMessage(body?.error || 'Please sign in again');
+        return;
+      }
+      setErrorMessage(body?.error || 'Invalid verification code');
+    } catch (error) {
+      console.error('TOTP verify error:', error);
+      setErrorMessage('An error occurred verifying the code');
     } finally {
       setIsSubmitting(false);
     }
@@ -117,7 +189,52 @@ export default function Login() {
           <div className="mb-4 rounded bg-green-100 p-3 text-green-700">{successMessage}</div>
         )}
 
-        {mode === 'login' ? (
+        {mode === 'totp' ? (
+          <form onSubmit={totpForm.handleSubmit(onTotp)} className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Open your authenticator app and enter the current 6-digit code.
+              If you've lost your device, you can use one of the recovery
+              codes you saved when you set up two-factor authentication.
+            </p>
+            <div>
+              <label htmlFor="totp-code" className="block text-sm font-medium text-gray-700">
+                Verification code
+              </label>
+              <input
+                id="totp-code"
+                type="text"
+                inputMode="text"
+                autoComplete="one-time-code"
+                autoFocus
+                {...totpForm.register('code')}
+                className={inputClass}
+              />
+              {totpForm.formState.errors.code && (
+                <p className="mt-1 text-sm text-red-600">
+                  {totpForm.formState.errors.code.message}
+                </p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-blue-400"
+            >
+              {isSubmitting ? 'Verifying...' : 'Verify and sign in'}
+            </button>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => switchMode('login')}
+                className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+              >
+                Back to Sign In
+              </button>
+            </div>
+          </form>
+        ) : mode === 'login' ? (
           <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
             <div>
               <label htmlFor="login-username" className="block text-sm font-medium text-gray-700">

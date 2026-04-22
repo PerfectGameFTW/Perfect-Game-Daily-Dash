@@ -52,3 +52,4 @@ timeoutMs = 20000
 [userenv]
 
 [userenv.shared]
+TOTP_ENCRYPTION_KEY = "7cc1a9005f7b7e505c0e0aa116c5b975fdd3f0493beb6e6184058d993471b5eb"

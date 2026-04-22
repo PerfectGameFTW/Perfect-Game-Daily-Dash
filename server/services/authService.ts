@@ -204,6 +204,14 @@ export class AuthService {
    * @param password Password (plaintext)
    * @returns User if authentication successful, null otherwise
    */
+  /**
+   * Login a user — password-only step. Returns the user row on a
+   * successful password match, regardless of whether the account
+   * additionally has TOTP enabled. The route layer is responsible for
+   * checking `user.totpEnabled` and gating session creation behind a
+   * second-factor verification step before issuing the authenticated
+   * cookie.
+   */
   async loginUser(username: string, password: string): Promise<User | null> {
     // Look up the user. We always run exactly one bcrypt.compare so that
     // the response time is indistinguishable across the three failure

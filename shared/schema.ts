@@ -292,6 +292,19 @@ export const users = pgTable(
     // the policy went live default to false because their password was
     // validated against strongPasswordSchema at creation time.
     mustRotatePassword: boolean("must_rotate_password").default(false).notNull(),
+    // TOTP second factor (Task #56). The base32 secret is encrypted with
+    // AES-256-GCM at rest using TOTP_ENCRYPTION_KEY (see
+    // server/services/totpCrypto.ts) — the format on disk is
+    // "v1:<iv-hex>:<ciphertext-hex>:<authTag-hex>" so a future key
+    // rotation can recognise the version. totpEnabled flips to true only
+    // after the user has verified their first 6-digit code; until then
+    // the secret is stored but ignored at login. totpRecoveryCodes is an
+    // array of bcrypt hashes — each one-time recovery code is consumed
+    // by removing its hash from the array. Non-admin accounts may also
+    // enrol but only admin login currently requires the second factor.
+    totpSecretEncrypted: text("totp_secret_encrypted"),
+    totpEnabled: boolean("totp_enabled").default(false).notNull(),
+    totpRecoveryCodes: text("totp_recovery_codes").array(),
   },
   (table) => ({
     // Case-insensitive uniqueness on the recovery email so two accounts

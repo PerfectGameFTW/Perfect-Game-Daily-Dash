@@ -24,6 +24,14 @@ declare module 'express-session' {
     username?: string;
     role?: string;
     createdAt?: number;
+    // Two-factor login state. After a successful password check on a
+    // TOTP-enabled account, the route handler stores the candidate
+    // user id (and a wall-clock issue time for expiry enforcement) on
+    // the session and responds with `{ requiresTotp: true }`. The full
+    // authenticated session (userId/username/role + regenerated cookie)
+    // is only created after `/api/auth/totp/verify` succeeds.
+    pendingTotpUserId?: number;
+    pendingTotpIssuedAt?: number;
   }
 }
 

@@ -13,6 +13,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { authService } from '../services/authService';
+import { totpService } from '../services/totpService';
 import { createSafeUser, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
 import {
@@ -29,7 +30,11 @@ import {
   sendError,
   toSafeErrorResponse,
 } from '../errors';
-import { authLimiter, passwordResetRequestLimiter } from '../middleware/rateLimiter';
+import {
+  authLimiter,
+  passwordResetRequestLimiter,
+  totpVerifyLimiter,
+} from '../middleware/rateLimiter';
 import { SESSION_COOKIE_NAME } from '../sessionConfig';
 import { pool } from '../db';
 
@@ -131,6 +136,33 @@ export function createAuthRouter(): Router {
         throw new Error('Session initialization failed');
       }
 
+      // Two-factor gate. If the account has TOTP enabled, do NOT issue
+      // an authenticated session yet — instead stash the candidate user
+      // id on the session and tell the client to collect a code. The
+      // pending state expires after PENDING_TOTP_TTL_MS so an
+      // attacker who steals a half-completed login session can't sit
+      // on it indefinitely.
+      if (user.totpEnabled) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            req.session.regenerate((err: Error | null) =>
+              err ? reject(err) : resolve(),
+            );
+          });
+        } catch (regenErr) {
+          console.error('Error regenerating session for TOTP step:', regenErr);
+          throw new Error('Session initialization failed');
+        }
+        req.session.pendingTotpUserId = user.id;
+        req.session.pendingTotpIssuedAt = Date.now();
+        await new Promise<void>((resolve, reject) => {
+          req.session.save((err: Error | null) =>
+            err ? reject(err) : resolve(),
+          );
+        });
+        return res.json({ success: true, requiresTotp: true });
+      }
+
       // Regenerate session ID to prevent session fixation. Any pre-login
       // session value (and its server-side row) is discarded; a brand-new
       // session ID is issued before any authenticated state is attached.
@@ -186,6 +218,205 @@ export function createAuthRouter(): Router {
       next(error);
     }
   });
+
+  // ---------------------------------------------------------------------
+  // Two-factor authentication (TOTP) — Task #56
+  // ---------------------------------------------------------------------
+  //
+  // Login flow:
+  //   POST /api/auth/login                     — username + password
+  //     -> { success: true, requiresTotp: true } if the account has TOTP
+  //        on; the response cookie now identifies a *pending* session
+  //        (no userId set yet). Otherwise the response is the existing
+  //        fully-authenticated payload.
+  //   POST /api/auth/totp/verify { code }      — finishes the pending
+  //        login by validating a 6-digit TOTP or a one-time recovery
+  //        code, regenerating the session, and attaching the user.
+  //
+  // Enrollment flow (under requireAuth, self-service):
+  //   GET  /api/auth/totp/status               — { enabled, pending,
+  //        recoveryCodesRemaining }
+  //   POST /api/auth/totp/enroll               — generates secret,
+  //        returns otpauth URL for QR rendering.
+  //   POST /api/auth/totp/enroll/verify { code } — confirms first code,
+  //        flips totpEnabled, returns the one-time recovery codes.
+  //   POST /api/auth/totp/disable { password } — turns 2FA off after a
+  //        password re-check (defense in depth against a momentarily
+  //        unattended browser).
+
+  // Pending TOTP-login state expires after this. Long enough that a
+  // user can fish out their phone, short enough that a stolen
+  // pending-cookie can't be parked indefinitely waiting for the
+  // attacker to phish the second factor.
+  const PENDING_TOTP_TTL_MS = 5 * 60 * 1000;
+
+  const totpVerifySchema = z.object({
+    // Accept either a 6-digit TOTP or a formatted recovery code
+    // (XXXXX-XXXXX). Server normalises spacing/dashes/case.
+    code: z.string().min(6).max(32),
+  });
+
+  router.post(
+    '/totp/verify',
+    totpVerifyLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        if (!req.session || !req.session.pendingTotpUserId) {
+          throw new UnauthorizedError('No pending login. Please sign in again.');
+        }
+        const issued = req.session.pendingTotpIssuedAt ?? 0;
+        if (Date.now() - issued > PENDING_TOTP_TTL_MS) {
+          // Drop the stale pending state so the next /login request
+          // starts from a clean session.
+          req.session.pendingTotpUserId = undefined;
+          req.session.pendingTotpIssuedAt = undefined;
+          await new Promise<void>((resolve) =>
+            req.session.save(() => resolve()),
+          );
+          throw new UnauthorizedError(
+            'Login attempt expired. Please sign in again.',
+          );
+        }
+
+        const parsed = totpVerifySchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+        const candidateId = req.session.pendingTotpUserId;
+
+        const ok = await totpService.verifyLoginCode(
+          candidateId,
+          parsed.data!.code,
+        );
+        if (!ok) {
+          throw new UnauthorizedError('Invalid verification code');
+        }
+
+        const user = await authService.getUserById(candidateId);
+        if (!user) {
+          throw new UnauthorizedError('Account no longer exists');
+        }
+
+        // Promote the pending session to a fully authenticated one.
+        // Regenerate again so the cookie issued to a passive observer
+        // of the password step cannot be reused post-2FA.
+        try {
+          await new Promise<void>((resolve, reject) => {
+            req.session.regenerate((err: Error | null) =>
+              err ? reject(err) : resolve(),
+            );
+          });
+        } catch (regenErr) {
+          console.error('Error regenerating session post-TOTP:', regenErr);
+          throw new Error('Session initialization failed');
+        }
+
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        req.session.role = user.role;
+        req.session.createdAt = Date.now();
+        req.session.pendingTotpUserId = undefined;
+        req.session.pendingTotpIssuedAt = undefined;
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            req.session.save((err: Error | null) =>
+              err ? reject(err) : resolve(),
+            );
+          });
+        } catch (saveErr) {
+          console.error('Error saving session post-TOTP:', saveErr);
+          await new Promise<void>((resolve) =>
+            req.session.destroy(() => resolve()),
+          );
+          res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
+          throw new Error('Session initialization failed');
+        }
+
+        res.json({ success: true, user: createSafeUser(user) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.get(
+    '/totp/status',
+    requireAuth,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const status = await totpService.getStatus(req.user!.id);
+        res.json(status);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.post(
+    '/totp/enroll',
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const result = await totpService.beginEnrollment(req.user!);
+        res.json(result);
+      } catch (error) {
+        console.error('Error beginning TOTP enrollment:', error);
+        next(error);
+      }
+    },
+  );
+
+  router.post(
+    '/totp/enroll/verify',
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const parsed = totpVerifySchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+        const codes = await totpService.verifyAndEnable(
+          req.user!.id,
+          parsed.data!.code,
+        );
+        if (!codes) {
+          throw new ValidationError(
+            'That code did not match. Make sure your device clock is correct and try the next code.',
+          );
+        }
+        res.json({ success: true, recoveryCodes: codes });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  const disableTotpSchema = z.object({
+    // Re-check the current password so a momentarily unattended
+    // browser cannot silently turn 2FA off.
+    password: z.string().min(1).max(128),
+  });
+
+  router.post(
+    '/totp/disable',
+    requireAuth,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const parsed = disableTotpSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+        const verified = await authService.loginUser(
+          req.user!.username,
+          parsed.data!.password,
+        );
+        if (!verified || verified.id !== req.user!.id) {
+          throw new UnauthorizedError('Password did not match');
+        }
+        await totpService.disable(req.user!.id);
+        res.json({ success: true });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   // Step 1 of the email-verified password reset flow. Always returns a
   // generic 200 so the endpoint cannot be used to enumerate accounts.
