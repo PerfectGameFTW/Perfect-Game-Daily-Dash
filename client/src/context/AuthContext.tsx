@@ -9,6 +9,10 @@ interface User {
   // policy (Task #55). When set, the app must redirect to the forced
   // password-change screen and refuse to render any other page.
   mustRotatePassword?: boolean;
+  // Recovery email address attached to the account (or null if the user
+  // hasn't been enrolled in account recovery yet). Set/cleared by an
+  // admin from the user-management page (Task #59).
+  email?: string | null;
 }
 
 interface AuthContextType {

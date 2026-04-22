@@ -105,7 +105,13 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
  */
 export function createSafeUser(
   user: any,
-): { id: number; username: string; role: string; mustRotatePassword: boolean } | null {
+): {
+  id: number;
+  username: string;
+  role: string;
+  mustRotatePassword: boolean;
+  email: string | null;
+} | null {
   if (!user) return null;
 
   // Return only safe user data (exclude password). `mustRotatePassword`
@@ -113,10 +119,17 @@ export function createSafeUser(
   // forced password-change screen for accounts whose password predates
   // the strong-password policy (see Task #55). Defaults to false for
   // any legacy code path that hands us a user shape missing the field.
+  // `email` is the recovery email shown in the admin user-management
+  // table so operators can see at a glance which accounts are enrolled
+  // in the password-reset flow (see Task #59). Normalized to null when
+  // the column is missing or empty so the client can render a single
+  // empty-state consistently.
+  const rawEmail = typeof user.email === 'string' ? user.email.trim() : '';
   return {
     id: user.id,
     username: user.username,
     role: user.role || 'user', // Default to 'user' if role is missing
     mustRotatePassword: Boolean(user.mustRotatePassword),
+    email: rawEmail === '' ? null : rawEmail,
   };
 }

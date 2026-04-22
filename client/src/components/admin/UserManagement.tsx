@@ -4,14 +4,17 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { 
-  Trash2, 
-  UserPlus, 
-  X, 
-  Shield, 
+import {
+  Trash2,
+  UserPlus,
+  X,
+  Shield,
   User as UserIcon,
   AlertCircle,
-  LoaderCircle
+  LoaderCircle,
+  Mail,
+  Pencil,
+  Check,
 } from 'lucide-react';
 import {
   Dialog,
@@ -44,20 +47,33 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-// Create user schema
+// Create user schema. The optional email accepts either a well-formed
+// address or an empty string (which the submit handler strips so we
+// don't send `email: ""` to the backend).
 const userSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   role: z.enum(['user', 'admin']).default('user'),
+  email: z
+    .string()
+    .trim()
+    .max(254)
+    .refine((v) => v === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), {
+      message: 'Must be a valid email address (or leave blank)',
+    })
+    .optional()
+    .default(''),
 });
 
 type UserFormValues = z.infer<typeof userSchema>;
 
-// User type definition
+// User type definition. `email` is the recovery address used by the
+// password-reset flow — null when the account hasn't been enrolled.
 interface User {
   id: number;
   username: string;
   role: string;
+  email: string | null;
 }
 
 export default function UserManagement() {
@@ -81,8 +97,17 @@ export default function UserManagement() {
       username: '',
       password: '',
       role: 'user',
+      email: '',
     },
   });
+
+  // Inline-edit state for the per-row recovery email. Only one row can
+  // be in edit mode at a time; entering edit on a new row replaces the
+  // previous draft so a stale value never gets committed to the wrong
+  // user.
+  const [editingEmailUserId, setEditingEmailUserId] = useState<number | null>(null);
+  const [emailDraft, setEmailDraft] = useState('');
+  const [savingEmailUserId, setSavingEmailUserId] = useState<number | null>(null);
 
   // Fetch users
   const fetchUsers = async () => {
@@ -119,13 +144,25 @@ export default function UserManagement() {
   // Handle user creation
   const handleCreateUser = async (data: UserFormValues) => {
     try {
+      // Strip an empty email so the backend's optional-email branch
+      // is taken — sending `email: ""` would fail the server-side
+      // adminCreateUserSchema (which requires a valid address when
+      // the field is present).
+      const trimmedEmail = (data.email ?? '').trim();
+      const payload: Record<string, unknown> = {
+        username: data.username,
+        password: data.password,
+        role: data.role,
+      };
+      if (trimmedEmail !== '') payload.email = trimmedEmail;
+
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Requested-With': 'XMLHttpRequest',
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
 
       if (response.ok) {
@@ -214,6 +251,75 @@ export default function UserManagement() {
     reset();
   };
 
+  // Begin editing a row's recovery email. Pre-fill with the existing
+  // value so the admin sees what's currently on file.
+  const startEditEmail = (user: User) => {
+    setEditingEmailUserId(user.id);
+    setEmailDraft(user.email ?? '');
+  };
+
+  const cancelEditEmail = () => {
+    setEditingEmailUserId(null);
+    setEmailDraft('');
+  };
+
+  // Persist the edited recovery email. Empty string clears the email
+  // (and disables password recovery for the account); the server-side
+  // schema accepts both shapes. Optimistic updates are intentionally
+  // skipped — the round trip is fast and we want the toast/error to
+  // come from the actual server response.
+  const handleSaveEmail = async (userId: number) => {
+    const trimmed = emailDraft.trim();
+    // Cheap client-side guard mirroring the server schema so a typo
+    // doesn't burn an HTTP round trip.
+    if (trimmed !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      toast({
+        title: 'Invalid email',
+        description: 'Enter a valid email address or leave the field blank.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      setSavingEmailUserId(userId);
+      const response = await fetch(`/api/auth/users/${userId}/email`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      if (response.ok) {
+        toast({
+          title: 'Email updated',
+          description:
+            trimmed === ''
+              ? 'Recovery email cleared. Password reset is now disabled for this account.'
+              : `Recovery email set to ${trimmed}.`,
+        });
+        cancelEditEmail();
+        fetchUsers();
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        toast({
+          title: 'Update failed',
+          description: errorData.error || 'Could not update email.',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('Error updating user email:', error);
+      toast({
+        title: 'Error',
+        description: 'An unexpected error occurred',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingEmailUserId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -271,6 +377,26 @@ export default function UserManagement() {
                 </div>
                 
                 <div className="space-y-2">
+                  <Label htmlFor="email" className="text-right">
+                    Recovery email <span className="text-xs font-normal text-gray-500">(optional)</span>
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="user@example.com"
+                    {...register('email')}
+                    autoComplete="off"
+                    className="text-black"
+                  />
+                  {errors.email && (
+                    <p className="text-xs text-red-500">{errors.email.message}</p>
+                  )}
+                  <p className="text-xs text-gray-500">
+                    Used by the password-reset flow. Leave blank to skip — you can add one later.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="role" className="text-right">
                     Role
                   </Label>
@@ -325,6 +451,9 @@ export default function UserManagement() {
                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Role
                 </th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Recovery Email
+                </th>
                 <th scope="col" className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                   Actions
                 </th>
@@ -333,7 +462,7 @@ export default function UserManagement() {
             <tbody className="divide-y divide-gray-200 bg-white">
               {loading && users.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="py-8 text-center">
+                  <td colSpan={4} className="py-8 text-center">
                     <div className="flex justify-center">
                       <Spinner className="h-8 w-8 text-blue-600" />
                     </div>
@@ -342,7 +471,7 @@ export default function UserManagement() {
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="py-8 text-center">
+                  <td colSpan={4} className="py-8 text-center">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <AlertCircle className="h-8 w-8 text-gray-400" />
                       <p className="text-sm text-gray-500">No users found</p>
@@ -386,6 +515,68 @@ export default function UserManagement() {
                       >
                         {user.role}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 align-middle">
+                      {editingEmailUserId === user.id ? (
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="email"
+                            value={emailDraft}
+                            onChange={(e) => setEmailDraft(e.target.value)}
+                            placeholder="user@example.com"
+                            className="h-8 max-w-[16rem] text-black"
+                            autoFocus
+                            disabled={savingEmailUserId === user.id}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="default"
+                            className="h-8 gap-1"
+                            onClick={() => handleSaveEmail(user.id)}
+                            disabled={savingEmailUserId === user.id}
+                            title="Save email"
+                          >
+                            {savingEmailUserId === user.id ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Check className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-8"
+                            onClick={cancelEditEmail}
+                            disabled={savingEmailUserId === user.id}
+                            title="Cancel"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <Mail className="h-4 w-4 text-gray-400" />
+                          {user.email ? (
+                            <span className="text-sm text-gray-800 break-all">{user.email}</span>
+                          ) : (
+                            <span className="text-xs italic text-gray-400">
+                              No email — password reset disabled
+                            </span>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-gray-500 hover:text-gray-700"
+                            onClick={() => startEditEmail(user)}
+                            title={user.email ? 'Edit email' : 'Add recovery email'}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-right">
                       <Button
