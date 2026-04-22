@@ -83,11 +83,66 @@ export async function requireAuth(
       return res.status(401).json({ error: 'Unauthorized' });
     }
     req.user = user;
+
+    // Mandatory-2FA gate (Task #100). When the deployment-wide
+    // require-admin-2FA toggle is on and the requester is an admin who
+    // hasn't enrolled TOTP, refuse every authenticated request EXCEPT
+    // the small allowlist needed for them to actually enrol or sign out
+    // (otherwise we'd lock the admin out of the very screens they need
+    // to fix the situation). The frontend gate in App.tsx is for UX;
+    // this is the real enforcement boundary — without it an admin could
+    // bypass the requirement by calling protected APIs directly with a
+    // valid session cookie.
+    if (user.role === 'admin' && !user.totpEnabled) {
+      try {
+        const setting = await pgStorage.getAppSetting(REQUIRE_ADMIN_2FA_SETTING_KEY);
+        if (setting?.enabled) {
+          if (!isTotpEnrollmentAllowedPath(req)) {
+            return res.status(403).json({
+              error: 'Two-factor authentication enrollment required',
+              code: 'TOTP_ENROLLMENT_REQUIRED',
+            });
+          }
+        }
+      } catch (err) {
+        // Fail-open on a transient DB hiccup looking up the setting,
+        // matching createSafeUserAsync's behaviour, so a flaky storage
+        // read can't lock every admin out of every page.
+        logger.warn('auth.requireAuth.require_admin_2fa_lookup_failed', errorContext(err));
+      }
+    }
+
     next();
   } catch (err) {
     logger.error('auth.requireAuth.user_load_failed', errorContext(err));
     return res.status(500).json({ error: 'Internal server error' });
   }
+}
+
+/**
+ * Routes a non-enrolled admin is still allowed to hit while the
+ * mandatory-2FA gate is active. Kept narrow on purpose: anything that
+ * lets them either enrol (TOTP routes), confirm their identity (/me),
+ * or get out (/logout). Everything else — order data, admin tools, MCP,
+ * the new admin-security endpoints — is denied until they enrol.
+ *
+ * The check uses `req.path` (the path within the mounted router) as
+ * well as `req.originalUrl` so the same allowlist works regardless of
+ * whether the middleware is mounted at the app or the `/api/auth`
+ * router level.
+ */
+function isTotpEnrollmentAllowedPath(req: Request): boolean {
+  const candidates = [req.path, req.originalUrl.split('?')[0]];
+  return candidates.some((p) => {
+    if (!p) return false;
+    // Anything under the TOTP enrollment / verification flow.
+    if (p.includes('/totp/')) return true;
+    if (p.endsWith('/totp')) return true;
+    // Identity + sign-out endpoints.
+    if (p.endsWith('/me')) return true;
+    if (p.endsWith('/logout')) return true;
+    return false;
+  });
 }
 
 /**

@@ -315,6 +315,89 @@ describe('Admin Security overview + require-2FA toggle (Task #100)', () => {
     expect(after[0]?.totpEnabled).toBe(true);
   });
 
+  it('refuses to disable 2FA on non-admin accounts via the admin endpoint', async () => {
+    // Pre-enable on the regular user just so the only thing that should
+    // make this fail is the role check.
+    await db
+      .update(users)
+      .set({ totpEnabled: true, totpSecretEncrypted: 'placeholder', totpRecoveryCodes: ['a'] })
+      .where(eq(users.id, normalUserId));
+    authService.invalidateUserCache(normalUserId);
+
+    const cookie = await loginNoTotp(ADMIN_A);
+    const r = await jsonReq(
+      `${baseUrl}/api/auth/admin/security/users/${normalUserId}/disable-totp`,
+      'POST',
+      { password: PWD },
+      cookie,
+    );
+    expect(r.status).toBe(400);
+
+    const after = await db.select().from(users).where(eq(users.id, normalUserId));
+    expect(after[0]?.totpEnabled).toBe(true);
+  });
+
+  it('blocks non-enrolled admin from protected APIs once require-2FA is on but allows enrollment + identity routes', async () => {
+    // Admin A turns the toggle on, then admin B (no TOTP) logs in.
+    const cookieA = await loginNoTotp(ADMIN_A);
+    await jsonReq(
+      `${baseUrl}/api/auth/admin/security/require-2fa`,
+      'PUT',
+      { enabled: true },
+      cookieA,
+    );
+
+    const cookieB = await loginNoTotp(ADMIN_B);
+
+    // Admin endpoints must be denied with TOTP_ENROLLMENT_REQUIRED, not
+    // silently allowed — this is the actual enforcement boundary the
+    // mustEnrollTotp gate stands in for.
+    const blocked = await jsonReq(
+      `${baseUrl}/api/auth/admin/security/overview`,
+      'GET',
+      undefined,
+      cookieB,
+    );
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.code).toBe('TOTP_ENROLLMENT_REQUIRED');
+
+    // /me must still work (so the SPA can render the enrollment screen
+    // with the user's username/role) and so should the TOTP enrollment
+    // endpoints (otherwise the admin can never get unstuck).
+    const me = await jsonReq(`${baseUrl}/api/auth/me`, 'GET', undefined, cookieB);
+    expect(me.status).toBe(200);
+    expect(me.body.mustEnrollTotp).toBe(true);
+
+    const enroll = await jsonReq(
+      `${baseUrl}/api/auth/totp/enrollment/begin`,
+      'POST',
+      undefined,
+      cookieB,
+    );
+    // We don't care about the body shape here, just that the gate let
+    // the request through to the route handler (i.e. it's not 403 with
+    // TOTP_ENROLLMENT_REQUIRED).
+    expect(enroll.body?.code).not.toBe('TOTP_ENROLLMENT_REQUIRED');
+
+    // Logout must remain available so a stuck admin can sign out.
+    const logout = await jsonReq(`${baseUrl}/api/auth/logout`, 'POST', undefined, cookieB);
+    expect(logout.body?.code).not.toBe('TOTP_ENROLLMENT_REQUIRED');
+  });
+
+  it('does not block normal users when require-2FA is on (gate is admin-only)', async () => {
+    const cookieA = await loginNoTotp(ADMIN_A);
+    await jsonReq(
+      `${baseUrl}/api/auth/admin/security/require-2fa`,
+      'PUT',
+      { enabled: true },
+      cookieA,
+    );
+    const cookieU = await loginNoTotp(NORMAL_USER);
+    const me = await jsonReq(`${baseUrl}/api/auth/me`, 'GET', undefined, cookieU);
+    expect(me.status).toBe(200);
+    expect(me.body.mustEnrollTotp).toBe(false);
+  });
+
   it('non-admins cannot call the disable endpoint', async () => {
     const cookie = await loginNoTotp(NORMAL_USER);
     const r = await jsonReq(

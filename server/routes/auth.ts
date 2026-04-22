@@ -795,6 +795,17 @@ export function createAuthRouter(): Router {
         if (!target) {
           throw new NotFoundError('User not found');
         }
+        // The admin Security panel exists to manage other admins'
+        // second factors; non-admin accounts already have a self-service
+        // disable flow and there is no operational reason for an admin
+        // to remotely disable a regular user's TOTP through this
+        // endpoint. Refusing here keeps the admin tool's blast radius
+        // tightly scoped (Task #100).
+        if (target.role !== 'admin') {
+          throw new ValidationError(
+            'This endpoint can only disable 2FA for admin accounts.',
+          );
+        }
         const wasEnabled = target.totpEnabled;
         // Same atomicity argument as the require-2fa toggle above:
         // disabling another admin's 2FA and writing the audit row must
