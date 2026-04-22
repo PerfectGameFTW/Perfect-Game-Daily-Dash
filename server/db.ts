@@ -22,10 +22,18 @@ export const pool = new Pool({
   connectionTimeoutMillis: 5000 // 5 second timeout
 });
 
-// Test the connection
+// Pool emits 'error' for *idle* client failures (network blip, server
+// dropping an idle TCP connection, Neon scaling its compute down, etc).
+// These are recoverable: the pg Pool will discard the broken client and
+// hand out a fresh one on the next acquire. The previous policy of
+// process.exit(-1) on every idle-client error converted a benign
+// reconnect into a hard process termination — in containerized envs
+// that means an availability outage on every routine network blip.
+// Log loudly for ops visibility but stay alive; if the underlying DB is
+// truly gone, individual route handlers will surface that as 5xx and
+// the orchestrator's healthcheck can decide to recycle us.
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
+  console.error('[db] pool idle-client error (recoverable):', err);
 });
 
 // Initialize Drizzle with the pool

@@ -45,6 +45,7 @@ const BACKFILL_BUDGET_PER_CHUNK = 10;
 // SyncError now lives in `server/errors.ts` (see Task #58). Re-exported.
 export { SyncError } from '../errors';
 import { SyncError } from '../errors';
+import { logger } from '../logger';
 
 export class SyncService {
   /** In-memory lock to prevent concurrent backfill runs within a single process */
@@ -1763,6 +1764,20 @@ export class SyncService {
           failedChunks++;
           // Do NOT advance nextChunkToProcess so that this chunk is retried on resume.
           // All later chunks will also be re-processed (operations are idempotent).
+          // Structured failure record so per-chunk errors are queryable
+          // in the log pipeline (chunk index + window + cause) instead of
+          // having to grep free-form console output during incident
+          // triage. Console line kept for local-dev readability.
+          logger.error('historicalBackfill.chunk_failed', {
+            chunkIndex: i,
+            chunkNumber: i + 1,
+            totalChunks: chunks.length,
+            chunkStart: start.toISOString(),
+            chunkEnd: end.toISOString(),
+            chunkDays,
+            error: err instanceof Error ? err.message : String(err),
+            errorName: err instanceof Error ? err.name : undefined,
+          });
           console.error(`[HistoricalBackfill] Chunk ${i + 1} failed entirely:`, err);
           await this.updateSyncState(state.id, {
             errorMessage: `Chunk ${i + 1} (${start.toISOString().slice(0, 10)}): ${err instanceof Error ? err.message : String(err)}`,

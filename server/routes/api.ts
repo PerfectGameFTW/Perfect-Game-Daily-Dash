@@ -28,6 +28,7 @@ import {
   analyzeGiftCardsLimiter,
   fixGiftCardsLimiter,
   fixGiftCardSingleLimiter,
+  healthLimiter,
 } from '../middleware/rateLimiter';
 import { toSafeErrorResponse } from '../errors';
 import { logger, errorContext } from '../logger';
@@ -54,7 +55,11 @@ export function createApiRouter(): Router {
   // Per-request access logs are emitted by the structured request logger
   // in server/index.ts (allow-listed fields only). Don't double-log here.
 
-  router.get('/health', (_req: Request, res: Response) => {
+  // /health is reachable without auth (allow-listed below). Pin a tight
+  // dedicated bucket so it can't be used as an unauthenticated firehose
+  // for log noise or to drain the global apiLimiter budget that the rest
+  // of /api shares.
+  router.get('/health', healthLimiter, (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 

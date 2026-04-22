@@ -471,6 +471,17 @@ app.use((req, res, next) => {
 
   res.on('finish', () => {
     if (!req.path.startsWith('/api')) return;
+    // /api/health is an unauthenticated liveness probe with its own
+    // tight rate limiter — logging every successful hit just produces
+    // noise that dilutes the signal of actual API activity. We DO still
+    // want to record 4xx/5xx (e.g. 429 from healthLimiter, 503 if the
+    // app is degraded) so abuse and outage signals are preserved.
+    // Strip a single trailing slash so /api/health and /api/health/
+    // are treated identically (Express default routing matches both).
+    const normalizedPath = req.path.endsWith('/') && req.path.length > 1
+      ? req.path.slice(0, -1)
+      : req.path;
+    if (normalizedPath === '/api/health' && res.statusCode < 400) return;
     const ctx = {
       requestId,
       method: req.method,

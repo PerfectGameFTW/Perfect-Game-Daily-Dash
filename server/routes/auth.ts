@@ -90,11 +90,18 @@ export function createAuthRouter(): Router {
       const user = await authService.getUserById(req.session.userId);
 
       if (!user) {
-        // Clear invalid session if user no longer exists
-        req.session.userId = undefined;
+        // The session refers to a user that no longer exists (deleted /
+        // hard-disabled). Fully destroy the session row in the store
+        // rather than just blanking userId — leaving an authenticated
+        // session-id alive in the store keeps a stale credential around
+        // that could be reused if the underlying user record is ever
+        // re-created with the same id, and accumulates orphan rows.
         await new Promise<void>((resolve) => {
-          req.session.save(() => resolve());
+          req.session.destroy(() => resolve());
         });
+        // Clear the cookie on the client too so the browser stops
+        // presenting the now-dead session id on subsequent requests.
+        res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
         return res.json(null);
       }
 

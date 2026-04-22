@@ -8,6 +8,20 @@ export const apiLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' },
 });
 
+// Dedicated, tight limiter for the unauthenticated /api/health probe.
+// It's allow-listed past requireAuth so an attacker can hit it without
+// any credentials; pinning a small budget here keeps it from being a
+// cheap signal-amplifier for log-noise generation or for shaving the
+// global apiLimiter budget that legitimate authenticated endpoints
+// share. 30/min is far above any real liveness probe cadence.
+export const healthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many health checks, please try again later.' },
+});
+
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
