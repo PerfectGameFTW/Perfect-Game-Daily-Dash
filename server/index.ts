@@ -15,7 +15,9 @@ import { registerMcpRoutes } from "./mcp";
 import { toSafeErrorResponse, sendError, ForbiddenError } from "./errors";
 import { isAllowedOrigin } from "./security/origin";
 import { SESSION_ABSOLUTE_MS } from "./sessionConfig";
-import { logger, newRequestId, errorContext } from "./logger";
+import { logger, newRequestId, errorContext, setLogShipperSink } from "./logger";
+import { logShipper } from "./services/logShipper";
+import { serverErrorAlerter } from "./services/serverErrorAlert";
 
 // Track the live HTTP server so the fatal-error shutdown routine can
 // stop accepting new connections before the process exits. Populated
@@ -83,6 +85,11 @@ async function fatalShutdown(label: string, err: unknown): Promise<void> {
     await pool.end().catch((e) => {
       logger.error('shutdown.pg_pool_end_failed', errorContext(e));
     });
+
+    // 4. Best-effort flush of buffered remote logs so the shutdown
+    //    breadcrumbs above (and any pre-crash error context) reach
+    //    the log backend before the process exits.
+    await logShipper.drain().catch(() => { /* shipper logs to stderr */ });
   } catch (cleanupErr) {
     logger.error('shutdown.cleanup_error', errorContext(cleanupErr));
   } finally {
@@ -135,6 +142,12 @@ const RESOLVED_NODE_ENV = process.env.NODE_ENV ?? 'development';
 logger.info('startup.env_resolved', { nodeEnv: RESOLVED_NODE_ENV });
 
 validateEnv();
+
+// Wire the structured logger to the optional remote shipper. When
+// `LOG_SHIPPER_URL` is unset (dev / fresh deploy) `start()` is a
+// no-op and `enqueue` short-circuits, so this costs nothing.
+logShipper.start();
+setLogShipperSink((line) => logShipper.enqueue(line));
 
 const app = express();
 
@@ -491,6 +504,11 @@ app.use((req, res, next) => {
     };
     if (res.statusCode >= 500) {
       logger.error('request', ctx);
+      // Feed the in-process 5xx alerter. This is independent of the
+      // log shipper: even if the remote backend is down, on-call
+      // still gets a webhook ping when the rate sustains over the
+      // configured threshold/window.
+      serverErrorAlerter.record(req.path, res.statusCode);
     } else if (res.statusCode >= 400) {
       logger.warn('request', ctx);
     } else {

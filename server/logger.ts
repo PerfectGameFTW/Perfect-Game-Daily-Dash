@@ -248,6 +248,18 @@ function sanitize(ctx?: LogContext): Record<string, unknown> | undefined {
   return out;
 }
 
+// Optional remote-shipping hook. Wired up by `server/index.ts` at
+// startup via `setLogShipperSink(line => logShipper.enqueue(line))`.
+// Keeping this as an opaque function (rather than importing the
+// shipper module here) avoids a circular dependency: the shipper
+// itself uses stderr for its own failure path so it never re-enters
+// this logger.
+type ShipperSink = (line: Record<string, unknown>) => void;
+let shipperSink: ShipperSink | null = null;
+export function setLogShipperSink(sink: ShipperSink | null): void {
+  shipperSink = sink;
+}
+
 function emit(level: LogLevel, msg: string, ctx?: LogContext): void {
   if (LEVEL_RANK[level] < MIN_LEVEL) return;
   const safeCtx = sanitize(ctx);
@@ -265,6 +277,17 @@ function emit(level: LogLevel, msg: string, ctx?: LogContext): void {
     process.stderr.write(out);
   } else {
     process.stdout.write(out);
+  }
+  // Forward the same allow-listed object to the remote shipper, if
+  // any. The shipper enqueues synchronously and never throws — see
+  // `server/services/logShipper.ts`.
+  if (shipperSink) {
+    try {
+      shipperSink(line);
+    } catch {
+      // Defense-in-depth: a buggy shipper sink must never break local
+      // logging.
+    }
   }
 }
 
