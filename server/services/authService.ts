@@ -82,6 +82,80 @@ const LOCKOUT_THRESHOLD = parsePositiveInt(process.env.LOGIN_LOCKOUT_THRESHOLD, 
 const LOCKOUT_WINDOW_MS =
   parsePositiveInt(process.env.LOGIN_LOCKOUT_WINDOW_MINUTES, 15) * 60 * 1000;
 
+// ---------------------------------------------------------------------
+// In-process TTL cache for user-by-id lookups (Task #83).
+//
+// `requireAuth` re-fetches the user row on every authenticated request
+// so deleted/demoted accounts lose access immediately. That guarantee
+// is correct but adds one DB round trip per hot endpoint. A short TTL
+// cache keeps the revocation window tight (single-digit seconds) while
+// removing the overhead from request bursts that hit the same user
+// repeatedly (the common case under load).
+//
+// TTL is configurable via USER_CACHE_TTL_SECONDS, clamped to [1, 60]
+// so a misconfiguration can't turn the cache into a long-lived stale
+// store. Default 10s is the midpoint of the 5–15s window suggested by
+// the task. Mutation paths (delete, email change, password change,
+// role change, totp toggles) call `invalidateUserCache(id)` so a user
+// who was just modified is never served from a stale entry.
+// ---------------------------------------------------------------------
+const USER_CACHE_TTL_MS = (() => {
+  const raw = parsePositiveInt(process.env.USER_CACHE_TTL_SECONDS, 10);
+  return Math.min(60, Math.max(1, raw)) * 1000;
+})();
+const USER_CACHE_MAX_ENTRIES = 5000;
+
+type UserCacheEntry = { user: User; expiresAt: number };
+const userCache = new Map<number, UserCacheEntry>();
+let cacheHits = 0;
+let cacheMisses = 0;
+
+function cacheGet(id: number): User | undefined {
+  const entry = userCache.get(id);
+  if (!entry) return undefined;
+  if (entry.expiresAt <= Date.now()) {
+    userCache.delete(id);
+    return undefined;
+  }
+  return entry.user;
+}
+
+function cacheSet(id: number, user: User): void {
+  // Bounded LRU-ish eviction: when full, drop the oldest insertion (Map
+  // iterates in insertion order). Re-inserting an existing key moves it
+  // to the end so frequently-seen users stay hot.
+  if (userCache.has(id)) userCache.delete(id);
+  if (userCache.size >= USER_CACHE_MAX_ENTRIES) {
+    const oldest = userCache.keys().next().value;
+    if (oldest !== undefined) userCache.delete(oldest);
+  }
+  userCache.set(id, { user, expiresAt: Date.now() + USER_CACHE_TTL_MS });
+}
+
+export function invalidateUserCache(userId: number): void {
+  userCache.delete(userId);
+}
+
+// Periodic summary so hit-rate trends are visible without grepping
+// per-request debug lines. Skipped when there's no traffic so a quiet
+// process doesn't spam the log. unref() keeps the timer from holding
+// the event loop open at shutdown.
+const CACHE_SUMMARY_INTERVAL_MS = 60 * 1000;
+if (process.env.NODE_ENV !== 'test') {
+  const t = setInterval(() => {
+    if (cacheHits === 0 && cacheMisses === 0) return;
+    logger.info('user cache summary', {
+      cacheHits,
+      cacheMisses,
+      cacheSize: userCache.size,
+      ttlMs: USER_CACHE_TTL_MS,
+    });
+    cacheHits = 0;
+    cacheMisses = 0;
+  }, CACHE_SUMMARY_INTERVAL_MS);
+  t.unref?.();
+}
+
 export class AuthService {
   /**
    * Register a new user
@@ -134,6 +208,7 @@ export class AuthService {
         .set({ email: valueToWrite })
         .where(eq(users.id, userId))
         .returning();
+      invalidateUserCache(userId);
       return result[0] ?? null;
     } catch (err) {
       // Postgres raises 23505 when the partial unique index on
@@ -312,6 +387,39 @@ export class AuthService {
   }
 
   /**
+   * Cached variant of `getUserById` used on hot authenticated paths
+   * (see `requireAuth`). Reads go through a tiny in-process TTL cache
+   * (default 10s, see USER_CACHE_TTL_MS) so a burst of requests from
+   * the same user only costs one DB round trip per TTL window.
+   *
+   * Cache invalidation is explicit: every mutation path that changes
+   * a user row calls `invalidateUserCache(id)` so a deleted/demoted
+   * account loses access on the very next request, matching the
+   * uncached behaviour the cache replaces.
+   *
+   * Per-call hit/miss is emitted at debug level; aggregate counts are
+   * emitted once a minute by the summary timer above.
+   */
+  async getUserByIdCached(id: number): Promise<User | undefined> {
+    const cached = cacheGet(id);
+    if (cached) {
+      cacheHits += 1;
+      logger.debug('user cache lookup', { userId: id, cacheHit: true });
+      return cached;
+    }
+    cacheMisses += 1;
+    const user = await this.getUserById(id);
+    logger.debug('user cache lookup', { userId: id, cacheHit: false });
+    if (user) cacheSet(id, user);
+    return user;
+  }
+
+  /** Drop a single user's cache entry. Safe to call with an unknown id. */
+  invalidateUserCache(id: number): void {
+    invalidateUserCache(id);
+  }
+
+  /**
    * Get user by username
    * 
    * @param username Username
@@ -459,7 +567,8 @@ export class AuthService {
     if (!rawToken || typeof rawToken !== 'string') return false;
     const tokenHash = hashResetToken(rawToken);
 
-    return await db.transaction(async (tx) => {
+    let resetUserId: number | null = null;
+    const ok = await db.transaction(async (tx) => {
       const now = new Date();
       const rows = await tx
         .select()
@@ -508,8 +617,14 @@ export class AuthService {
         })
         .where(eq(users.id, record.userId));
 
+      resetUserId = record.userId;
       return true;
     });
+    // Invalidate after the transaction commits so a concurrent reader
+    // can't refill the cache with the pre-commit row between the
+    // invalidate and the COMMIT.
+    if (ok && resetUserId !== null) invalidateUserCache(resetUserId);
+    return ok;
   }
 
   /**
@@ -520,6 +635,7 @@ export class AuthService {
    */
   async deleteUser(id: number): Promise<boolean> {
     const result = await db.delete(users).where(eq(users.id, id)).returning();
+    invalidateUserCache(id);
     return result.length > 0;
   }
 }

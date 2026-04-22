@@ -3,12 +3,17 @@
  *
  * Provides functionality for securing routes with user authentication.
  *
- * Every request guarded by `requireAuth` re-fetches the user from the
- * database and attaches it to `req.user`. This means a deleted or
- * demoted account loses access on the very next request — there is no
- * up-to-7-days window where a stale session keeps working after the
- * underlying user changes. `requireAdmin` reuses `req.user` so the
- * round-trip happens once per request, not twice.
+ * Every request guarded by `requireAuth` resolves the user from a
+ * tiny in-process TTL cache (default 10s, see `USER_CACHE_TTL_MS` in
+ * `services/authService.ts`) backed by a DB lookup on miss. The cache
+ * is explicitly invalidated by every mutation path that changes a
+ * user row (delete, email change, password reset, role change, totp
+ * toggles), so a deleted or demoted account loses access on the very
+ * next request rather than waiting up to a TTL window — there is
+ * still no up-to-7-days window where a stale session keeps working
+ * after the underlying user changes. `requireAdmin` reuses `req.user`
+ * so even on a cache miss the round-trip happens once per request,
+ * not twice.
  */
 
 import { Request, Response, NextFunction } from 'express';
@@ -66,7 +71,7 @@ export async function requireAuth(
   }
 
   try {
-    const user = await authService.getUserById(userId);
+    const user = await authService.getUserByIdCached(userId);
     if (!user) {
       // Account no longer exists — tear down the orphaned session so
       // the client stops presenting a now-meaningless cookie.

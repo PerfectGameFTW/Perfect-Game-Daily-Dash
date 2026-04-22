@@ -28,6 +28,7 @@ import { randomBytes } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { users, type User } from '../../shared/schema';
+import { invalidateUserCache } from './authService';
 import { encryptTotpSecret, decryptTotpSecret } from './totpCrypto';
 // Recovery codes use the same hashing primitive as user passwords so
 // the codebase has a single hash policy. The verifyPassword helper
@@ -107,6 +108,7 @@ export class TotpService {
         totpRecoveryCodes: null,
       })
       .where(eq(users.id, user.id));
+    invalidateUserCache(user.id);
     return {
       secret: secret.base32,
       otpauthUrl: totp.toString(),
@@ -143,6 +145,7 @@ export class TotpService {
       .update(users)
       .set({ totpEnabled: true, totpRecoveryCodes: hashedCodes })
       .where(eq(users.id, userId));
+    invalidateUserCache(userId);
     return plaintextCodes;
   }
 
@@ -185,6 +188,7 @@ export class TotpService {
           .update(users)
           .set({ totpRecoveryCodes: remaining })
           .where(eq(users.id, userId));
+        invalidateUserCache(userId);
         return true;
       }
     }
@@ -206,6 +210,7 @@ export class TotpService {
         totpRecoveryCodes: null,
       })
       .where(eq(users.id, userId));
+    invalidateUserCache(userId);
   }
 
   /**

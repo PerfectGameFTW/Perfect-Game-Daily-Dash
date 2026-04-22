@@ -181,6 +181,15 @@ const ALLOWED_FIELDS = new Set<string>([
   // rate context
   'limitMax',
   'windowMs',
+  // user-lookup TTL cache instrumentation (Task #83). `cacheHit` is a
+  // boolean tag emitted per requireAuth lookup; the count fields are
+  // emitted by the periodic summary so an operator can see hit-rate
+  // trend without grepping per-request lines.
+  'cacheHit',
+  'cacheHits',
+  'cacheMisses',
+  'cacheSize',
+  'ttlMs',
   // error context
   'code',
   'errorMessage',
