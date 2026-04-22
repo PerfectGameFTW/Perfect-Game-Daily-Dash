@@ -15,11 +15,18 @@ function hashResetToken(raw: string): string {
   return createHash('sha256').update(raw).digest('hex');
 }
 
+// Deterministic counter-based IP allocator. Each call returns a fresh
+// RFC5737 TEST-NET-1 address so each request gets its own
+// express-rate-limit bucket and tests never trip the per-IP caps. Using
+// a counter (rather than Math.random()) keeps test runs reproducible
+// and rules out the astronomically unlikely collision.
+let __ipCounter = 0;
 function uniqueIp(): string {
-  // Random RFC5737 TEST-NET-1 address so each request gets its own
-  // express-rate-limit bucket and tests never trip the per-IP caps.
-  const oct = () => Math.floor(Math.random() * 254) + 1;
-  return `192.0.2.${oct()}`;
+  __ipCounter += 1;
+  // 192.0.2.0/24 has 254 usable addresses; far more than any single
+  // test needs, but wrap defensively in case the suite grows.
+  const last = (__ipCounter % 254) + 1;
+  return `192.0.2.${last}`;
 }
 
 interface JsonResp {
@@ -150,10 +157,15 @@ describe('Password reset flow', () => {
     expect(withoutEmail.status).toBe(200);
 
     // Identical response body — the generic anti-enumeration message.
-    expect(nonexistent.body).toEqual(withEmail.body);
-    expect(withEmail.body).toEqual(withoutEmail.body);
-    expect(typeof nonexistent.body.message).toBe('string');
-    expect(nonexistent.body.message).toMatch(/account/i);
+    // Pin the exact wording so an inadvertent change to the user-facing
+    // copy (which would also subtly change the response shape an
+    // attacker observes) is caught here.
+    const EXPECTED_MESSAGE =
+      'If an account matching that username or email exists and has a recovery email on file, ' +
+      'a password reset link has been sent. Check your inbox (and spam folder) within a few minutes.';
+    expect(nonexistent.body).toEqual({ message: EXPECTED_MESSAGE });
+    expect(withEmail.body).toEqual({ message: EXPECTED_MESSAGE });
+    expect(withoutEmail.body).toEqual({ message: EXPECTED_MESSAGE });
 
     // Approximate latency parity. Real DB / network jitter on a shared CI
     // box can easily produce single-request swings of ~100ms even when
