@@ -164,7 +164,38 @@ const LOCK_KEY_LO = (() => {
  * but short enough that an actually-stuck previous run gets noticed
  * the same business day.
  */
-const LOCK_WAIT_TIMEOUT_MS = 15 * 60 * 1000;
+export const LOCK_WAIT_TIMEOUT_MS_DEFAULT = 15 * 60 * 1000;
+
+/**
+ * Test-only hook (Task #143). Set
+ * `VITEST_GLOBALSETUP_TESTHOOK_LOCK_TIMEOUT_MS` to a positive integer
+ * to override `LOCK_WAIT_TIMEOUT_MS` for a single subprocess
+ * invocation. Used by server/tests/globalSetupLockTimeout.test.ts to
+ * shrink the timeout from 15 minutes to a couple of seconds so the
+ * regression test can observe the lock-timeout escape hatch firing
+ * without sleeping for the real 15-minute cap. Production
+ * `vitest run` invocations are unaffected — the override is only
+ * consulted when the env var is set.
+ *
+ * The override is intentionally wired into the same constant the
+ * production `SET lock_timeout = …` query reads from, so a future
+ * refactor that drops the SET statement entirely (or pegs the
+ * timeout at zero/`-1`/MAX_SAFE_INTEGER) cannot satisfy the
+ * regression test by short-circuiting just the override path.
+ */
+const LOCK_WAIT_TIMEOUT_OVERRIDE_RAW =
+  process.env.VITEST_GLOBALSETUP_TESTHOOK_LOCK_TIMEOUT_MS;
+const LOCK_WAIT_TIMEOUT_MS = (() => {
+  if (LOCK_WAIT_TIMEOUT_OVERRIDE_RAW === undefined)
+    return LOCK_WAIT_TIMEOUT_MS_DEFAULT;
+  const parsed = Number.parseInt(LOCK_WAIT_TIMEOUT_OVERRIDE_RAW, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(
+      `VITEST_GLOBALSETUP_TESTHOOK_LOCK_TIMEOUT_MS must be a positive integer, got: ${LOCK_WAIT_TIMEOUT_OVERRIDE_RAW}`,
+    );
+  }
+  return parsed;
+})();
 
 /**
  * Heartbeat interval for the lock-holding connection. Postgres advisory
