@@ -64,8 +64,12 @@ describe('vitest test-DB safety guards (regression for Task #106)', () => {
       expect(result.error, `spawn error: ${result.error?.message}`).toBeUndefined();
       expect(result.status, `expected non-zero exit, got ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).not.toBe(0);
 
-      const combined = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-      expect(combined).toContain(
+      const stderr = result.stderr ?? '';
+      const combined = `${result.stdout ?? ''}${stderr}`;
+      // Strict stderr check (per task spec) — vitest writes unhandled
+      // setup errors to stderr; we still keep the combined check as a
+      // safety net in case a future reporter buffers to stdout.
+      expect(stderr).toContain(
         'Test setup refused to start: TEST_DATABASE_URL is not set',
       );
       // Belt-and-suspenders: pin the failure to setup.ts itself, so a
@@ -95,8 +99,11 @@ describe('vitest test-DB safety guards (regression for Task #106)', () => {
       expect(result.error, `spawn error: ${result.error?.message}`).toBeUndefined();
       expect(result.status, `expected non-zero exit, got ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).not.toBe(0);
 
-      const combined = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-      expect(combined).toContain(
+      const stderr = result.stderr ?? '';
+      const combined = `${result.stdout ?? ''}${stderr}`;
+      // Strict stderr check (per task spec); combined kept as a safety
+      // net for reporters that buffer to stdout.
+      expect(stderr).toContain(
         'resolves to the same connection string as DATABASE_URL',
       );
       // Belt-and-suspenders: pin the failure to setup.ts itself, so a
