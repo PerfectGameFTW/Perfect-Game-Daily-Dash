@@ -20,6 +20,11 @@ export default defineConfig({
     // CI invocations (Task #136). Runs ONCE per `vitest run`, in the
     // main process, before any worker is spawned.
     globalSetup: ['./server/tests/globalSetup.ts'],
+    // After the suite, audit the test DB and warn loudly if any test
+    // left rows behind (Task #138). Runs ONCE per `vitest run`, after
+    // every worker has exited. The audit never fails the build — it
+    // emits a banner-bracketed warning on stderr and exits 0.
+    globalTeardown: ['./server/tests/globalTeardown.ts'],
   },
   plugins: [tsconfigPaths()],
   resolve: {
