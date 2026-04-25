@@ -286,28 +286,43 @@ export function createApiRouter(): Router {
           });
           break;
         case 'gift_card_redemptions':
-          console.log('Starting gift card redemption synchronization');
+          logger.info('sync.giftCardRedemptions.start');
           result = await syncService.syncGiftCardRedemptions(startDate, endDate);
-          console.log(`Gift card redemption sync completed: ${result.processed} processed, ${result.created} created, ${result.errors.length} errors`);
+          logger.info('sync.giftCardRedemptions.done', {
+            processed: result.processed,
+            created: result.created,
+            errors: result.errors.length,
+          });
           break;
         case 'refunds':
-          console.log('Starting refund synchronization');
+          logger.info('sync.refunds.start');
           result = await syncService.syncRefunds(startDate, endDate);
-          console.log(`Refund sync completed: ${result.processed} processed, ${result.created} created, ${result.updated} updated, ${result.failed} failed`);
+          logger.info('sync.refunds.done', {
+            processed: result.processed,
+            created: result.created,
+            updated: result.updated,
+            failed: result.failed,
+          });
           break;
         case 'catalog':
-          console.log('Starting catalog sync');
+          logger.info('sync.catalog.start');
           const { syncCatalog: runCatalogSync } = await import('../services/catalogService');
           result = await runCatalogSync();
           const catalogResult = result as { categories: number; items: number; errors: string[] };
-          console.log(`Catalog sync completed: ${catalogResult.categories} categories, ${catalogResult.items} items`);
+          logger.info('sync.catalog.done', {
+            categories: catalogResult.categories,
+            items: catalogResult.items,
+          });
           break;
         case 'missing_payments':
-          console.log('Starting payment reconciliation sync');
+          logger.info('sync.missingPayments.start');
           const reconciliationStart = startDate || new Date('2025-03-06T04:13:41.000Z');
           const reconciliationEnd = endDate || new Date();
           result = await syncService.syncPayments(reconciliationStart, reconciliationEnd);
-          console.log(`Payment reconciliation completed: ${result.processed} processed, ${result.created} created`);
+          logger.info('sync.missingPayments.done', {
+            processed: result.processed,
+            created: result.created,
+          });
           break;
         case 'all':
           const actorCtx = {
@@ -405,7 +420,7 @@ export function createApiRouter(): Router {
         result
       });
     } catch (error) {
-      console.error('Error backfilling gift card activation amounts:', error);
+      logger.error('giftCard.activationBackfill.failed', errorContext(error));
       next(error);
     }
   });
@@ -432,7 +447,7 @@ export function createApiRouter(): Router {
         analysis
       });
     } catch (error) {
-      console.error('Error analyzing gift card linking status:', error);
+      logger.error('giftCard.analyzeLinking.failed', errorContext(error));
       next(error);
     }
   });
@@ -603,7 +618,7 @@ export function createApiRouter(): Router {
           await recordAuditFinish(auditId, { status: 'completed' });
         })
         .catch(async (err) => {
-          console.error('[HistoricalSync] Unhandled error:', err);
+          logger.error('historicalSync.unhandled', errorContext(err));
           await recordAuditFinish(auditId, {
             status: 'failed',
             errorMessage: err instanceof Error ? err.message : String(err),
@@ -644,7 +659,7 @@ export function createApiRouter(): Router {
         result,
       });
     } catch (error) {
-      console.error('[API] Gift card full sync error:', error);
+      logger.error('giftCard.fullSync.failed', errorContext(error));
       next(error);
     }
   }
@@ -657,7 +672,7 @@ export function createApiRouter(): Router {
       const result = await giftCardService.refreshAllGiftCardBalances();
       res.json({ success: true, ...result });
     } catch (error) {
-      console.error('[API] Gift card balance refresh error:', error);
+      logger.error('giftCard.balanceRefresh.failed', errorContext(error));
       next(error);
     }
   });
@@ -678,7 +693,7 @@ export function createApiRouter(): Router {
       const result = await syncCatalog();
       res.json({ success: true, ...result });
     } catch (error) {
-      console.error('[API] Catalog sync error:', error);
+      logger.error('sync.catalog.failed', errorContext(error));
       next(error);
     }
   });
@@ -687,7 +702,10 @@ export function createApiRouter(): Router {
     try {
       const { syncCatalog, backfillCategories } = await import('../services/catalogService');
       const catalogResult = await syncCatalog();
-      console.log(`Catalog synced: ${catalogResult.categories} categories, ${catalogResult.items} items`);
+      logger.info('sync.catalog.done', {
+        categories: catalogResult.categories,
+        items: catalogResult.items,
+      });
       const backfillResult = await backfillCategories();
       res.json({
         success: true,
@@ -695,7 +713,7 @@ export function createApiRouter(): Router {
         backfill: backfillResult,
       });
     } catch (error) {
-      console.error('[API] Catalog backfill error:', error);
+      logger.error('sync.catalog.backfillFailed', errorContext(error));
       next(error);
     }
   });
@@ -851,8 +869,14 @@ export function createApiRouter(): Router {
 async function runHistoricalSync(startDate: Date): Promise<void> {
   const { backfillGiftCardActivationAmounts } = await import('../services/enhancedGiftCardFix');
 
-  const label = `[HistoricalSync ${new Date().toISOString()}]`;
-  console.log(`${label} Starting from ${startDate.toISOString().slice(0, 10)}`);
+  // Every line in this worker is grouped under the `historicalSync.*`
+  // namespace so an operator can `grep historicalSync` to follow a run.
+  // Per-chunk lines additionally carry chunkIndex / chunkStart / chunkEnd
+  // so the structured log replaces the old free-form `[chunk N start→end]`
+  // string prefix.
+  logger.info('historicalSync.start', {
+    startDate: startDate.toISOString().slice(0, 10),
+  });
 
   const now = new Date();
   let chunkStart = new Date(startDate);
@@ -863,28 +887,54 @@ async function runHistoricalSync(startDate: Date): Promise<void> {
     chunkEnd.setMonth(chunkEnd.getMonth() + 1);
     if (chunkEnd > now) chunkEnd.setTime(now.getTime());
 
-    const label2 = `${label} [chunk ${++chunkIndex} ${chunkStart.toISOString().slice(0, 10)}→${chunkEnd.toISOString().slice(0, 10)}]`;
-    console.log(`${label2} Syncing orders...`);
+    chunkIndex += 1;
+    const chunkCtx = {
+      chunkIndex,
+      chunkStart: chunkStart.toISOString().slice(0, 10),
+      chunkEnd: chunkEnd.toISOString().slice(0, 10),
+    };
+    logger.info('historicalSync.chunk.orders.start', chunkCtx);
 
     try {
       const ordersResult = await syncService.syncOrders(chunkStart, chunkEnd);
-      console.log(`${label2} Orders: processed=${ordersResult.processed} created=${ordersResult.created}`);
+      logger.info('historicalSync.chunk.orders.done', {
+        ...chunkCtx,
+        processed: ordersResult.processed,
+        created: ordersResult.created,
+      });
     } catch (err) {
-      console.error(`${label2} Orders sync error (continuing):`, err);
+      logger.error('historicalSync.chunk.orders.failed', {
+        ...chunkCtx,
+        ...errorContext(err),
+      });
     }
 
     try {
       const paymentsResult = await syncService.syncPayments(chunkStart, chunkEnd);
-      console.log(`${label2} Payments: processed=${paymentsResult.processed} created=${paymentsResult.created}`);
+      logger.info('historicalSync.chunk.payments.done', {
+        ...chunkCtx,
+        processed: paymentsResult.processed,
+        created: paymentsResult.created,
+      });
     } catch (err) {
-      console.error(`${label2} Payments sync error (continuing):`, err);
+      logger.error('historicalSync.chunk.payments.failed', {
+        ...chunkCtx,
+        ...errorContext(err),
+      });
     }
 
     try {
       const refundsResult = await syncService.syncRefunds(chunkStart, chunkEnd);
-      console.log(`${label2} Refunds: processed=${refundsResult.processed} created=${refundsResult.created}`);
+      logger.info('historicalSync.chunk.refunds.done', {
+        ...chunkCtx,
+        processed: refundsResult.processed,
+        created: refundsResult.created,
+      });
     } catch (err) {
-      console.error(`${label2} Refunds sync error (continuing):`, err);
+      logger.error('historicalSync.chunk.refunds.failed', {
+        ...chunkCtx,
+        ...errorContext(err),
+      });
     }
 
     chunkStart = new Date(chunkEnd);
@@ -896,25 +946,36 @@ async function runHistoricalSync(startDate: Date): Promise<void> {
   // This replaces the old syncGiftCards() (listGiftCards — no date filter, arbitrary order,
   // loses progress on restart).  The new method pages through ALL ACTIVATE events ASC,
   // checkpointing after each page so restarts resume mid-scan.
-  console.log(`${label} Syncing all gift cards via Activities API (resumable)...`);
+  logger.info('historicalSync.giftCards.start');
   try {
     // Nested call: parent runHistoricalSync already holds the shared
     // historical advisory lock, so skip the lock here to avoid self-deadlock.
     const gcResult = await syncService.syncGiftCardsHistoricalBackfill({ skipLock: true });
-    console.log(`${label} Gift cards: processed=${gcResult.processed} created=${gcResult.created} updated=${gcResult.updated} failed=${gcResult.failed} pages=${gcResult.pagesProcessed} finished=${gcResult.finished}`);
+    logger.info('historicalSync.giftCards.done', {
+      processed: gcResult.processed,
+      created: gcResult.created,
+      updated: gcResult.updated,
+      failed: gcResult.failed,
+      pagesProcessed: gcResult.pagesProcessed,
+      finished: gcResult.finished,
+    });
   } catch (err) {
-    console.error(`${label} Gift card sync error:`, err);
+    logger.error('historicalSync.giftCards.failed', errorContext(err));
   }
 
-  console.log(`${label} Running activation backfill...`);
+  logger.info('historicalSync.activationBackfill.start');
   try {
     const backfillResult = await backfillGiftCardActivationAmounts();
-    console.log(`${label} Backfill: filled=${backfillResult.updatedViaActivitiesApi} corrected=${backfillResult.correctedViaActivitiesApi} unresolved=${backfillResult.stillUnresolved}`);
+    logger.info('historicalSync.activationBackfill.done', {
+      filled: backfillResult.updatedViaActivitiesApi,
+      corrected: backfillResult.correctedViaActivitiesApi,
+      unresolved: backfillResult.stillUnresolved,
+    });
   } catch (err) {
-    console.error(`${label} Backfill error:`, err);
+    logger.error('historicalSync.activationBackfill.failed', errorContext(err));
   }
 
-  console.log(`${label} Historical sync complete across ${chunkIndex} monthly chunks.`);
+  logger.info('historicalSync.complete', { chunksProcessed: chunkIndex });
 
   broadcast('data-updated', { syncType: 'historical' });
 }

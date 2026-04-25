@@ -2,6 +2,7 @@ import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import type { Request, Response, NextFunction } from 'express';
 import { pool } from './db';
+import { logger } from './logger';
 import {
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_SECURE,
@@ -83,21 +84,20 @@ const LEGACY_COMPAT_DEADLINE_MS: number | null = (() => {
   const raw = process.env.LEGACY_COOKIE_DEADLINE;
   if (!raw) {
     // Refuse to enable the downgrade without an explicit cutoff. Logged
-    // once at module load so operators see it on boot.
-    console.warn(
-      '[session] ENABLE_LEGACY_COOKIE_COMPAT=true but ' +
-        'LEGACY_COOKIE_DEADLINE is not set. The shim will stay disabled — ' +
-        'set LEGACY_COOKIE_DEADLINE to an ISO-8601 timestamp (e.g. ' +
-        '"2026-05-15T00:00:00Z") to enable it until that instant.',
-    );
+    // once at module load so operators see it on boot. The fix is
+    // documented in the message: set LEGACY_COOKIE_DEADLINE to an ISO-8601
+    // timestamp. We deliberately do NOT log the variable's value (it
+    // would be unset here anyway, and structured logs only carry
+    // allow-listed scalars).
+    logger.warn('session.legacy_cookie_compat.deadline_missing');
     return null;
   }
   const parsed = Date.parse(raw);
   if (!Number.isFinite(parsed)) {
-    console.warn(
-      `[session] LEGACY_COOKIE_DEADLINE="${raw}" is not a valid ` +
-        'ISO-8601 timestamp; the legacy cookie shim will stay disabled.',
-    );
+    // The raw value is intentionally NOT logged: it's user-supplied env
+    // input and could be any string. Operators have shell access to the
+    // env they configured.
+    logger.warn('session.legacy_cookie_compat.deadline_invalid');
     return null;
   }
   return parsed;

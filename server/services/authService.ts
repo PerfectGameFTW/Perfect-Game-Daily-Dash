@@ -592,7 +592,13 @@ export class AuthService {
       // Log but don't surface — we always present a generic response to
       // the caller. An ops alert from the logs is the right escalation
       // path; leaking this back to the HTTP client would be an oracle.
-      console.error('[authService] Failed to send reset email:', err);
+      // The recipient address is intentionally omitted; sendEmail
+      // already records its own structured audit row keyed by recipient
+      // hash (see Task #104).
+      logger.error('auth.passwordReset.email_failed', {
+        userId: user.id,
+        ...errorContext(err),
+      });
     }
   }
 

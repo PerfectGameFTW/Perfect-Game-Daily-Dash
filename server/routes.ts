@@ -15,6 +15,7 @@ import { createServer, type Server } from "http";
 import { syncService } from "./services/syncService";
 import { requireAuth, requireAdmin } from "./middleware/auth";
 import { ConflictError, ValidationError } from "./errors";
+import { logger, errorContext } from "./logger";
 
 // Import the router creators
 import { createApiRouter, attachApiErrorMiddleware } from './routes/api';
@@ -45,7 +46,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const status = await syncService.getHistoricalBackfillStatus();
       res.json(status);
     } catch (err) {
-      console.error('[BackfillStatus] Error:', err);
+      logger.error('backfill.status.failed', errorContext(err));
       next(err);
     }
   });
@@ -110,7 +111,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
 
-      console.log(`[Backfill] Received request: ${start.toISOString()} → ${end.toISOString()}, chunkDays=${chunk}`);
+      logger.info('backfill.received', {
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+        chunkDays: chunk,
+      });
       const result = await syncService.startHistoricalOrdersPaymentsBackfill(start, end, chunk, {
         actorUserId: (req as any).session?.userId ?? null,
         actorIp: req.ip ?? null,
@@ -122,7 +127,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(202).json({ success: true, message: result.message });
     } catch (err) {
-      console.error('[Backfill] Error:', err);
+      logger.error('backfill.start.failed', errorContext(err));
       next(err);
     }
   });

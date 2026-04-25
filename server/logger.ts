@@ -175,6 +175,12 @@ const ALLOWED_FIELDS = new Set<string>([
   'queryHash',
   'queryLen',
   'ip',
+  // catalog sync result counts (Task #110). `categories` is the number
+  // of categories upserted in a catalog sync run; `items` is the number
+  // of catalog items upserted. Emitted by the catalog sync log lines so
+  // operators can confirm a backfill actually wrote rows.
+  'categories',
+  'items',
   // ws
   'ipCount',
   'userOpenCount',

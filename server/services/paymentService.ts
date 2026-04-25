@@ -27,7 +27,12 @@ export {
   PaymentNotFoundError,
   InvalidPaymentDataError,
 } from '../errors';
-import { PaymentError, PaymentNotFoundError, InvalidPaymentDataError } from '../errors';
+import {
+  PaymentError,
+  PaymentNotFoundError,
+  InvalidPaymentDataError,
+} from '../errors';
+import { logger, errorContext } from '../logger';
 
 export class PaymentService {
   /**
@@ -123,13 +128,16 @@ export class PaymentService {
       if (isGiftCardRedemption && sourceId) {
         // Import the giftCardService to avoid circular dependency
         const { giftCardService } = await import('./giftCardService');
-        
-        console.log(`Processing gift card redemption for payment ${paymentData.squareId}`, {
-          sourceId, 
-          amount: paymentData.amount,
-          paymentId: result[0].id
+
+        // Structured log: only opaque IDs. We deliberately drop the
+        // gift-card source token, the GAN, the amount, and the remaining
+        // balance — those are PII / financial values that have no
+        // business in workspace logs (Task #110).
+        logger.info('payment.giftCardRedemption.start', {
+          paymentId: result[0].id,
+          squareId: paymentData.squareId,
         });
-        
+
         // Process the redemption using our new method
         const redemptionResult = await giftCardService.processRedemptionFromSquare(
           sourceId,
@@ -137,19 +145,26 @@ export class PaymentService {
           result[0].id,
           squareData
         );
-        
+
         if (redemptionResult) {
-          console.log(`Successfully processed gift card redemption for payment ${paymentData.squareId}`, {
+          logger.info('payment.giftCardRedemption.matched', {
+            paymentId: result[0].id,
+            squareId: paymentData.squareId,
             giftCardId: redemptionResult.id,
-            gan: redemptionResult.gan,
-            remainingBalance: redemptionResult.amount
           });
         } else {
-          console.warn(`Could not find matching gift card for redemption: sourceId=${sourceId}, payment=${paymentData.squareId}`);
+          logger.warn('payment.giftCardRedemption.no_match', {
+            paymentId: result[0].id,
+            squareId: paymentData.squareId,
+          });
         }
       }
     } catch (redemptionError) {
-      console.error('Error processing gift card redemption:', redemptionError);
+      logger.error('payment.giftCardRedemption.failed', {
+        paymentId: result[0].id,
+        squareId: paymentData.squareId,
+        ...errorContext(redemptionError),
+      });
       // Non-critical error, continue with the operation since the payment was saved
     }
     
@@ -176,7 +191,10 @@ export class PaymentService {
     // Get proper UTC date boundaries based on Eastern business days
     const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
     
-    console.log(`Filtering payments with UTC range: ${start.toISOString()} to ${end.toISOString()}`);
+    logger.info('payment.dateRangeQuery', {
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+    });
     
     // Set a reasonable default limit
     const limitValue = limit && limit > 0 ? limit : 1000;
