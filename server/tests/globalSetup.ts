@@ -56,6 +56,20 @@
  *       so there is no recovery path to debug after a crash.
  *     - It introduces zero new state for operators to reason about.
  *
+ * Background — wait visibility (Task #140):
+ *   The serialization above is correct but invisible: a developer who
+ *   runs `npm test` while CI's post-merge hook is mid-flight sees no
+ *   output for minutes and has no way to tell whether the suite is
+ *   stuck, broken, or just queued behind another run. To fix that we
+ *   probe the lock first with `pg_try_advisory_lock` (instantly
+ *   returns true/false) and only fall back to the blocking
+ *   `pg_advisory_lock` when the probe reports contention. When we do
+ *   block, we emit a clear stderr message immediately and a
+ *   "still waiting (Ns)…" heartbeat every ten seconds, plus a
+ *   "Lock acquired after Ns — proceeding" line once the previous run
+ *   releases. The uncontended path (the common case) still acquires
+ *   in a single round-trip with no extra log noise.
+ *
  * Safety:
  *   This file is the most dangerous code in the test suite — it issues
  *   a TRUNCATE against whatever database it connects to. We therefore
@@ -129,6 +143,17 @@ const LOCK_WAIT_TIMEOUT_MS = 15 * 60 * 1000;
  */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
+/**
+ * Stderr "still waiting (Ns)" cadence emitted while a second concurrent
+ * `vitest run` is blocked behind the advisory lock (Task #140). Ten
+ * seconds is short enough that a developer staring at a frozen-looking
+ * terminal sees the next heartbeat well before they reach for ^C, but
+ * long enough that a sub-minute wait doesn't drown the test output in
+ * a spam of messages. The timer is unref'd so it cannot keep Node
+ * alive past the run.
+ */
+const WAIT_HEARTBEAT_INTERVAL_MS = 10_000;
+
 function deriveTestUrl(live: string | undefined): string | undefined {
   if (!live) return undefined;
   try {
@@ -189,15 +214,57 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   let released = false;
 
   try {
-    // `lock_timeout` is session-scoped on this connection, so it bounds
-    // ONLY the wait below — not anything the application code under
-    // test does later. Concurrent runs see a clear Postgres error
-    // ("canceling statement due to lock timeout") if a previous run is
-    // genuinely stuck, instead of a silent hang.
-    await lockClient.query(`SET lock_timeout = ${LOCK_WAIT_TIMEOUT_MS}`);
-    await lockClient.query('SELECT pg_advisory_lock($1, $2)', [LOCK_KEY_HI, LOCK_KEY_LO]);
-    // Reset the timeout so the heartbeat / truncate aren't affected.
-    await lockClient.query('SET lock_timeout = 0');
+    // Two-phase acquisition (Task #140). The blocking `pg_advisory_lock`
+    // call would silently hang for as long as another `vitest run` holds
+    // the lock — a developer running `npm test` while CI's post-merge
+    // hook is mid-flight sees no output for minutes and has no way to
+    // tell whether the suite is broken, stuck, or just queued. We
+    // therefore probe the lock first with `pg_try_advisory_lock`, which
+    // returns immediately with a boolean, and only fall back to the
+    // blocking variant when it's known-contended. That gives us a place
+    // to print a clear "waiting for another vitest run" message — and a
+    // periodic "still waiting (Ns)" heartbeat — before the long block
+    // begins, so the wait is visible instead of silent.
+    const tryResult = await lockClient.query<{ acquired: boolean }>(
+      'SELECT pg_try_advisory_lock($1, $2) AS acquired',
+      [LOCK_KEY_HI, LOCK_KEY_LO],
+    );
+    if (!tryResult.rows[0]?.acquired) {
+      process.stderr.write(
+        '[globalSetup] Waiting for another vitest run to release the test-DB lock (held by another session)…\n',
+      );
+      const waitStart = Date.now();
+      // "still waiting (Ns)" heartbeat. Bounded only by how long
+      // `pg_advisory_lock` itself takes to return — clearInterval in
+      // the finally below stops it whether the lock was acquired or
+      // the lock_timeout fired.
+      const waitTicker = setInterval(() => {
+        const seconds = Math.round((Date.now() - waitStart) / 1000);
+        process.stderr.write(`[globalSetup] still waiting (${seconds}s)…\n`);
+      }, WAIT_HEARTBEAT_INTERVAL_MS);
+      if (typeof waitTicker.unref === 'function') waitTicker.unref();
+      try {
+        // `lock_timeout` is session-scoped on this connection, so it
+        // bounds ONLY the wait below — not anything the application
+        // code under test does later. Concurrent runs see a clear
+        // Postgres error ("canceling statement due to lock timeout")
+        // if a previous run is genuinely stuck, instead of a silent
+        // hang.
+        await lockClient.query(`SET lock_timeout = ${LOCK_WAIT_TIMEOUT_MS}`);
+        await lockClient.query('SELECT pg_advisory_lock($1, $2)', [
+          LOCK_KEY_HI,
+          LOCK_KEY_LO,
+        ]);
+        // Reset the timeout so the heartbeat / truncate aren't affected.
+        await lockClient.query('SET lock_timeout = 0');
+      } finally {
+        clearInterval(waitTicker);
+      }
+      const waited = Math.round((Date.now() - waitStart) / 1000);
+      process.stderr.write(
+        `[globalSetup] Lock acquired after ${waited}s — proceeding with test run.\n`,
+      );
+    }
 
     // Truncate the schema — same logic as before, but now safely
     // serialized behind the advisory lock so a concurrent run cannot

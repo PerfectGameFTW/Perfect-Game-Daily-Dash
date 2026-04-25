@@ -75,4 +75,15 @@ fi
 #   extra time waiting at startup; the lock wait is bounded at 15
 #   minutes via Postgres `lock_timeout` so a stuck previous run
 #   surfaces a clear error instead of hanging this hook indefinitely.
+#
+#   Wait visibility (Task #140):
+#     A blocked second run prints
+#       [globalSetup] Waiting for another vitest run to release the test-DB lock…
+#     to stderr within a second of starting, then a
+#       [globalSetup] still waiting (Ns)…
+#     heartbeat every ten seconds, and finally
+#       [globalSetup] Lock acquired after Ns — proceeding with test run.
+#     once the previous run releases. So if you see those lines in the
+#     post-merge output, the hook is queued behind another run rather
+#     than hung — no action required.
 npm test
