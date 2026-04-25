@@ -16,6 +16,7 @@ import {
   Pencil,
   Check,
   KeyRound,
+  Send,
 } from 'lucide-react';
 import {
   Dialog,
@@ -115,6 +116,12 @@ export default function UserManagement() {
   const [editingEmailUserId, setEditingEmailUserId] = useState<number | null>(null);
   const [emailDraft, setEmailDraft] = useState('');
   const [savingEmailUserId, setSavingEmailUserId] = useState<number | null>(null);
+
+  // Per-row "Send reset link" pending flag (Task #116). Tracks the
+  // single user id whose admin-triggered password-reset email is in
+  // flight so the row's button can show a spinner without blocking
+  // the rest of the table.
+  const [sendingResetUserId, setSendingResetUserId] = useState<number | null>(null);
 
   // Filter toggle for the password-rotation rollout (Task #99). When
   // on, the table is narrowed to accounts whose `mustRotatePassword`
@@ -261,6 +268,49 @@ export default function UserManagement() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Send a password-reset link to a target user from the admin
+  // console (Task #116). Calls the admin-scoped endpoint, which
+  // bypasses the public 3/hr/IP anti-enumeration limiter and surfaces
+  // real failures (no email on file, SendGrid down, etc.) instead of
+  // the generic OK the public endpoint returns. The button is already
+  // disabled when `user.email` is empty; the server-side guard is the
+  // authoritative check.
+  const handleSendResetLink = async (user: User) => {
+    if (!user.email) return;
+    try {
+      setSendingResetUserId(user.id);
+      const response = await fetch(`/api/auth/users/${user.id}/send-reset-link`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      });
+      if (response.ok) {
+        toast({
+          title: 'Reset link sent',
+          description: `A password reset email has been sent to ${user.username}'s recovery address.`,
+        });
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        toast({
+          title: 'Failed to send reset link',
+          description: errorData.error || 'Could not send the reset email.',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('Error sending reset link:', error);
+      toast({
+        title: 'Error',
+        description: 'An unexpected error occurred',
+        variant: 'destructive',
+      });
+    } finally {
+      setSendingResetUserId(null);
     }
   };
 
@@ -658,18 +708,46 @@ export default function UserManagement() {
                       )}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => confirmDeleteUser(user)}
-                        disabled={user.id === currentUser?.id}
-                        className={`text-red-600 hover:bg-red-100 hover:text-red-700 ${
-                          user.id === currentUser?.id ? 'cursor-not-allowed opacity-50' : ''
-                        }`}
-                        title={user.id === currentUser?.id ? "You cannot delete your own account" : ''}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="inline-flex items-center justify-end gap-1">
+                        {/* Send reset link (Task #116). Only enabled
+                            when the row has a recovery email — without
+                            one the server-side guard would refuse and
+                            we'd be promising an action that can't run.
+                            The endpoint is admin-only and bypasses the
+                            public 3/hr/IP anti-enumeration limiter. */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleSendResetLink(user)}
+                          disabled={!user.email || sendingResetUserId === user.id}
+                          className={`text-blue-600 hover:bg-blue-100 hover:text-blue-700 ${
+                            !user.email ? 'cursor-not-allowed opacity-50' : ''
+                          }`}
+                          title={
+                            user.email
+                              ? `Send a password-reset link to ${user.email}`
+                              : 'Add a recovery email before sending a reset link'
+                          }
+                        >
+                          {sendingResetUserId === user.id ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Send className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => confirmDeleteUser(user)}
+                          disabled={user.id === currentUser?.id}
+                          className={`text-red-600 hover:bg-red-100 hover:text-red-700 ${
+                            user.id === currentUser?.id ? 'cursor-not-allowed opacity-50' : ''
+                          }`}
+                          title={user.id === currentUser?.id ? "You cannot delete your own account" : ''}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))

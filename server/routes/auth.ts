@@ -27,9 +27,11 @@ import {
 } from '../../shared/schema';
 import { pgStorage } from '../pgStorage';
 import {
+  AppError,
   AuthError,
   ConflictError,
   NotFoundError,
+  ServiceUnavailableError,
   UnauthorizedError,
   ValidationError,
   sendError,
@@ -948,6 +950,136 @@ export function createAuthRouter(): Router {
         res.json({ success: true, user: createSafeUser(updated) });
       } catch (error) {
         logger.error('auth.users.email_update_error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
+  // Admin-initiated password reset (Task #116). Sends a real reset
+  // email to the target's recovery address from the operator console,
+  // bypassing the public 3/hr/IP `passwordResetRequestLimiter` (which
+  // exists to prevent enumeration of unauthenticated callers — an
+  // authenticated admin already has the user list). The endpoint
+  // surfaces every failure mode (missing user, no email on file,
+  // SendGrid failure) so the operator gets a clear toast instead of
+  // the generic "if an account exists..." response the public path
+  // uses for anti-enumeration. One security_audit_log row is written
+  // per call so it's auditable who triggered each reset, against whom.
+  router.post(
+    '/users/:id/send-reset-link',
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const actorUserId = req.user!.id;
+      const actorIp = req.ip ?? null;
+      const requestId = (req as any).requestId;
+      const rawId = req.params.id;
+      const targetId = parseInt(rawId, 10);
+
+      // Helper to write the per-call audit row. Every call to this
+      // endpoint produces exactly one row, success or failure, so a
+      // compromised admin account can't probe ids/emails silently.
+      // The full target email is intentionally never recorded — it
+      // already lives on the user row and would be redundant PII in
+      // the audit table. The domain alone is enough to spot "reset
+      // link sent to a domain we don't recognize" anomalies later.
+      const writeAudit = async (
+        outcome: { success: boolean; errorCode?: string },
+        target: { id: number | null; username?: string; emailDomain?: string },
+      ) => {
+        try {
+          await pgStorage.recordSecurityAudit({
+            actorUserId,
+            actorIp,
+            action: 'user.password_reset_link_sent_by_admin',
+            targetUserId: target.id,
+            metadata: {
+              ...(target.username !== undefined ? { targetUsername: target.username } : {}),
+              ...(target.emailDomain !== undefined ? { targetEmailDomain: target.emailDomain } : {}),
+              success: outcome.success,
+              ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+              rawTargetId: rawId,
+            },
+          });
+        } catch (auditErr) {
+          // Audit failures must never mask the original outcome — log
+          // and continue. A monitoring alert on this log line catches
+          // the (very rare) case where the audit table itself is sick.
+          logger.error('auth.passwordReset.admin_audit_write_failed', errorContext(auditErr));
+        }
+      };
+
+      try {
+        if (Number.isNaN(targetId)) {
+          await writeAudit({ success: false, errorCode: 'INVALID_USER_ID' }, { id: null });
+          throw new ValidationError('Invalid user ID');
+        }
+
+        // Same baseUrl resolution as the public reset endpoint:
+        // require APP_BASE_URL in production, fall back to the
+        // request host in dev. Never trust the Host header in prod —
+        // a poisoned Host could otherwise forge the link domain in
+        // the outbound email even though only an admin can trigger it
+        // (defence in depth against a compromised admin account).
+        let baseUrl = process.env.APP_BASE_URL;
+        if (!baseUrl) {
+          if (process.env.NODE_ENV === 'production') {
+            logger.error('auth.passwordReset.admin_missing_app_base_url');
+            await writeAudit(
+              { success: false, errorCode: 'APP_BASE_URL_NOT_CONFIGURED' },
+              { id: targetId },
+            );
+            throw new ServiceUnavailableError(
+              'Password reset is not configured on this server (APP_BASE_URL is unset).',
+            );
+          }
+          baseUrl = `${req.protocol}://${req.get('host')}`;
+        }
+
+        const result = await authService.adminSendPasswordReset(
+          targetId,
+          baseUrl,
+        );
+
+        await writeAudit(
+          { success: true },
+          { id: targetId, username: result.targetUsername, emailDomain: result.targetEmailDomain },
+        );
+
+        // Mirror to the structured log so operators see it in the
+        // live container output without joining against the DB. We
+        // log the actor's id and the target's id only — no email
+        // address — to keep the log line PII-free (Task #102/#104).
+        logger.warn('auth.passwordReset.admin_sent', {
+          actorUserId,
+          targetUserId: targetId,
+          requestId,
+          ip: actorIp,
+        });
+
+        res.json({ success: true });
+      } catch (error) {
+        // Failure-side audit (skipped for the early returns above which
+        // already wrote their own row). Keyed off the AppError type so
+        // a NotFound / Validation / ExternalService throw from the
+        // service layer is recorded with the matching errorCode.
+        if (error instanceof AppError && error.code !== 'VALIDATION_ERROR' && error.code !== 'SERVICE_UNAVAILABLE') {
+          await writeAudit(
+            { success: false, errorCode: error.code },
+            { id: Number.isNaN(targetId) ? null : targetId },
+          );
+        } else if (error instanceof AppError && error.code === 'VALIDATION_ERROR' && !Number.isNaN(targetId)) {
+          // Service-layer validation (e.g. "no email on file") wasn't
+          // caught by the early-return path above — record it here.
+          await writeAudit(
+            { success: false, errorCode: error.code },
+            { id: targetId },
+          );
+        }
+        logger.error(
+          'auth.passwordReset.admin_send_error',
+          errorContext(error),
+        );
         next(error);
       }
     },

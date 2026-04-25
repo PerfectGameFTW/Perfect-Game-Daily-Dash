@@ -56,7 +56,7 @@ function escapeHtml(input: string): string {
 // AuthError now lives in `server/errors.ts` (see Task #58). Imported (not
 // re-exported) here because nothing else in the project imports it from
 // authService.
-import { AuthError, ConflictError } from '../errors';
+import { AppError, AuthError, ConflictError, ExternalServiceError, NotFoundError, ValidationError } from '../errors';
 
 // Stable advisory lock key used to serialize bootstrap attempts at the DB level.
 // pg_advisory_xact_lock takes a bigint; this constant is arbitrary but fixed.
@@ -541,6 +541,94 @@ export class AuthService {
       return;
     }
 
+    try {
+      await this.issueAndSendResetEmail(user, baseUrl);
+    } catch (err) {
+      // Log but don't surface — the public endpoint always presents a
+      // generic response to the caller. An ops alert from the logs is
+      // the right escalation path; leaking this back to the HTTP
+      // client would be an oracle. The recipient address is
+      // intentionally omitted; sendEmail already records its own
+      // structured audit row keyed by recipient hash (see Task #104).
+      logger.error('auth.passwordReset.email_failed', {
+        userId: user.id,
+        ...errorContext(err),
+      });
+    }
+  }
+
+  /**
+   * Admin-initiated password reset (Task #116).
+   *
+   * Looks the target up by primary key, requires a recovery email on
+   * file, and issues a real reset email. Unlike the public
+   * `requestPasswordReset` which is intentionally silent, this path
+   * surfaces every failure (no email on file, missing user, email
+   * provider failure) to the caller so the operator gets a clear toast
+   * instead of a misleading generic OK. The route layer is responsible
+   * for the audit-log row and for keeping this off the public
+   * anti-enumeration rate limiter.
+   *
+   * Returns the bits the route needs to write a useful audit row
+   * (target username + the email's domain — never the full address,
+   * which already lives on the user row and would be redundant PII in
+   * the audit table).
+   */
+  async adminSendPasswordReset(
+    targetUserId: number,
+    baseUrl: string,
+  ): Promise<{ targetUsername: string; targetEmailDomain: string }> {
+    const found = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, targetUserId))
+      .limit(1);
+    const user = found[0];
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+    if (!user.email) {
+      throw new ValidationError(
+        'This account has no recovery email on file. Add one before sending a reset link.',
+      );
+    }
+    // Surface email-provider failures as a typed external-service error
+    // so the route returns a 502 with an actionable message ("the email
+    // provider rejected the send") instead of a generic sanitized 500.
+    // The admin caller specifically wants this signal — that's the
+    // whole reason this endpoint exists separately from the public path.
+    try {
+      await this.issueAndSendResetEmail(user, baseUrl);
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw new ExternalServiceError(
+        'Failed to deliver password reset email through the configured provider.',
+        { code: 'PASSWORD_RESET_EMAIL_SEND_FAILED', details: { cause: err instanceof Error ? err.message : String(err) } },
+      );
+    }
+    const at = user.email.lastIndexOf('@');
+    const targetEmailDomain = at >= 0 ? user.email.slice(at + 1) : '';
+    return { targetUsername: user.username, targetEmailDomain };
+  }
+
+  /**
+   * Shared by the public (`requestPasswordReset`) and admin
+   * (`adminSendPasswordReset`) paths. Rotates any prior unused token
+   * for the user, mints a fresh single-use token, and delivers the
+   * link by email. Throws on email-send failure so each caller can
+   * decide whether to swallow (anti-enumeration) or surface (admin) it.
+   */
+  private async issueAndSendResetEmail(
+    user: User,
+    baseUrl: string,
+  ): Promise<void> {
+    if (!user.email) {
+      // Defensive — both public-path callers have already gated on
+      // this, but encoding the precondition here keeps the helper
+      // safe for any future caller.
+      throw new ValidationError('User has no email on file');
+    }
+
     // Invalidate any prior unused tokens for this user — at most one
     // outstanding link at a time.
     await db
@@ -586,20 +674,7 @@ export class AuthService {
       `<p>If you didn't request this, you can safely ignore this email — your password ` +
       `will not change.</p>`;
 
-    try {
-      await sendEmail({ to: user.email, subject, text, html });
-    } catch (err) {
-      // Log but don't surface — we always present a generic response to
-      // the caller. An ops alert from the logs is the right escalation
-      // path; leaking this back to the HTTP client would be an oracle.
-      // The recipient address is intentionally omitted; sendEmail
-      // already records its own structured audit row keyed by recipient
-      // hash (see Task #104).
-      logger.error('auth.passwordReset.email_failed', {
-        userId: user.id,
-        ...errorContext(err),
-      });
-    }
+    await sendEmail({ to: user.email, subject, text, html });
   }
 
   /**
