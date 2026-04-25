@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, History, ChevronDown, ChevronRight, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { ArrowLeft, Download, History, ChevronDown, ChevronRight, AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface SyncAuditEntry {
@@ -136,6 +136,27 @@ export default function SyncAudit() {
     setExpanded(new Set());
   };
 
+  // Trigger a CSV download of the currently-filtered audit rows.
+  // We open the URL via a hidden <a download> rather than fetch() so
+  // (a) the browser handles the file save dialog and respects the
+  // server-supplied Content-Disposition filename, and (b) the entire
+  // export — which can be much larger than the 25-row visible page —
+  // never has to live in JS memory.
+  const downloadCsv = () => {
+    const params = new URLSearchParams();
+    if (filters.syncType) params.set('syncType', filters.syncType);
+    const qs = params.toString();
+    const url = qs
+      ? `/api/admin/sync-audit.csv?${qs}`
+      : '/api/admin/sync-audit.csv';
+    const a = document.createElement('a');
+    a.href = url;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const toggleExpanded = (id: number) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -211,6 +232,17 @@ export default function SyncAudit() {
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isLoading || total === 0}
+                onClick={downloadCsv}
+                data-testid="button-download-csv"
+                title="Download all matching entries as CSV"
+              >
+                <Download className="mr-1 h-4 w-4" />
+                Download CSV
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

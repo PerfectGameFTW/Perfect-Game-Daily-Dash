@@ -34,6 +34,113 @@ import { toSafeErrorResponse } from '../errors';
 import { logger, errorContext } from '../logger';
 
 /**
+ * RFC 4180-compliant CSV cell escape with CSV-injection mitigation.
+ *
+ * Two things going on:
+ *   1. Standard quoting: wrap the value in double quotes and double
+ *      any embedded quote when it contains a comma, quote, or
+ *      newline character — the three things that would otherwise let
+ *      a malicious or accidental payload break out of its column.
+ *   2. CSV formula injection guard (OWASP): if the value begins with
+ *      `=`, `+`, `-`, `@`, TAB, or CR, prefix it with a single quote
+ *      so Excel / Google Sheets won't evaluate the cell as a formula
+ *      when an unsuspecting operator opens the export. The audit
+ *      table contains attacker-influenceable fields (usernames,
+ *      error messages, params payloads) so this is not theoretical.
+ *
+ * Empty / null / undefined values render as the empty string (no
+ * quotes), which Excel and Google Sheets both round-trip cleanly.
+ */
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  let s = typeof value === 'string' ? value : String(value);
+  if (s === '') return '';
+  // CSV injection guard. Prefix a single-quote so spreadsheet apps
+  // treat the cell as text instead of a formula.
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`;
+  }
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+/**
+ * Stable column ordering for the sync_audit CSV export (Task #117).
+ * The set matches what the task description requires (actor, IP,
+ * sync type, action, status, params, started/completed timestamps,
+ * pages used) plus `id`, `errorMessage`, and `result` because they're
+ * already present in the in-app browser and are obvious things to
+ * want when reviewing an incident offline.
+ */
+const SYNC_AUDIT_CSV_HEADER = [
+  'id',
+  'syncType',
+  'action',
+  'actorUsername',
+  'actorUserId',
+  'actorIp',
+  'status',
+  'pagesUsed',
+  'startedAt',
+  'completedAt',
+  'params',
+  'result',
+  'errorMessage',
+] as const;
+
+interface SyncAuditCsvRow {
+  id: number;
+  syncType: string;
+  action: string;
+  actorUsername: string | null;
+  actorUserId: number | null;
+  actorIp: string | null;
+  status: string;
+  pagesUsed: number;
+  startedAt: Date;
+  completedAt: Date | null;
+  params: Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+  errorMessage: string | null;
+}
+
+/**
+ * Render a list of sync_audit rows as an RFC 4180 CSV string. Uses
+ * `\r\n` line endings so Excel on Windows opens the file without
+ * needing the user to pick an encoding, and prefixes a UTF-8 BOM so
+ * Excel honours unicode in actor usernames / error messages.
+ *
+ * `params` and `result` are JSON-stringified into a single cell each
+ * — they're free-shape blobs, not tabular data, and exploding them
+ * across columns would mean the column set changes per row.
+ */
+export function renderSyncAuditCsv(entries: SyncAuditCsvRow[]): string {
+  const lines: string[] = [];
+  lines.push(SYNC_AUDIT_CSV_HEADER.join(','));
+  for (const e of entries) {
+    lines.push([
+      csvCell(e.id),
+      csvCell(e.syncType),
+      csvCell(e.action),
+      csvCell(e.actorUsername),
+      csvCell(e.actorUserId),
+      csvCell(e.actorIp),
+      csvCell(e.status),
+      csvCell(e.pagesUsed),
+      csvCell(e.startedAt.toISOString()),
+      csvCell(e.completedAt ? e.completedAt.toISOString() : null),
+      csvCell(e.params ? JSON.stringify(e.params) : null),
+      csvCell(e.result ? JSON.stringify(e.result) : null),
+      csvCell(e.errorMessage),
+    ].join(','));
+  }
+  // UTF-8 BOM (\uFEFF) + CRLF line endings = "Excel-friendly" CSV.
+  return '\uFEFF' + lines.join('\r\n') + '\r\n';
+}
+
+/**
  * Router-level error middleware. Exported so that `server/routes.ts` can
  * attach it AFTER it has finished mounting its own backfill routes onto
  * the apiRouter — Express only invokes error middleware that was
@@ -848,6 +955,57 @@ export function createApiRouter(): Router {
         }
         const page = await pgStorage.listSyncAudit(parsed.data);
         res.json(page);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // Admin: CSV export of the same sync_audit rows the paginated
+  // browser shows (Task #117). Returns text/csv with a Content-
+  // Disposition: attachment header so the browser downloads to a
+  // file rather than rendering inline. The same `syncType` filter
+  // shape as `/admin/sync-audit` is honoured so the download matches
+  // whatever the operator currently has applied in the UI.
+  router.get(
+    '/admin/sync-audit.csv',
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const querySchema = z.object({
+          syncType: z.string().trim().max(100).optional(),
+        });
+        const parsed = querySchema.safeParse(req.query);
+        if (!parsed.success) {
+          return res.status(400).json({
+            error: 'Invalid query parameters',
+            issues: parsed.error.issues.map((i) => ({
+              path: i.path.join('.'),
+              message: i.message,
+            })),
+          });
+        }
+
+        const entries = await pgStorage.exportSyncAudit({
+          syncType: parsed.data.syncType,
+        });
+        const csv = renderSyncAuditCsv(entries);
+
+        // Filename embeds today's date (UTC; the audit timestamps are
+        // stored in UTC) so multiple downloads in a session don't
+        // collide in the browser's downloads folder. The `attachment`
+        // disposition forces a file save instead of inline rendering.
+        const today = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="sync-audit-${today}.csv"`,
+        );
+        // CSV is data, not a webpage — block the cached-by-CDN /
+        // remembered-by-browser failure modes that would otherwise let
+        // a stale export be served back the next day.
+        res.setHeader('Cache-Control', 'no-store');
+        res.send(csv);
       } catch (err) {
         next(err);
       }

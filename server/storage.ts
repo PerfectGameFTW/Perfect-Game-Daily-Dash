@@ -117,6 +117,11 @@ export interface IStorage {
 
   // Sync audit log (historical/backfill triggers)
   listSyncAudit(filters: SyncAuditFilters): Promise<SyncAuditPage>;
+  // Bulk export of the same audit table for the admin "Download CSV"
+  // affordance (Task #117). Returns up to `maxRows` matching entries
+  // ordered newest-first, with no pagination — the caller is expected
+  // to apply the cap (we hard-cap inside as a safety net regardless).
+  exportSyncAudit(filters: { syncType?: string; maxRows?: number }): Promise<SyncAuditEntry[]>;
 
   // Security audit log (admin 2FA actions, Task #100). Append-only —
   // there is intentionally no "delete" or "update" entry point so a

@@ -21,7 +21,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { InvalidOrderDataError, OrderNotFoundError } from './errors';
 
 // Import IStorage interface from './storage'
-import { IStorage, McpQueryAuditFilters, McpQueryAuditPage, SyncAuditFilters, SyncAuditPage } from './storage';
+import { IStorage, McpQueryAuditFilters, McpQueryAuditPage, SyncAuditFilters, SyncAuditPage, SyncAuditEntry } from './storage';
 
 class PgStorage implements IStorage {
   // User methods
@@ -585,6 +585,54 @@ class PgStorage implements IStorage {
       offset,
       syncTypes: typesResult.rows.map((r) => r.sync_type as string),
     };
+  }
+
+  // Bulk export of sync_audit rows for the admin "Download CSV"
+  // affordance (Task #117). Mirrors the SELECT projection of
+  // listSyncAudit so the CSV columns line up exactly with what the
+  // browser shows, but skips pagination — the caller wants every row
+  // matching the current filter, not just the visible page. A hard
+  // safety cap keeps a runaway request from streaming millions of
+  // rows into memory; sync_audit grows roughly one row per backfill
+  // trigger so 10k is several years of headroom and any real overflow
+  // is itself a signal worth investigating.
+  async exportSyncAudit(filters: {
+    syncType?: string;
+    maxRows?: number;
+  }): Promise<SyncAuditEntry[]> {
+    const cap = Math.min(Math.max(filters.maxRows ?? 10_000, 1), 50_000);
+
+    const whereClause = filters.syncType && filters.syncType.trim() !== ''
+      ? sql`WHERE a.sync_type = ${filters.syncType.trim()}`
+      : sql``;
+
+    const rowsResult = await db.execute(sql`
+      SELECT a.id, a.sync_type, a.action, a.actor_user_id, a.actor_ip,
+             a.params, a.status, a.error_message, a.result, a.pages_used,
+             a.started_at, a.completed_at,
+             u.username AS actor_username
+      FROM sync_audit a
+      LEFT JOIN users u ON u.id = a.actor_user_id
+      ${whereClause}
+      ORDER BY a.started_at DESC, a.id DESC
+      LIMIT ${cap}
+    `);
+
+    return rowsResult.rows.map((row) => ({
+      id: Number(row.id),
+      syncType: row.sync_type as string,
+      action: row.action as string,
+      actorUserId: row.actor_user_id === null ? null : Number(row.actor_user_id),
+      actorIp: (row.actor_ip as string | null) ?? null,
+      params: (row.params as Record<string, unknown> | null) ?? null,
+      status: row.status as string,
+      errorMessage: (row.error_message as string | null) ?? null,
+      result: (row.result as Record<string, unknown> | null) ?? null,
+      pagesUsed: Number(row.pages_used ?? 0),
+      startedAt: new Date(row.started_at as string),
+      completedAt: row.completed_at === null ? null : new Date(row.completed_at as string),
+      actorUsername: (row.actor_username as string | null) ?? null,
+    }));
   }
 
   // Per-deployment runtime settings. The key/value pair is constrained
