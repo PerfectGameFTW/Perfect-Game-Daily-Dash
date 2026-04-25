@@ -599,13 +599,17 @@ class PgStorage implements IStorage {
   async exportSyncAudit(filters: {
     syncType?: string;
     maxRows?: number;
-  }): Promise<SyncAuditEntry[]> {
+  }): Promise<{ entries: SyncAuditEntry[]; truncated: boolean }> {
     const cap = Math.min(Math.max(filters.maxRows ?? 10_000, 1), 50_000);
 
     const whereClause = filters.syncType && filters.syncType.trim() !== ''
       ? sql`WHERE a.sync_type = ${filters.syncType.trim()}`
       : sql``;
 
+    // Fetch one extra row beyond the cap so the caller can detect
+    // truncation without a separate COUNT(*) round trip — if we got
+    // back exactly cap+1 rows there's at least one matching row we
+    // dropped, so the export is partial.
     const rowsResult = await db.execute(sql`
       SELECT a.id, a.sync_type, a.action, a.actor_user_id, a.actor_ip,
              a.params, a.status, a.error_message, a.result, a.pages_used,
@@ -615,10 +619,13 @@ class PgStorage implements IStorage {
       LEFT JOIN users u ON u.id = a.actor_user_id
       ${whereClause}
       ORDER BY a.started_at DESC, a.id DESC
-      LIMIT ${cap}
+      LIMIT ${cap + 1}
     `);
 
-    return rowsResult.rows.map((row) => ({
+    const truncated = rowsResult.rows.length > cap;
+    const sliced = truncated ? rowsResult.rows.slice(0, cap) : rowsResult.rows;
+
+    const entries = sliced.map((row) => ({
       id: Number(row.id),
       syncType: row.sync_type as string,
       action: row.action as string,
@@ -633,6 +640,8 @@ class PgStorage implements IStorage {
       completedAt: row.completed_at === null ? null : new Date(row.completed_at as string),
       actorUsername: (row.actor_username as string | null) ?? null,
     }));
+
+    return { entries, truncated };
   }
 
   // Per-deployment runtime settings. The key/value pair is constrained

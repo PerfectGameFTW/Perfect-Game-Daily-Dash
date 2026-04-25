@@ -974,6 +974,11 @@ export function createApiRouter(): Router {
       try {
         const querySchema = z.object({
           syncType: z.string().trim().max(100).optional(),
+          // `maxRows` lets an operator request a smaller, faster
+          // download for triage and lets the test suite force
+          // truncation without seeding 10k rows. Bounded to the same
+          // safety range as the storage helper.
+          maxRows: z.coerce.number().int().min(1).max(50_000).optional(),
         });
         const parsed = querySchema.safeParse(req.query);
         if (!parsed.success) {
@@ -986,8 +991,9 @@ export function createApiRouter(): Router {
           });
         }
 
-        const entries = await pgStorage.exportSyncAudit({
+        const { entries, truncated } = await pgStorage.exportSyncAudit({
           syncType: parsed.data.syncType,
+          maxRows: parsed.data.maxRows,
         });
         const csv = renderSyncAuditCsv(entries);
 
@@ -1005,6 +1011,17 @@ export function createApiRouter(): Router {
         // remembered-by-browser failure modes that would otherwise let
         // a stale export be served back the next day.
         res.setHeader('Cache-Control', 'no-store');
+        // Surface row count + truncation as response headers (and
+        // expose them to fetch() callers via Access-Control-Expose-
+        // Headers so the UI can warn if it ever uses fetch instead
+        // of the current `<a download>` approach). Without these the
+        // operator can't tell a partial export from a complete one.
+        res.setHeader('X-Sync-Audit-Row-Count', String(entries.length));
+        res.setHeader('X-Sync-Audit-Truncated', truncated ? 'true' : 'false');
+        res.setHeader(
+          'Access-Control-Expose-Headers',
+          'Content-Disposition, X-Sync-Audit-Row-Count, X-Sync-Audit-Truncated',
+        );
         res.send(csv);
       } catch (err) {
         next(err);

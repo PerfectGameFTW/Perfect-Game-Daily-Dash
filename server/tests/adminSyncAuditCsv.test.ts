@@ -69,6 +69,8 @@ interface RawResp {
   contentType: string | null;
   contentDisposition: string | null;
   cacheControl: string | null;
+  rowCount: string | null;
+  truncated: string | null;
 }
 
 async function getRaw(
@@ -89,6 +91,8 @@ async function getRaw(
     contentType: r.headers.get('content-type'),
     contentDisposition: r.headers.get('content-disposition'),
     cacheControl: r.headers.get('cache-control'),
+    rowCount: r.headers.get('x-sync-audit-row-count'),
+    truncated: r.headers.get('x-sync-audit-truncated'),
   };
 }
 
@@ -313,6 +317,13 @@ describe('GET /api/admin/sync-audit.csv (Task #117)', () => {
     // Cache-Control: no-store so a stale CSV can't be served by an
     // intermediate or remembered by the browser.
     expect(r.cacheControl ?? '').toMatch(/no-store/i);
+    // Truncation/row-count headers: when the export fits under the
+    // cap (default 10k, well above our 3 seeded rows) the truncated
+    // signal must be `false` and the row count must match the
+    // visible body. Operators rely on this to tell a complete export
+    // from a partial one.
+    expect(r.truncated).toBe('false');
+    expect(r.rowCount).toBe('3');
 
     // Body sanity: starts with UTF-8 BOM (Excel cue for unicode),
     // then the column header line, then one line per matching row +
@@ -403,6 +414,41 @@ describe('GET /api/admin/sync-audit.csv (Task #117)', () => {
 
   it('rejects an oversized syncType filter with 400 and no CSV body', async () => {
     const qs = new URLSearchParams({ syncType: 'x'.repeat(500) }).toString();
+    const r = await getRaw(`${baseUrl}/api/admin/sync-audit.csv?${qs}`, {
+      'x-test-user-id': String(adminId),
+    });
+    expect(r.status).toBe(400);
+    expect(r.contentType ?? '').not.toMatch(/text\/csv/i);
+  });
+
+  it('signals truncation when more matching rows exist than the export cap', async () => {
+    // Three rows under TEST_SYNC_TYPE were seeded; force the export
+    // cap down to 2 so the third row gets dropped. Without the
+    // truncation header an operator would have no way to tell their
+    // "complete" download is actually missing audit history — the
+    // exact failure mode this header exists to surface.
+    const qs = new URLSearchParams({
+      syncType: TEST_SYNC_TYPE,
+      maxRows: '2',
+    }).toString();
+    const r = await getRaw(`${baseUrl}/api/admin/sync-audit.csv?${qs}`, {
+      'x-test-user-id': String(adminId),
+    });
+    expect(r.status).toBe(200);
+    expect(r.contentType ?? '').toMatch(/text\/csv/i);
+    expect(r.truncated).toBe('true');
+    expect(r.rowCount).toBe('2');
+
+    // The body should contain exactly the cap number of data rows
+    // (2) plus the header row, NOT cap+1 — i.e. the route must drop
+    // the probe row before rendering the CSV.
+    const noBom = r.text.slice(1);
+    const csvRows = parseCsv(noBom);
+    expect(csvRows.length).toBe(1 + 2);
+  });
+
+  it('rejects an out-of-range maxRows with 400 and no CSV body', async () => {
+    const qs = new URLSearchParams({ maxRows: '0' }).toString();
     const r = await getRaw(`${baseUrl}/api/admin/sync-audit.csv?${qs}`, {
       'x-test-user-id': String(adminId),
     });
