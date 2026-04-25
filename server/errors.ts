@@ -145,7 +145,7 @@ export interface ExternalServiceErrorOptions {
 
 export class ExternalServiceError extends AppError {
   constructor(message: string, opts: ExternalServiceErrorOptions = {}) {
-    // 502 Bad Gateway: upstream service failed (Square, SendGrid, etc.).
+    // 502 Bad Gateway: upstream service failed (Square, Gmail, etc.).
     super(message, {
       statusCode: 502,
       code: opts.code ?? 'EXTERNAL_SERVICE_ERROR',

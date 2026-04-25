@@ -777,7 +777,7 @@ export class AuthService {
       await sendEmail({ to: normalized, subject, text, html });
     } catch (err) {
       // Same posture as the password-reset email: log and move on.
-      // The route layer returns a generic ack so a transient SendGrid
+      // The route layer returns a generic ack so a transient Gmail
       // outage doesn't leak provider state to the caller.
       logger.error(
         'authService.email_verification_send_failed',
