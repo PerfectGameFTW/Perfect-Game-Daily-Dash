@@ -325,6 +325,145 @@ describe('emailService MIME builder', () => {
     }
   });
 
+  it('rejects with status, statusText, and the Google error body when Gmail returns a non-2xx response', async () => {
+    // We don't reuse installFetchMock here because that helper hard-codes a
+    // 200 from Gmail; this test specifically needs the failure branch in
+    // sendEmail (the `if (!res.ok)` block) and asserts every piece of
+    // diagnostic detail is preserved into the thrown Error.message so the
+    // caller's audit log can record useful triage info.
+    const errorBody = JSON.stringify({
+      error: {
+        code: 403,
+        message: 'Delegation denied for info@myperfectgame.com',
+        status: 'PERMISSION_DENIED',
+      },
+    });
+
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) {
+        return new Response(
+          JSON.stringify({ items: [{ settings: { access_token: 'token-abc' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (u.includes('gmail.googleapis.com')) {
+        return new Response(errorBody, {
+          status: 403,
+          statusText: 'Forbidden',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected fetch in emailService.test.ts: ${u}`);
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    try {
+      // Capture the rejection so we can pin every component of the
+      // message individually — `rejects.toThrow(/regex/)` would only
+      // verify a single substring at a time.
+      let caught: unknown = null;
+      try {
+        await sendEmail({ to: 'r@example.test', subject: 's', text: 't' });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const msg = (caught as Error).message;
+      // Status code: required so operators can distinguish 4xx (caller
+      // / config issue) from 5xx (Gmail outage).
+      expect(msg).toContain('403');
+      // statusText: human-readable hint that complements the code.
+      expect(msg).toContain('Forbidden');
+      // Raw response body: this is where Google's structured error
+      // (PERMISSION_DENIED, the offending From address, etc.) lives —
+      // dropping it would turn audit-log lines into opaque
+      // "send failed" entries.
+      expect(msg).toContain('Delegation denied for info@myperfectgame.com');
+      expect(msg).toContain('PERMISSION_DENIED');
+      // Exactly one Gmail call was made — the failure branch must not
+      // retry silently, otherwise the audit log wouldn't reflect what
+      // actually hit the wire.
+      const gmailCalls = fetchMock.mock.calls.filter((c) =>
+        String(c[0]).includes('gmail.googleapis.com'),
+      );
+      expect(gmailCalls.length).toBe(1);
+    } finally {
+      (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
+  it('still rejects with the status/statusText (and no secondary error) when reading the Gmail error body itself fails', async () => {
+    // Simulate a flaky transport: Gmail returns a non-2xx, but reading
+    // the response body throws (e.g. socket reset mid-stream, malformed
+    // chunked encoding). The contract is that sendEmail must still
+    // reject with the status / statusText so the audit log carries
+    // *something* useful — never re-throw the secondary "body read
+    // failed" error in place of the original failure.
+    const bodyReadError = new Error('simulated body read failure');
+
+    // Hand-rolled Response stand-in: the real Response class doesn't
+    // give us a clean way to make `.text()` throw. We only need the
+    // surface area sendEmail's failure branch touches: ok, status,
+    // statusText, text().
+    const failingResponse = {
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway',
+      text: async () => {
+        throw bodyReadError;
+      },
+    };
+
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) {
+        return new Response(
+          JSON.stringify({ items: [{ settings: { access_token: 'token-abc' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (u.includes('gmail.googleapis.com')) {
+        return failingResponse as unknown as Response;
+      }
+      throw new Error(`Unexpected fetch in emailService.test.ts: ${u}`);
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    try {
+      let caught: unknown = null;
+      try {
+        await sendEmail({ to: 'r@example.test', subject: 's', text: 't' });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const msg = (caught as Error).message;
+      // Even with no body to surface, status + statusText must make it
+      // into the audit log line.
+      expect(msg).toContain('502');
+      expect(msg).toContain('Bad Gateway');
+      // The "Gmail send failed:" prefix is the load-bearing token
+      // operators grep for when triaging bounces. Pin it so a refactor
+      // that drops the prefix gets caught here.
+      expect(msg).toMatch(/^Gmail send failed:/);
+
+      // Critical: the secondary body-read error must NOT be what
+      // bubbles up — that would mask the original Gmail failure and
+      // break audit-log triage.
+      expect(msg).not.toContain('simulated body read failure');
+      expect(caught).not.toBe(bodyReadError);
+    } finally {
+      (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
   it('writes a developer stub file and resolves in non-production when no Gmail token is available', async () => {
     delete process.env.REPLIT_CONNECTORS_HOSTNAME;
     process.env.NODE_ENV = 'development';

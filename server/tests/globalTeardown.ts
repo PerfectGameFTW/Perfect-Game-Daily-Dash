@@ -168,7 +168,7 @@ export default async function globalTeardown(): Promise<void> {
       // pg returns BIGINT as a string; BigInt() preserves precision
       // for the (theoretically possible) >2^53 case without lying.
       .map((r) => ({ tbl: r.tbl, n: BigInt(r.n) }))
-      .filter((r) => r.n > 0n)
+      .filter((r) => r.n > BigInt(0))
       .sort((a, b) => {
         // Sort by row count descending, then by table name for stable output.
         if (a.n === b.n) return a.tbl.localeCompare(b.tbl);
@@ -180,7 +180,7 @@ export default async function globalTeardown(): Promise<void> {
       return;
     }
 
-    const totalLeaked = leaks.reduce((acc, r) => acc + r.n, 0n);
+    const totalLeaked = leaks.reduce((acc, r) => acc + r.n, BigInt(0));
     const lines: string[] = [
       '',
       BANNER,

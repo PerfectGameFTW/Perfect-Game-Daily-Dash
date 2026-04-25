@@ -296,7 +296,7 @@ export function createAuthRouter(): Router {
         // success below; the pending state is also cleared on TTL
         // expiry / re-login so the counter cannot persist past the
         // pending window.
-        const priorAttempts = (req.session.totpFailedAttempts as number | undefined) ?? 0;
+        const priorAttempts = req.session.totpFailedAttempts ?? 0;
         const ctx = {
           requestId: (req as any).requestId as string | undefined,
           ip: req.ip,

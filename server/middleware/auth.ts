@@ -40,6 +40,10 @@ declare module 'express-session' {
     // is only created after `/api/auth/totp/verify` succeeds.
     pendingTotpUserId?: number;
     pendingTotpIssuedAt?: number;
+    // Per-pending-session failed-verification counter (Task #102). Used
+    // by /api/auth/totp/verify to surface attemptCount in the audit log
+    // and is cleared on success / on pending-session expiry.
+    totpFailedAttempts?: number;
   }
 }
 
