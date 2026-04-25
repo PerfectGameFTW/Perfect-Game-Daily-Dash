@@ -26,7 +26,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { logger, errorContext } from '../logger';
+import { logger, errorContext, type LogContext } from '../logger';
 
 const FROM_EMAIL_OVERRIDE = process.env.MAIL_FROM_EMAIL;
 const DEFAULT_FROM_EMAIL = 'info@myperfectgame.com';
@@ -40,50 +40,115 @@ export interface EmailMessage {
 }
 
 /**
- * Fetch a Gmail OAuth access token from the Replit connectors API. Returns
- * null when the integration is not wired (so the caller can fall back to
- * the dev console stub). Throws only on a real runtime error talking to
- * the connectors API.
+ * Tagged outcome of a Gmail-token lookup against the Replit connectors API.
+ *
+ * The two failure modes look identical from the call site (no token to send
+ * with) but mean very different things to an operator triaging a missing
+ * password-reset email:
+ *
+ *   - `unconfigured` — nobody has wired the Gmail integration in this
+ *     environment yet, or the wired connection genuinely has no token in
+ *     either of the two known shapes. Action: connect Gmail.
+ *
+ *   - `connector_failed` — the connectors API itself returned a non-2xx,
+ *     dropped the connection, or sent a body we couldn't parse. Action:
+ *     wait it out / check Replit status; reconnecting Gmail won't help.
+ *
+ * `cause` carries the underlying thrown value (network / JSON failures) so
+ * the structured log line can preserve `errorMessage` and `stack` via
+ * `errorContext`. `status` is set on HTTP non-2xx so the log line can carry
+ * the response code and operators can grep recent failures by status.
+ */
+type ConnectorTokenResult =
+  | { kind: 'token'; token: string }
+  | { kind: 'unconfigured' }
+  | {
+      kind: 'connector_failed';
+      reason: string;
+      status?: number;
+      cause?: unknown;
+    };
+
+/**
+ * Fetch a Gmail OAuth access token from the Replit connectors API. Never
+ * throws — every failure path is encoded in the returned tag so the caller
+ * can distinguish "Gmail not wired" from "connectors API is down" and
+ * surface a triage-friendly error to operators.
  *
  * Tokens behind the connectors API rotate, so this is intentionally
  * uncached — every send re-fetches.
  */
-async function getGmailAccessTokenFromConnector(): Promise<string | null> {
+async function getGmailAccessTokenFromConnector(): Promise<ConnectorTokenResult> {
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  if (!hostname) return null;
+  if (!hostname) return { kind: 'unconfigured' };
 
   const xReplitToken = process.env.REPL_IDENTITY
     ? 'repl ' + process.env.REPL_IDENTITY
     : process.env.WEB_REPL_RENEWAL
       ? 'depl ' + process.env.WEB_REPL_RENEWAL
       : null;
-  if (!xReplitToken) return null;
+  if (!xReplitToken) return { kind: 'unconfigured' };
 
-  const res = await fetch(
-    'https://' +
-      hostname +
-      '/api/v2/connection?include_secrets=true&connector_names=google-mail',
-    {
-      headers: {
-        Accept: 'application/json',
-        'X-Replit-Token': xReplitToken,
+  let res: Response;
+  try {
+    res = await fetch(
+      'https://' +
+        hostname +
+        '/api/v2/connection?include_secrets=true&connector_names=google-mail',
+      {
+        headers: {
+          Accept: 'application/json',
+          'X-Replit-Token': xReplitToken,
+        },
       },
-    },
-  );
-  if (!res.ok) return null;
+    );
+  } catch (err) {
+    // Network-level failure (DNS, ECONNREFUSED, TLS, abort, ...). Treat
+    // as connector-down rather than collapsing to "not configured" so the
+    // operator-facing error is actionable.
+    return {
+      kind: 'connector_failed',
+      reason: err instanceof Error ? err.message : String(err),
+      cause: err,
+    };
+  }
 
-  const data = (await res.json()) as {
-    items?: Array<{ settings?: Record<string, unknown> }>;
-  };
+  if (!res.ok) {
+    return {
+      kind: 'connector_failed',
+      reason: `${res.status} ${res.statusText}`,
+      status: res.status,
+    };
+  }
+
+  let data: { items?: Array<{ settings?: Record<string, unknown> }> };
+  try {
+    data = (await res.json()) as {
+      items?: Array<{ settings?: Record<string, unknown> }>;
+    };
+  } catch (err) {
+    // 200 OK but the body wasn't JSON we could parse. That's the
+    // connectors API misbehaving, not a missing wiring — surface it
+    // with the connector-down branch.
+    return {
+      kind: 'connector_failed',
+      reason:
+        'malformed connectors API JSON: ' +
+        (err instanceof Error ? err.message : String(err)),
+      status: res.status,
+      cause: err,
+    };
+  }
+
   const settings = data.items?.[0]?.settings;
-  if (!settings) return null;
+  if (!settings) return { kind: 'unconfigured' };
 
   // The connectors API returns the access token under either `access_token`
   // (the OAuth field name) or nested under `oauth.credentials.access_token`
   // depending on the connector revision. Check both for forward
   // compatibility.
   const direct = typeof settings.access_token === 'string' ? settings.access_token : '';
-  if (direct) return direct;
+  if (direct) return { kind: 'token', token: direct };
   const oauth = settings.oauth as
     | { credentials?: { access_token?: unknown } }
     | undefined;
@@ -91,7 +156,8 @@ async function getGmailAccessTokenFromConnector(): Promise<string | null> {
     typeof oauth?.credentials?.access_token === 'string'
       ? oauth.credentials.access_token
       : '';
-  return nested || null;
+  if (nested) return { kind: 'token', token: nested };
+  return { kind: 'unconfigured' };
 }
 
 /**
@@ -202,12 +268,37 @@ function base64url(input: string): string {
 export async function sendEmail(msg: EmailMessage): Promise<void> {
   const fromEmail = FROM_EMAIL_OVERRIDE || DEFAULT_FROM_EMAIL;
 
-  let accessToken: string | null = null;
+  // The helper is contracted not to throw, but a defensive try/catch keeps
+  // a future regression (or a thrown value from inside fetch's response
+  // teardown) from short-circuiting sendEmail before the dev-stub fallback
+  // gets a chance to run.
+  let tokenResult: ConnectorTokenResult;
   try {
-    accessToken = await getGmailAccessTokenFromConnector();
+    tokenResult = await getGmailAccessTokenFromConnector();
   } catch (err) {
-    logger.error('emailService.connector_fetch_failed', errorContext(err));
+    tokenResult = {
+      kind: 'connector_failed',
+      reason: err instanceof Error ? err.message : String(err),
+      cause: err,
+    };
   }
+
+  // Connector-API-down case: emit a structured log line so on-call can
+  // grep recent failures by status without re-running the request, and so
+  // bounces can be correlated with connectors-side incidents. We do this
+  // BEFORE the test-env guard because the failure is real regardless of
+  // NODE_ENV — operators in CI logs care just as much.
+  if (tokenResult.kind === 'connector_failed') {
+    const ctx: LogContext =
+      tokenResult.cause !== undefined
+        ? errorContext(tokenResult.cause)
+        : { errorMessage: tokenResult.reason };
+    if (tokenResult.status !== undefined) ctx.status = tokenResult.status;
+    logger.error('emailService.connector_fetch_failed', ctx);
+  }
+
+  let accessToken: string | null =
+    tokenResult.kind === 'token' ? tokenResult.token : null;
 
   // Test-environment safety guard: when NODE_ENV === 'test', refuse to
   // touch the real Gmail-send branch unless a test has explicitly
@@ -230,7 +321,16 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
 
   if (!accessToken) {
     if (process.env.NODE_ENV === 'production') {
-      // In production, refuse to silently swallow recovery emails.
+      // In production, refuse to silently swallow recovery emails. The
+      // two failure modes get distinct messages so an operator reading
+      // the audit log can tell whether to reconnect Gmail (configuration
+      // problem on our side) or wait for the connectors API to recover
+      // (transient platform problem).
+      if (tokenResult.kind === 'connector_failed') {
+        throw new Error(
+          `Gmail connector API unavailable: the Replit connectors API is not reachable (${tokenResult.reason}). Retry shortly; if the failure persists, check Replit status before reconnecting Gmail.`,
+        );
+      }
       throw new Error(
         'Gmail not configured: connect the Gmail integration in Replit so the dashboard can send password-reset email.',
       );

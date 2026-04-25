@@ -715,7 +715,12 @@ describe('emailService MIME builder', () => {
     };
   }
 
-  it('throws in production when the connectors API returns a non-2xx response (token fetch returns null, no silent send)', async () => {
+  it('throws in production with a connector-API-down message AND a structured log carrying the HTTP status when the connectors API returns a non-2xx response', async () => {
+    // Task #150: the connector-API-down case must be visibly distinct
+    // from the unconfigured case so an operator triaging a missing
+    // password-reset email can tell whether to reconnect Gmail or wait
+    // out a Replit outage. The structured log line must carry the HTTP
+    // status so on-call can grep recent failures by code.
     process.env.NODE_ENV = 'production';
     const m = installConnectorOnlyFetchMock(
       async () =>
@@ -724,16 +729,44 @@ describe('emailService MIME builder', () => {
           statusText: 'Service Unavailable',
         }),
     );
+    const errorSpy = vi.spyOn(logger, 'error');
     try {
-      await expect(
-        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
-      ).rejects.toThrow(/Gmail not configured/i);
+      let caught: unknown = null;
+      try {
+        await sendEmail({ to: 'r@example.test', subject: 's', text: 't' });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const msg = (caught as Error).message;
+      // Distinct from the "Gmail not configured" surface — that's the
+      // whole point of Task #150.
+      expect(msg).toMatch(/Gmail connector API unavailable/i);
+      expect(msg).not.toMatch(/Gmail not configured/i);
+      // The error message carries the status + statusText so the audit
+      // log line records the exact connector failure mode.
+      expect(msg).toContain('503');
+      expect(msg).toContain('Service Unavailable');
 
       // Probe was attempted exactly once; no Gmail send was made.
       expect(m.fetchMock).toHaveBeenCalledTimes(1);
       expect(String(m.fetchMock.mock.calls[0][0])).toContain(
         '/api/v2/connection',
       );
+
+      // The structured log line carries `status` so operators can grep
+      // recent failures by HTTP code without re-running the request.
+      const failureCall = errorSpy.mock.calls.find(
+        ([m]) => m === 'emailService.connector_fetch_failed',
+      );
+      expect(failureCall).toBeDefined();
+      const ctx = failureCall![1] as
+        | { status?: number; errorMessage?: string }
+        | undefined;
+      expect(ctx?.status).toBe(503);
+      expect(ctx?.errorMessage).toContain('503');
+      expect(ctx?.errorMessage).toContain('Service Unavailable');
     } finally {
       m.restore();
     }
@@ -835,14 +868,15 @@ describe('emailService MIME builder', () => {
     }
   });
 
-  it('throws in production AND logs `emailService.connector_fetch_failed` when the connectors API rejects outright', async () => {
-    // The try/catch around getGmailAccessTokenFromConnector inside
-    // sendEmail must swallow the rejection (so a transient connectors
-    // outage doesn't leak as a confusing low-level fetch error in the
-    // password-reset response) but it MUST log the failure so on-call
-    // can correlate inbox bounces with connector-side incidents. We
-    // pin both the rethrown "Gmail not configured" surface error and
-    // the structured log line here.
+  it('throws in production with the connector-API-down message AND logs `emailService.connector_fetch_failed` when the connectors API rejects outright', async () => {
+    // The connector lookup must swallow the rejection (so a transient
+    // connectors outage doesn't leak as a confusing low-level fetch
+    // error in the password-reset response) but it MUST log the failure
+    // so on-call can correlate inbox bounces with connector-side
+    // incidents. Task #150 additionally requires that the surface
+    // error distinguish "API down" from "not wired" so the operator
+    // knows whether to wait or reconnect — we pin both the new error
+    // shape and the structured log line here.
     process.env.NODE_ENV = 'production';
     const probeError = new Error('simulated connectors network failure');
     const m = installConnectorOnlyFetchMock(async () => {
@@ -850,22 +884,41 @@ describe('emailService MIME builder', () => {
     });
     const errorSpy = vi.spyOn(logger, 'error');
     try {
-      await expect(
-        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
-      ).rejects.toThrow(/Gmail not configured/i);
+      let caught: unknown = null;
+      try {
+        await sendEmail({ to: 'r@example.test', subject: 's', text: 't' });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const msg = (caught as Error).message;
+      // Distinct from the "Gmail not configured" surface — operators
+      // reading the audit log must be able to tell the two failure
+      // modes apart.
+      expect(msg).toMatch(/Gmail connector API unavailable/i);
+      expect(msg).not.toMatch(/Gmail not configured/i);
+      // The underlying probe error message is included so the operator
+      // can see why the connector call failed without re-running it.
+      expect(msg).toContain('simulated connectors network failure');
 
       // Probe attempted exactly once; no retry, no Gmail send.
       expect(m.fetchMock).toHaveBeenCalledTimes(1);
 
       // The structured log line carries the probe error's message in
       // the errorContext payload — verify both the tag and that the
-      // underlying error wasn't lost.
+      // underlying error wasn't lost. Network rejections have no HTTP
+      // status to report, so the `status` field is intentionally
+      // absent here.
       const failureCall = errorSpy.mock.calls.find(
-        ([msg]) => msg === 'emailService.connector_fetch_failed',
+        ([m]) => m === 'emailService.connector_fetch_failed',
       );
       expect(failureCall).toBeDefined();
-      const ctx = failureCall![1] as { errorMessage?: string } | undefined;
+      const ctx = failureCall![1] as
+        | { errorMessage?: string; status?: number }
+        | undefined;
       expect(ctx?.errorMessage).toBe('simulated connectors network failure');
+      expect(ctx?.status).toBeUndefined();
     } finally {
       m.restore();
     }
@@ -901,6 +954,142 @@ describe('emailService MIME builder', () => {
       expect(failureCall).toBeDefined();
       const ctx = failureCall![1] as { errorMessage?: string } | undefined;
       expect(ctx?.errorMessage).toBe('simulated connectors network failure');
+    } finally {
+      m.restore();
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // Task #150: extra coverage for the connector-API-down vs. unconfigured
+  // distinction — the malformed-JSON branch and the dev-mode log
+  // assertion for non-2xx responses (which the existing dev test
+  // doesn't pin).
+  // ---------------------------------------------------------------------
+
+  it('throws in production with the connector-API-down message AND logs `emailService.connector_fetch_failed` carrying the HTTP status when the connectors API returns 200 with malformed JSON', async () => {
+    // The connectors API returned 200, so it didn't refuse us — but
+    // the body wasn't usable JSON. That's the connector misbehaving,
+    // not a missing wiring, so the operator-facing error must be the
+    // connector-API-down one. The structured log line should still
+    // carry the (200) HTTP status so a grep by status surfaces this
+    // case alongside the more typical 5xx failures.
+    process.env.NODE_ENV = 'production';
+    const m = installConnectorOnlyFetchMock(
+      async () =>
+        new Response('not json at all <html><body>oops</body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    const errorSpy = vi.spyOn(logger, 'error');
+    try {
+      let caught: unknown = null;
+      try {
+        await sendEmail({ to: 'r@example.test', subject: 's', text: 't' });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const msg = (caught as Error).message;
+      expect(msg).toMatch(/Gmail connector API unavailable/i);
+      expect(msg).not.toMatch(/Gmail not configured/i);
+      // The "malformed connectors API JSON" hint is what tells the
+      // operator the failure was a body-parsing issue rather than a
+      // 5xx, so pin it explicitly.
+      expect(msg).toMatch(/malformed connectors API JSON/i);
+
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+
+      const failureCall = errorSpy.mock.calls.find(
+        ([m]) => m === 'emailService.connector_fetch_failed',
+      );
+      expect(failureCall).toBeDefined();
+      const ctx = failureCall![1] as
+        | { status?: number; errorMessage?: string }
+        | undefined;
+      expect(ctx?.status).toBe(200);
+      // The errorContext payload preserves the underlying SyntaxError's
+      // message — operators get the actual parse-failure detail in the
+      // log line rather than an opaque "malformed body" tag.
+      expect(typeof ctx?.errorMessage).toBe('string');
+      expect(ctx?.errorMessage!.length).toBeGreaterThan(0);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('writes a developer stub file in non-production AND logs `emailService.connector_fetch_failed` carrying the HTTP status when the connectors API returns a non-2xx response', async () => {
+    // The dev-mode counterpart to the production non-2xx test above.
+    // Pins that the structured log line is emitted even on the
+    // dev-stub-fallback branch — operators tailing logs in CI / preview
+    // environments care about connector failures just as much as
+    // production does.
+    process.env.NODE_ENV = 'development';
+    const before = await snapshotStubDir();
+    const m = installConnectorOnlyFetchMock(
+      async () =>
+        new Response('connectors are unwell', {
+          status: 502,
+          statusText: 'Bad Gateway',
+        }),
+    );
+    const errorSpy = vi.spyOn(logger, 'error');
+    try {
+      await expect(
+        sendEmail({
+          to: 'r@example.test',
+          subject: 'non2xx-dev-log',
+          text: 'fell back to dev stub',
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+      await expectDevStubWrittenAfter(before, {
+        to: 'r@example.test',
+        subject: 'non2xx-dev-log',
+        text: 'fell back to dev stub',
+      });
+
+      const failureCall = errorSpy.mock.calls.find(
+        ([m]) => m === 'emailService.connector_fetch_failed',
+      );
+      expect(failureCall).toBeDefined();
+      const ctx = failureCall![1] as
+        | { status?: number; errorMessage?: string }
+        | undefined;
+      expect(ctx?.status).toBe(502);
+      expect(ctx?.errorMessage).toContain('502');
+      expect(ctx?.errorMessage).toContain('Bad Gateway');
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('does NOT log `emailService.connector_fetch_failed` on the unconfigured branch (env vars missing) — the connector was never reachable to fail', async () => {
+    // Negative pin: an unconfigured environment must NOT trip the
+    // connector-fetch-failed log line, otherwise dashboards would
+    // light up red on every preview environment that simply doesn't
+    // have Gmail wired. The two branches need to be observably
+    // distinct in both the surface error AND the structured log
+    // stream.
+    delete process.env.REPLIT_CONNECTORS_HOSTNAME;
+    process.env.NODE_ENV = 'production';
+
+    const m = installFetchMock(null);
+    const errorSpy = vi.spyOn(logger, 'error');
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail not configured/i);
+
+      // No probe was even attempted (env var short-circuit), so
+      // there's nothing to fail and nothing to log.
+      expect(m.fetchMock).not.toHaveBeenCalled();
+      const failureCall = errorSpy.mock.calls.find(
+        ([m]) => m === 'emailService.connector_fetch_failed',
+      );
+      expect(failureCall).toBeUndefined();
     } finally {
       m.restore();
     }
