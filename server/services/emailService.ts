@@ -23,10 +23,12 @@
  * the email — `sendEmail` throws so the auth flow surfaces a real error.
  */
 
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { logger, errorContext, type LogContext } from '../logger';
+import { emailAlerter } from './emailAlert';
 
 const FROM_EMAIL_OVERRIDE = process.env.MAIL_FROM_EMAIL;
 const DEFAULT_FROM_EMAIL = 'info@myperfectgame.com';
@@ -250,6 +252,17 @@ function buildRfc5322Message(
   );
 }
 
+/**
+ * Short, deterministic hash of a recipient address for the audit log
+ * (Task #104). 12 hex chars (48 bits) is plenty for log triage —
+ * repeat failures to the same inbox aggregate visibly without ever
+ * writing the literal address to disk. Lower-cased before hashing
+ * so equivalent addresses collide regardless of casing.
+ */
+function recipientHash(to: string): string {
+  return createHash('sha256').update(to.toLowerCase()).digest('hex').slice(0, 12);
+}
+
 /** base64url per RFC 4648 §5 — Gmail's `raw` field requires it. */
 function base64url(input: string): string {
   return Buffer.from(input, 'utf8')
@@ -287,13 +300,16 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
   // grep recent failures by status without re-running the request, and so
   // bounces can be correlated with connectors-side incidents. We do this
   // BEFORE the test-env guard because the failure is real regardless of
-  // NODE_ENV — operators in CI logs care just as much.
+  // NODE_ENV — operators in CI logs care just as much. The recipient
+  // hash is included so a connector incident can be correlated with the
+  // downstream `emailService.send_failed` line for the same message.
   if (tokenResult.kind === 'connector_failed') {
     const ctx: LogContext =
       tokenResult.cause !== undefined
         ? errorContext(tokenResult.cause)
         : { errorMessage: tokenResult.reason };
     if (tokenResult.status !== undefined) ctx.status = tokenResult.status;
+    ctx.recipientHash = recipientHash(msg.to);
     logger.error('emailService.connector_fetch_failed', ctx);
   }
 
@@ -325,12 +341,32 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
       // two failure modes get distinct messages so an operator reading
       // the audit log can tell whether to reconnect Gmail (configuration
       // problem on our side) or wait for the connectors API to recover
-      // (transient platform problem).
+      // (transient platform problem). Both also feed the email alerter
+      // (Task #104) so a sustained outage pages on-call instead of
+      // sitting unread in the audit log.
       if (tokenResult.kind === 'connector_failed') {
+        const reason =
+          tokenResult.status !== undefined
+            ? `connector_failed_${tokenResult.status}`
+            : 'connector_failed';
+        emailAlerter.record(reason);
+        const failCtx: LogContext = {
+          recipientHash: recipientHash(msg.to),
+          reason,
+          errorMessage: tokenResult.reason,
+        };
+        if (tokenResult.status !== undefined) failCtx.status = tokenResult.status;
+        logger.error('emailService.send_failed', failCtx);
         throw new Error(
           `Gmail connector API unavailable: the Replit connectors API is not reachable (${tokenResult.reason}). Retry shortly; if the failure persists, check Replit status before reconnecting Gmail.`,
         );
       }
+      emailAlerter.record('unconfigured');
+      logger.error('emailService.send_failed', {
+        recipientHash: recipientHash(msg.to),
+        reason: 'unconfigured',
+        errorMessage: 'Gmail integration not wired',
+      });
       throw new Error(
         'Gmail not configured: connect the Gmail integration in Replit so the dashboard can send password-reset email.',
       );
@@ -366,19 +402,52 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
     return;
   }
 
-  const raw = base64url(buildRfc5322Message(msg, fromEmail));
-  const res = await fetch(
-    'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
+  // Header-injection guard lives inside buildRfc5322Message and throws
+  // synchronously. Catching it here lets us record the failure in the
+  // alerter and audit log alongside every other "send blocked" path
+  // before re-throwing — otherwise a sudden spike in injection attempts
+  // would be invisible to on-call.
+  let raw: string;
+  try {
+    raw = base64url(buildRfc5322Message(msg, fromEmail));
+  } catch (err) {
+    emailAlerter.record('header_injection');
+    logger.error('emailService.send_failed', {
+      recipientHash: recipientHash(msg.to),
+      reason: 'header_injection',
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+
+  // Network-level failure on the Gmail call (DNS, ECONNREFUSED, TLS,
+  // abort, ...). Distinct from a non-2xx response — that has a status
+  // code; this doesn't.
+  let res: Response;
+  try {
+    res = await fetch(
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ raw }),
       },
-      body: JSON.stringify({ raw }),
-    },
-  );
+    );
+  } catch (err) {
+    emailAlerter.record('gmail_network_error');
+    logger.error('emailService.send_failed', {
+      recipientHash: recipientHash(msg.to),
+      reason: 'gmail_network_error',
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+    throw new Error(
+      `Gmail send failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   if (!res.ok) {
     // Surface the Gmail error body so the caller's audit log carries
@@ -391,8 +460,34 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
     } catch {
       /* ignore */
     }
+    const reason = `gmail_send_failed_${res.status}`;
+    emailAlerter.record(reason);
+    logger.error('emailService.send_failed', {
+      recipientHash: recipientHash(msg.to),
+      reason,
+      status: res.status,
+      errorMessage: detail || res.statusText,
+    });
     throw new Error(
       `Gmail send failed: ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`,
     );
   }
+
+  // Success path. Parse the Gmail messageId so the audit log carries
+  // a handle operators can correlate with Gmail's own message log when
+  // a user reports "I never got it". Response body parsing is best-
+  // effort — a missing/malformed body should not turn a successful
+  // delivery into an error.
+  let gmailMessageId: string | undefined;
+  try {
+    const data = (await res.json()) as { id?: unknown };
+    if (typeof data.id === 'string' && data.id.length > 0) {
+      gmailMessageId = data.id;
+    }
+  } catch {
+    /* swallow — send already succeeded; missing id is not fatal. */
+  }
+  const okCtx: LogContext = { recipientHash: recipientHash(msg.to) };
+  if (gmailMessageId !== undefined) okCtx.gmailMessageId = gmailMessageId;
+  logger.info('emailService.send_succeeded', okCtx);
 }

@@ -22,6 +22,7 @@ import path from 'path';
 import os from 'os';
 
 import { sendEmail } from '../services/emailService';
+import { emailAlerter } from '../services/emailAlert';
 import { logger } from '../logger';
 
 interface CapturedSend {
@@ -1092,6 +1093,241 @@ describe('emailService MIME builder', () => {
       expect(failureCall).toBeUndefined();
     } finally {
       m.restore();
+    }
+  });
+});
+
+/**
+ * Wiring tests for Task #104. Each failure path in `sendEmail` must:
+ *   - emit a structured `emailService.send_failed` log line carrying
+ *     `recipientHash` and a stable `reason` tag, and
+ *   - call `emailAlerter.record(reason)` so a sustained outage trips
+ *     the in-process webhook even before logs reach a backend.
+ *
+ * The success path must emit `emailService.send_succeeded` with the
+ * recipient hash and the Gmail-returned messageId so a "user reports
+ * never receiving the email" investigation has something to grep for.
+ *
+ * These tests don't re-verify the alerter's threshold/cooldown logic
+ * (that's `emailAlert.test.ts`); they only verify wiring.
+ */
+describe('emailService failure alerter + audit logging (Task #104)', () => {
+  let prevEnv: NodeJS.ProcessEnv;
+  let recordSpy: ReturnType<typeof vi.spyOn>;
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    prevEnv = { ...process.env };
+    process.env.REPLIT_CONNECTORS_HOSTNAME = 'connectors.test.invalid';
+    process.env.REPL_IDENTITY = 'test-identity';
+    delete process.env.WEB_REPL_RENEWAL;
+    process.env.EMAIL_TEST_ALLOW_REAL_SEND = '1';
+    emailAlerter.reset();
+    recordSpy = vi.spyOn(emailAlerter, 'record');
+    infoSpy = vi.spyOn(logger, 'info');
+    errorSpy = vi.spyOn(logger, 'error');
+  });
+
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in prevEnv)) delete process.env[k];
+    }
+    Object.assign(process.env, prevEnv);
+    vi.restoreAllMocks();
+    emailAlerter.reset();
+  });
+
+  function findLog(
+    spy: ReturnType<typeof vi.spyOn>,
+    msg: string,
+  ): Record<string, unknown> | undefined {
+    const call = spy.mock.calls.find(([m]) => m === msg);
+    return call ? (call[1] as Record<string, unknown>) : undefined;
+  }
+
+  it('on success: emits `emailService.send_succeeded` with recipientHash + gmailMessageId, and does NOT touch the alerter', async () => {
+    const m = installFetchMock('token-abc');
+    try {
+      await sendEmail({
+        to: 'Recipient@Example.Test',
+        subject: 'hello',
+        text: 'body',
+      });
+      const ok = findLog(infoSpy, 'emailService.send_succeeded');
+      expect(ok).toBeDefined();
+      // 12-hex-char prefix of sha256(lowercased address). Lowercased
+      // so 'Recipient@Example.Test' and 'recipient@example.test'
+      // collide in the audit log.
+      expect(ok!.recipientHash).toMatch(/^[0-9a-f]{12}$/);
+      expect(ok!.gmailMessageId).toBe('mock-msg');
+      expect(recordSpy).not.toHaveBeenCalled();
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('on Gmail non-2xx: records `gmail_send_failed_<status>` and logs send_failed carrying status + reason + recipientHash', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) {
+        return new Response(
+          JSON.stringify({ items: [{ settings: { access_token: 't' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          error: { code: 403, message: 'Delegation denied', status: 'PERMISSION_DENIED' },
+        }),
+        { status: 403, statusText: 'Forbidden' },
+      );
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail send failed: 403/);
+      expect(recordSpy).toHaveBeenCalledWith('gmail_send_failed_403');
+      const failed = findLog(errorSpy, 'emailService.send_failed');
+      expect(failed).toBeDefined();
+      expect(failed!.reason).toBe('gmail_send_failed_403');
+      expect(failed!.status).toBe(403);
+      expect(failed!.recipientHash).toMatch(/^[0-9a-f]{12}$/);
+      // The error body should be carried in errorMessage so on-call
+      // can tell apart "delegation denied" (reconnect Gmail) from
+      // "rate limited" (back off) without re-running the request.
+      expect(String(failed!.errorMessage)).toMatch(/Delegation denied/);
+    } finally {
+      (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
+  it('on Gmail network error: records `gmail_network_error` and logs send_failed', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) {
+        return new Response(
+          JSON.stringify({ items: [{ settings: { access_token: 't' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      throw new Error('ECONNRESET on gmail.googleapis.com');
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail send failed: ECONNRESET/);
+      expect(recordSpy).toHaveBeenCalledWith('gmail_network_error');
+      const failed = findLog(errorSpy, 'emailService.send_failed');
+      expect(failed).toBeDefined();
+      expect(failed!.reason).toBe('gmail_network_error');
+      expect(String(failed!.errorMessage)).toMatch(/ECONNRESET/);
+    } finally {
+      (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
+  it('on header injection: records `header_injection`, logs send_failed, and re-throws the guard error', async () => {
+    const m = installFetchMock('token-abc');
+    try {
+      await expect(
+        sendEmail({
+          to: 'victim@example.test\r\nBcc: attacker@evil.test',
+          subject: 's',
+          text: 't',
+        }),
+      ).rejects.toThrow(/header injection/i);
+      expect(recordSpy).toHaveBeenCalledWith('header_injection');
+      const failed = findLog(errorSpy, 'emailService.send_failed');
+      expect(failed).toBeDefined();
+      expect(failed!.reason).toBe('header_injection');
+      // Must NOT have called Gmail — the guard fires before fetch.
+      expect(
+        m.fetchMock.mock.calls.some(([u]) =>
+          String(u).includes('gmail.googleapis.com'),
+        ),
+      ).toBe(false);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('in production with no Gmail wired: records `unconfigured` and logs send_failed', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.REPLIT_CONNECTORS_HOSTNAME;
+    delete process.env.REPL_IDENTITY;
+    delete process.env.WEB_REPL_RENEWAL;
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail not configured/i);
+      expect(recordSpy).toHaveBeenCalledWith('unconfigured');
+      const failed = findLog(errorSpy, 'emailService.send_failed');
+      expect(failed).toBeDefined();
+      expect(failed!.reason).toBe('unconfigured');
+      expect(failed!.recipientHash).toMatch(/^[0-9a-f]{12}$/);
+    } finally {
+      process.env.NODE_ENV = prevEnv.NODE_ENV;
+    }
+  });
+
+  it('in production when the connectors API is down: records `connector_failed_<status>` and logs send_failed carrying that status', async () => {
+    process.env.NODE_ENV = 'production';
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) {
+        return new Response('Service Unavailable', {
+          status: 503,
+          statusText: 'Service Unavailable',
+        });
+      }
+      throw new Error(`Unexpected fetch: ${u}`);
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/connector API unavailable/i);
+      expect(recordSpy).toHaveBeenCalledWith('connector_failed_503');
+      const failed = findLog(errorSpy, 'emailService.send_failed');
+      expect(failed).toBeDefined();
+      expect(failed!.reason).toBe('connector_failed_503');
+      expect(failed!.status).toBe(503);
+    } finally {
+      (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
+      process.env.NODE_ENV = prevEnv.NODE_ENV;
+    }
+  });
+
+  it('in non-production with a connectors-API outage: does NOT record into the alerter (dev stub absorbed the send)', async () => {
+    // NODE_ENV stays 'test' (the default). The dev stub branch
+    // succeeds for the caller, so there is no failure to alert on.
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) {
+        return new Response('Service Unavailable', { status: 503 });
+      }
+      throw new Error(`Unexpected fetch: ${u}`);
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    try {
+      // Should resolve, not throw — dev path absorbs the failure into
+      // a stub file. The connector_fetch_failed log line still fires
+      // (visibility), but the alerter must stay silent.
+      await sendEmail({ to: 'r@example.test', subject: 's', text: 't' });
+      expect(recordSpy).not.toHaveBeenCalled();
+    } finally {
+      (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
     }
   });
 });

@@ -205,6 +205,15 @@ const ALLOWED_FIELDS = new Set<string>([
   'code',
   'errorMessage',
   'stack',
+  // outbound-email audit (Task #104). `recipientHash` is a short
+  // sha256 prefix of the recipient address — deterministic so repeat
+  // failures to the same inbox aggregate visibly in the log without
+  // putting the literal address on disk. `gmailMessageId` is the id
+  // returned by Gmail's users.messages.send on a successful send so
+  // operators can correlate with Gmail's own audit trail when a user
+  // reports "I never got the email".
+  'recipientHash',
+  'gmailMessageId',
   // env summary — presence flags only, never values or var names
   'nodeEnv',
   'port',
