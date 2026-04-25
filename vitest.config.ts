@@ -10,6 +10,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['server/tests/**/*.test.ts'],
+    // Redirect every test-file import of `server/db` at the isolated
+    // test database BEFORE the first import resolves (Task #106).
+    // setup.ts only mutates process.env — it does not import any
+    // server modules itself, so the load order is safe.
+    setupFiles: ['./server/tests/setup.ts'],
   },
   plugins: [tsconfigPaths()],
   resolve: {

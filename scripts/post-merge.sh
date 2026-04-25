@@ -6,6 +6,47 @@ npm install
 # rows). Stdin is closed during post-merge, so any prompt would hang.
 npm run db:push -- --force
 
+# ---------------------------------------------------------------------------
+# Isolated test-database provisioning (Task #106)
+# ---------------------------------------------------------------------------
+# Every previous version of this script ran `vitest run` against the live
+# application DATABASE_URL. The suite writes to real `orders`, `users`,
+# and `password_reset_tokens` rows and grants real Postgres roles, so
+# any aborted cleanup left orphan data in production and two concurrent
+# merge hooks could collide on the same fixture rows.
+#
+# The fix is structural: we provision a sibling database (defaulting to
+# `<live-db>_test`), push the same schema to it, and run vitest with
+# DATABASE_URL pointed at that test DB. The vitest setup file
+# (server/tests/setup.ts) ALSO refuses to start if its resolved URL
+# equals the live DATABASE_URL — defense in depth in case this script
+# is ever bypassed.
+#
+# Operator override: set TEST_DATABASE_URL in the environment to pin
+# the suite to an explicit isolated database (e.g. one on a different
+# host); ensure-test-db.ts will use it as-is and skip provisioning.
+
+# `npx --no-install tsx` runs the helper without a global install. The
+# helper writes the resolved TEST_DATABASE_URL to stdout (last line)
+# and any human-readable status to stderr, so we capture only stdout.
+TEST_DATABASE_URL=$(npx --no-install tsx scripts/ensure-test-db.ts)
+export TEST_DATABASE_URL
+
+if [ -z "$TEST_DATABASE_URL" ]; then
+  echo "[post-merge] FATAL: ensure-test-db.ts did not return a TEST_DATABASE_URL." >&2
+  exit 1
+fi
+if [ "$TEST_DATABASE_URL" = "$DATABASE_URL" ]; then
+  echo "[post-merge] FATAL: TEST_DATABASE_URL equals DATABASE_URL — refusing to run tests against the live database." >&2
+  exit 1
+fi
+
+# Push the schema into the test DB. Subshell + DATABASE_URL override
+# keeps drizzle-kit pointed at the test target without leaking the
+# rewrite into the rest of this script (we need the live DATABASE_URL
+# to remain visible if any later step uses it).
+( DATABASE_URL="$TEST_DATABASE_URL" npm run db:push -- --force )
+
 # Run the automated test suite (Task #71). The vitest suite under
 # server/tests/ holds the safety probes — anti-enumeration on the
 # password-reset flow, the MCP read-only role lockdown, the Square
@@ -18,4 +59,7 @@ npm run db:push -- --force
 # version. `vitest run` (single-shot, non-watch) is the only mode safe
 # for an unattended hook — `vitest` with no args defaults to watch
 # mode in a TTY.
+#
+# server/tests/setup.ts will read TEST_DATABASE_URL (exported above)
+# and rewrite process.env.DATABASE_URL before any test imports the db.
 npx --no-install vitest run

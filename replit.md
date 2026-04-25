@@ -262,6 +262,27 @@ The script wraps a check-and-insert in a transaction guarded by a Postgres advis
 
 The public registration path no longer exists. The admin-create schema (`adminCreateUserSchema` in `shared/schema.ts`) is the only way `role` can be set, and it is server-side validated; values from the request body are otherwise ignored / coerced to `'user'`.
 
+## Running the Test Suite
+The vitest suite under `server/tests/` writes to real tables (`orders`, `users`, `password_reset_tokens`, …) and grants real Postgres roles (`mcp_read_only`). To prevent any test-driven mutation from touching production data, the suite is wired to run against a separate **test database**, never against the live `DATABASE_URL` (Task #106).
+
+- `server/tests/setup.ts` is loaded by vitest before any test file. It resolves the test connection string from `TEST_DATABASE_URL` (operator override) or, if unset, derives it by appending `_test` to the database-name segment of `DATABASE_URL` (e.g. `…/neondb` → `…/neondb_test`). It then rewrites `process.env.DATABASE_URL` so every `import { db } from '../db'` connects to the test target. If no test URL can be resolved — or if the resolved URL equals the live one — the setup throws and no test runs.
+- `scripts/ensure-test-db.ts` provisions the sibling database (`CREATE DATABASE`) idempotently and prints the resolved test URL on stdout.
+- `scripts/post-merge.sh` runs the helper, pushes the schema into the test DB, and then runs `vitest run` with the test URL exported.
+
+To run the suite locally:
+
+```bash
+# One-time provisioning of the sibling database (idempotent).
+TEST_DATABASE_URL=$(npx tsx scripts/ensure-test-db.ts)
+export TEST_DATABASE_URL
+DATABASE_URL=$TEST_DATABASE_URL npm run db:push -- --force
+
+# Then run tests as usual; setup.ts will redirect db.ts at $TEST_DATABASE_URL.
+npx vitest run
+```
+
+Setting `TEST_DATABASE_URL` to a connection string on a different host/cluster is also supported and skips the `_test` suffix derivation.
+
 ## Auth Policy
 - **Password strength (creation/change)**: New passwords (registration, admin-create, password reset) must be 12-128 characters and contain at least one letter and one digit. Login intentionally allows shorter legacy passwords through so existing accounts can still sign in and rotate via the reset flow. Schema lives in `shared/schema.ts → strongPasswordSchema`.
 - **Per-account lockout**: `users` table carries `failed_login_count` and `locked_until`. After 5 consecutive failed password attempts on the same username, the account is locked for 15 minutes regardless of source IP — defeats IP-rotating credential-stuffing botnets that the per-IP rate limiter cannot stop. A successful login resets the counter and clears the lock. Counter increment + threshold check happen in a single atomic UPDATE.
