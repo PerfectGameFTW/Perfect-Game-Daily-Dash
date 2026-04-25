@@ -37,9 +37,18 @@ const VITEST_BIN = resolve(process.cwd(), 'node_modules/.bin/vitest');
 const PROBE_TEST_TARGET = 'server/tests/setupGuardProbe.test.ts';
 
 function spawnVitestWithEnv(env: NodeJS.ProcessEnv): SpawnSyncReturns<string> {
+  // No `--reporter=` flag: vitest's default reporter writes the
+  // unhandled setup error (and its `server/tests/setup.ts` stack
+  // frame) to stderr exactly as we need. Earlier versions passed
+  // `--reporter=basic`, which vitest deprecated in favor of the
+  // default reporter — and which would soon become an unknown-reporter
+  // error that *also* satisfies our non-zero-exit assertion, silently
+  // turning this regression test into a false positive. Omitting the
+  // flag entirely keeps us forward-compatible with future vitest
+  // versions that drop deprecated reporter names.
   return spawnSync(
     VITEST_BIN,
-    ['run', PROBE_TEST_TARGET, '--reporter=basic', '--no-color'],
+    ['run', PROBE_TEST_TARGET, '--no-color'],
     {
       env,
       encoding: 'utf-8',
