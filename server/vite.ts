@@ -19,6 +19,13 @@ export function log(message: string, source = "express") {
     hour12: true,
   });
 
+  // eslint-disable-next-line no-console -- Justified (Task #110): this is
+  // the bootstrap-time console writer used by Express startup messages
+  // and Vite's own customLogger callbacks BEFORE the structured logger
+  // has been wired up. The messages are operator-facing strings (no PII)
+  // and writing them as JSON would garble Vite's own colorized output.
+  // Per the project dev guidelines, `server/vite.ts` may not be modified
+  // beyond this annotation.
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
