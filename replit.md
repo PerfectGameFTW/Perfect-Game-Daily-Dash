@@ -304,3 +304,17 @@ Setting `TEST_DATABASE_URL` to a connection string on a different host/cluster i
 - **Database indexes**: Indexes created at startup on all frequently-queried timestamp and ID columns
 - **Health check**: `GET /api/health` returns `{ status: "ok", timestamp }` for monitoring
 - **Session security**: httpOnly cookies, 30-day expiry, sameSite lax, PostgreSQL-backed session store
+
+## Observability: Logging Strategy (Task #82 / #114)
+The structured logger (`server/logger.ts`) emits one JSON line per event to `process.stdout` / `process.stderr`. The Replit workspace log pane is the **single source of truth** for operator log review.
+
+### Deliberate decision: no external log shipping (Task #114)
+The in-process plumbing for forwarding logs to a hosted backend (Better Stack / Logtail / Axiom / etc.) and the in-process 5xx webhook alerter both exist in code (`server/services/logShipper.ts`, `server/services/serverErrorAlert.ts`) but are **intentionally left unwired**. The owner explicitly chose not to send logs or 5xx alerts to any third-party service — the workspace log pane is sufficient for current operational needs.
+
+Both subsystems are designed as **opt-in no-ops**: when their env vars (`LOG_SHIPPER_URL`, `SERVER_ERROR_ALERT_WEBHOOK_URL`) are unset they short-circuit at startup and add zero overhead. Nothing leaves the process. They are kept in the codebase so that if the operational picture changes later (e.g. multiple operators, longer log retention needs, off-hours paging requirements), wiring them up is a pure config change — set env vars, redeploy, done — with no code changes required.
+
+If a future operator decides to enable either:
+- **Log shipping**: set production env vars `LOG_SHIPPER_URL` and `LOG_SHIPPER_TOKEN` (any HTTP-ingest backend that takes a Bearer-token POST works — Better Stack's free tier is the recommended low-friction option). Optional tunables: `LOG_SHIPPER_BATCH_SIZE` (50), `LOG_SHIPPER_FLUSH_MS` (2000), `LOG_SHIPPER_BUFFER_MAX` (1000), `LOG_SHIPPER_REQUEST_TIMEOUT_MS` (5000).
+- **5xx webhook alerting**: set production env var `SERVER_ERROR_ALERT_WEBHOOK_URL` (any incoming-webhook URL accepting a `{ text }` JSON body — Slack, Discord, Mattermost, generic). Optional tunables: `SERVER_ERROR_ALERT_THRESHOLD` (5), `SERVER_ERROR_ALERT_WINDOW_MS` (5 min), `SERVER_ERROR_ALERT_COOLDOWN_MS` (15 min).
+
+The shipper is hardened to never call the structured logger from its own failure path (would amplify outages) — failures land on stderr as `log_shipper.flush_failed` / `log_shipper.dropped` lines. The 5xx alerter has a rolling window with cooldown to prevent paging storms. Both are covered by unit tests at `server/tests/logShipper.test.ts` and `server/tests/serverErrorAlert.test.ts`.
