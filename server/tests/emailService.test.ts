@@ -22,6 +22,7 @@ import path from 'path';
 import os from 'os';
 
 import { sendEmail } from '../services/emailService';
+import { logger } from '../logger';
 
 interface CapturedSend {
   raw: string;
@@ -638,6 +639,268 @@ describe('emailService MIME builder', () => {
       expect(contents).toContain('hello dev');
 
       await fs.unlink(stubPath);
+    } finally {
+      m.restore();
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // getGmailAccessTokenFromConnector failure paths (Task #149).
+  //
+  // The helper has three "no usable token" branches that aren't covered
+  // anywhere else: the connectors API returns a non-2xx, returns 200 with
+  // no usable items/settings shape, or rejects outright. In every one of
+  // those cases the function must return null (so sendEmail falls into
+  // the unconfigured branch — hard throw in production, dev stub in
+  // development) rather than silently sending with an empty Bearer
+  // header. The fourth branch (forward-compat nested oauth shape) is
+  // already pinned by the "reads the access token from the nested ...
+  // shape" test above. The tests below cover the remaining three.
+  // ---------------------------------------------------------------------
+
+  /**
+   * Snapshot the contents of the dev-stub directory before a test runs.
+   * Returns a helper that, after the test, finds the single new file
+   * the call wrote, asserts its contents, and unlinks it. Centralised
+   * so each branch test can stay focused on the failure mode it pins.
+   */
+  async function expectDevStubWrittenAfter(
+    before: Set<string>,
+    expected: { to: string; subject: string; text: string },
+  ): Promise<void> {
+    const stubDir = path.join(os.tmpdir(), 'pg-dev-emails');
+    const after = await fs.readdir(stubDir);
+    const fresh = after.filter((f) => !before.has(f));
+    expect(fresh.length).toBe(1);
+    const stubPath = path.join(stubDir, fresh[0]);
+    const contents = await fs.readFile(stubPath, 'utf8');
+    expect(contents).toContain(`to:      ${expected.to}`);
+    expect(contents).toContain(`subject: ${expected.subject}`);
+    expect(contents).toContain(expected.text);
+    await fs.unlink(stubPath);
+  }
+
+  async function snapshotStubDir(): Promise<Set<string>> {
+    const stubDir = path.join(os.tmpdir(), 'pg-dev-emails');
+    try {
+      return new Set(await fs.readdir(stubDir));
+    } catch {
+      return new Set();
+    }
+  }
+
+  /**
+   * Install a fetch mock whose only behaviour is to hand a custom
+   * Response (or thrown error) back to the connectors-API probe.
+   * Anything else is a programming error in the test and surfaces as
+   * a thrown "Unexpected fetch" — in particular, a Gmail send must
+   * never fire on these branches (no token = no send).
+   */
+  function installConnectorOnlyFetchMock(
+    probeHandler: () => Promise<Response> | Promise<never>,
+  ): { fetchMock: ReturnType<typeof vi.fn>; restore: () => void } {
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) return probeHandler();
+      throw new Error(`Unexpected fetch in emailService.test.ts: ${u}`);
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    return {
+      fetchMock,
+      restore: () => {
+        (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
+      },
+    };
+  }
+
+  it('throws in production when the connectors API returns a non-2xx response (token fetch returns null, no silent send)', async () => {
+    process.env.NODE_ENV = 'production';
+    const m = installConnectorOnlyFetchMock(
+      async () =>
+        new Response('connectors are unwell', {
+          status: 503,
+          statusText: 'Service Unavailable',
+        }),
+    );
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail not configured/i);
+
+      // Probe was attempted exactly once; no Gmail send was made.
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(m.fetchMock.mock.calls[0][0])).toContain(
+        '/api/v2/connection',
+      );
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('writes a developer stub file in non-production when the connectors API returns a non-2xx response', async () => {
+    process.env.NODE_ENV = 'development';
+    const before = await snapshotStubDir();
+    const m = installConnectorOnlyFetchMock(
+      async () =>
+        new Response('connectors are unwell', {
+          status: 500,
+          statusText: 'Internal Server Error',
+        }),
+    );
+    try {
+      await expect(
+        sendEmail({
+          to: 'r@example.test',
+          subject: 'non2xx-dev-stub',
+          text: 'fell back to dev stub',
+        }),
+      ).resolves.toBeUndefined();
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+      await expectDevStubWrittenAfter(before, {
+        to: 'r@example.test',
+        subject: 'non2xx-dev-stub',
+        text: 'fell back to dev stub',
+      });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('throws in production when the connectors API returns 200 but with no items at all', async () => {
+    process.env.NODE_ENV = 'production';
+    const m = installConnectorOnlyFetchMock(
+      async () =>
+        new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail not configured/i);
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('throws in production when the connectors API returns 200 with an item that has no settings field', async () => {
+    process.env.NODE_ENV = 'production';
+    const m = installConnectorOnlyFetchMock(
+      async () =>
+        new Response(JSON.stringify({ items: [{}] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail not configured/i);
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('writes a developer stub file in non-production when the connectors API returns 200 with no usable items', async () => {
+    process.env.NODE_ENV = 'development';
+    const before = await snapshotStubDir();
+    const m = installConnectorOnlyFetchMock(
+      async () =>
+        new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    try {
+      await expect(
+        sendEmail({
+          to: 'r@example.test',
+          subject: 'noitems-dev-stub',
+          text: 'fell back to dev stub',
+        }),
+      ).resolves.toBeUndefined();
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+      await expectDevStubWrittenAfter(before, {
+        to: 'r@example.test',
+        subject: 'noitems-dev-stub',
+        text: 'fell back to dev stub',
+      });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('throws in production AND logs `emailService.connector_fetch_failed` when the connectors API rejects outright', async () => {
+    // The try/catch around getGmailAccessTokenFromConnector inside
+    // sendEmail must swallow the rejection (so a transient connectors
+    // outage doesn't leak as a confusing low-level fetch error in the
+    // password-reset response) but it MUST log the failure so on-call
+    // can correlate inbox bounces with connector-side incidents. We
+    // pin both the rethrown "Gmail not configured" surface error and
+    // the structured log line here.
+    process.env.NODE_ENV = 'production';
+    const probeError = new Error('simulated connectors network failure');
+    const m = installConnectorOnlyFetchMock(async () => {
+      throw probeError;
+    });
+    const errorSpy = vi.spyOn(logger, 'error');
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail not configured/i);
+
+      // Probe attempted exactly once; no retry, no Gmail send.
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+
+      // The structured log line carries the probe error's message in
+      // the errorContext payload — verify both the tag and that the
+      // underlying error wasn't lost.
+      const failureCall = errorSpy.mock.calls.find(
+        ([msg]) => msg === 'emailService.connector_fetch_failed',
+      );
+      expect(failureCall).toBeDefined();
+      const ctx = failureCall![1] as { errorMessage?: string } | undefined;
+      expect(ctx?.errorMessage).toBe('simulated connectors network failure');
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('writes a developer stub file in non-production AND logs `emailService.connector_fetch_failed` when the connectors API rejects outright', async () => {
+    process.env.NODE_ENV = 'development';
+    const probeError = new Error('simulated connectors network failure');
+    const before = await snapshotStubDir();
+    const m = installConnectorOnlyFetchMock(async () => {
+      throw probeError;
+    });
+    const errorSpy = vi.spyOn(logger, 'error');
+    try {
+      await expect(
+        sendEmail({
+          to: 'r@example.test',
+          subject: 'reject-dev-stub',
+          text: 'fell back to dev stub',
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(m.fetchMock).toHaveBeenCalledTimes(1);
+      await expectDevStubWrittenAfter(before, {
+        to: 'r@example.test',
+        subject: 'reject-dev-stub',
+        text: 'fell back to dev stub',
+      });
+
+      const failureCall = errorSpy.mock.calls.find(
+        ([msg]) => msg === 'emailService.connector_fetch_failed',
+      );
+      expect(failureCall).toBeDefined();
+      const ctx = failureCall![1] as { errorMessage?: string } | undefined;
+      expect(ctx?.errorMessage).toBe('simulated connectors network failure');
     } finally {
       m.restore();
     }
