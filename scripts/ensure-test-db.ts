@@ -105,8 +105,24 @@ async function main(): Promise<void> {
         if (!/^[a-zA-Z0-9_]+$/.test(testDbName)) {
           throw new Error(`Refusing to CREATE DATABASE with non-identifier name: ${testDbName}`);
         }
-        await adminPool.query(`CREATE DATABASE "${testDbName}"`);
-        process.stderr.write(`[ensure-test-db] Created test database "${testDbName}".\n`);
+        try {
+          await adminPool.query(`CREATE DATABASE "${testDbName}"`);
+          process.stderr.write(`[ensure-test-db] Created test database "${testDbName}".\n`);
+        } catch (err: unknown) {
+          // Race: a concurrent post-merge.sh on the same host can win
+          // the EXISTS-check race and create the DB just before us.
+          // Postgres returns SQLSTATE 42P04 ("duplicate_database") in
+          // that case — treat it as success since the end state is
+          // exactly what we wanted. Any other error rethrows.
+          const pgCode = (err as { code?: string } | null)?.code;
+          if (pgCode === '42P04') {
+            process.stderr.write(
+              `[ensure-test-db] Test database "${testDbName}" was created by a concurrent run.\n`,
+            );
+          } else {
+            throw err;
+          }
+        }
       } else {
         process.stderr.write(`[ensure-test-db] Test database "${testDbName}" already exists.\n`);
       }
