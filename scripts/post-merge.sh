@@ -54,12 +54,13 @@ fi
 # regression should block the merge from being declared healthy, so we
 # rely on `set -e` above to abort this script on a non-zero exit.
 #
-# Invoked via `npx --no-install` so a missing dev dependency surfaces
-# as a clear failure rather than silently installing a different
-# version. `vitest run` (single-shot, non-watch) is the only mode safe
-# for an unattended hook — `vitest` with no args defaults to watch
-# mode in a TTY.
+# Invoked via `npm test`, which package.json defines as `vitest run`
+# (single-shot, non-watch — the only mode safe for an unattended hook;
+# `vitest` with no args defaults to watch mode in a TTY). npm resolves
+# the binary from the locally installed devDependency, so a missing
+# dependency surfaces as a clear failure rather than silently
+# installing a different version.
 #
 # server/tests/setup.ts will read TEST_DATABASE_URL (exported above)
 # and rewrite process.env.DATABASE_URL before any test imports the db.
-npx --no-install vitest run
+npm test
