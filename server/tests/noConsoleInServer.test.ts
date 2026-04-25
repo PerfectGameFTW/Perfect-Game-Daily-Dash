@@ -52,7 +52,18 @@ function walk(dir: string): string[] {
     const st = statSync(full);
     if (st.isDirectory()) {
       out.push(...walk(full));
-    } else if (full.endsWith('.ts') && !full.endsWith('.d.ts')) {
+    } else if (
+      // `server/` is TypeScript today, but defensively cover any
+      // future `.tsx`, `.js`, `.mjs`, or `.cjs` source so a contributor
+      // adding a one-off helper script can't sneak past the guard.
+      // `.d.ts` is excluded because it's type-only — no runtime code.
+      (full.endsWith('.ts') ||
+        full.endsWith('.tsx') ||
+        full.endsWith('.js') ||
+        full.endsWith('.mjs') ||
+        full.endsWith('.cjs')) &&
+      !full.endsWith('.d.ts')
+    ) {
       out.push(full);
     }
   }
