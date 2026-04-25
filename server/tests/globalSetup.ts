@@ -118,7 +118,42 @@ neonConfig.webSocketConstructor = ws;
  * conflict with anything Postgres or the application itself does.
  */
 const LOCK_KEY_HI = 0x7e57db; // 8_280_027
-const LOCK_KEY_LO = 139;
+const LOCK_KEY_LO_DEFAULT = 139;
+
+/**
+ * Test-only hook (Task #142). Set
+ * `VITEST_GLOBALSETUP_TESTHOOK_LOCK_KEY_LO` to an integer to override
+ * `LOCK_KEY_LO` for a single subprocess invocation. Used by
+ * server/tests/globalSetupWaitVisibility.test.ts to spawn a child
+ * globalSetup that contends on a *test-controlled* key (so it doesn't
+ * deadlock against the suite's own lock or against unrelated runs)
+ * and to verify that the two-phase acquisition emits its
+ * "Waiting…" / "still waiting (Ns)…" / "Lock acquired after Ns"
+ * stderr lines under contention.
+ *
+ * When this hook is active we ALSO skip the destructive TRUNCATE
+ * below: this code path exists purely to exercise the lock dance,
+ * not to wipe whichever database happens to be reachable. Coupling
+ * the two behaviors behind a single env var keeps the safety
+ * property "if you see this hook, no rows were touched" trivially
+ * auditable.
+ *
+ * The hook is a no-op unless the env var is set, so production
+ * `vitest run` invocations behave exactly as before.
+ */
+const LOCK_KEY_LO_OVERRIDE_RAW =
+  process.env.VITEST_GLOBALSETUP_TESTHOOK_LOCK_KEY_LO;
+const IS_TESTHOOK_ACTIVE = LOCK_KEY_LO_OVERRIDE_RAW !== undefined;
+const LOCK_KEY_LO = (() => {
+  if (!IS_TESTHOOK_ACTIVE) return LOCK_KEY_LO_DEFAULT;
+  const parsed = Number.parseInt(LOCK_KEY_LO_OVERRIDE_RAW!, 10);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(
+      `VITEST_GLOBALSETUP_TESTHOOK_LOCK_KEY_LO must be an integer, got: ${LOCK_KEY_LO_OVERRIDE_RAW}`,
+    );
+  }
+  return parsed;
+})();
 
 /**
  * Maximum time we will wait to acquire the lock before giving up. Set
@@ -152,7 +187,30 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
  * a spam of messages. The timer is unref'd so it cannot keep Node
  * alive past the run.
  */
-const WAIT_HEARTBEAT_INTERVAL_MS = 10_000;
+const WAIT_HEARTBEAT_INTERVAL_MS_DEFAULT = 10_000;
+
+/**
+ * Test-only hook (Task #142). Set
+ * `VITEST_GLOBALSETUP_TESTHOOK_WAIT_HEARTBEAT_MS` to an integer to
+ * override `WAIT_HEARTBEAT_INTERVAL_MS` for a single subprocess
+ * invocation. The wait-visibility regression test uses this to drop
+ * the heartbeat from 10 seconds to a few hundred milliseconds so the
+ * test doesn't have to sleep for ten real seconds just to observe a
+ * single "still waiting" line. Production runs are unaffected.
+ */
+const WAIT_HEARTBEAT_OVERRIDE_RAW =
+  process.env.VITEST_GLOBALSETUP_TESTHOOK_WAIT_HEARTBEAT_MS;
+const WAIT_HEARTBEAT_INTERVAL_MS = (() => {
+  if (WAIT_HEARTBEAT_OVERRIDE_RAW === undefined)
+    return WAIT_HEARTBEAT_INTERVAL_MS_DEFAULT;
+  const parsed = Number.parseInt(WAIT_HEARTBEAT_OVERRIDE_RAW, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(
+      `VITEST_GLOBALSETUP_TESTHOOK_WAIT_HEARTBEAT_MS must be a positive integer, got: ${WAIT_HEARTBEAT_OVERRIDE_RAW}`,
+    );
+  }
+  return parsed;
+})();
 
 function deriveTestUrl(live: string | undefined): string | undefined {
   if (!live) return undefined;
@@ -269,6 +327,42 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     // Truncate the schema — same logic as before, but now safely
     // serialized behind the advisory lock so a concurrent run cannot
     // wipe our fixtures partway through.
+    //
+    // The Task #142 test hook short-circuits the truncate: when the
+    // hook is active this invocation exists purely to exercise the
+    // lock dance from a subprocess (see the LOCK_KEY_LO_OVERRIDE
+    // docstring above), and wiping the test DB out from under a
+    // concurrently-running suite would corrupt every other test
+    // file's fixtures. Skipping is safe because the hook is only
+    // ever set by server/tests/globalSetupWaitVisibility.test.ts.
+    if (IS_TESTHOOK_ACTIVE) {
+      heartbeat = setInterval(() => {
+        lockClient.query('SELECT 1').catch(() => {
+          /* see comment on the production heartbeat below */
+        });
+      }, HEARTBEAT_INTERVAL_MS);
+      if (typeof heartbeat.unref === 'function') heartbeat.unref();
+      return async () => {
+        if (released) return;
+        released = true;
+        if (heartbeat) clearInterval(heartbeat);
+        try {
+          await lockClient.query('SELECT pg_advisory_unlock($1, $2)', [
+            LOCK_KEY_HI,
+            LOCK_KEY_LO,
+          ]);
+        } catch {
+          /* connection may already be gone; teardown still completes */
+        }
+        try {
+          lockClient.release();
+        } catch {
+          /* ignore */
+        }
+        await lockPool.end().catch(() => {});
+      };
+    }
+
     const result = await lockClient.query<{ tablename: string }>(
       `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`,
     );
