@@ -117,11 +117,13 @@ export default function UserManagement() {
   const [emailDraft, setEmailDraft] = useState('');
   const [savingEmailUserId, setSavingEmailUserId] = useState<number | null>(null);
 
-  // Per-row "Send reset link" pending flag (Task #116). Tracks the
-  // single user id whose admin-triggered password-reset email is in
-  // flight so the row's button can show a spinner without blocking
-  // the rest of the table.
-  const [sendingResetUserId, setSendingResetUserId] = useState<number | null>(null);
+  // Per-row "Send reset link" pending flags (Task #116). A Set keyed by
+  // user id so two admins sending resets to different rows in quick
+  // succession each see their own spinner — a single id would race and
+  // briefly clear the spinner of one row when the other request settles.
+  const [sendingResetUserIds, setSendingResetUserIds] = useState<Set<number>>(
+    () => new Set(),
+  );
 
   // Filter toggle for the password-rotation rollout (Task #99). When
   // on, the table is narrowed to accounts whose `mustRotatePassword`
@@ -281,7 +283,11 @@ export default function UserManagement() {
   const handleSendResetLink = async (user: User) => {
     if (!user.email) return;
     try {
-      setSendingResetUserId(user.id);
+      setSendingResetUserIds((prev) => {
+        const next = new Set(prev);
+        next.add(user.id);
+        return next;
+      });
       const response = await fetch(`/api/auth/users/${user.id}/send-reset-link`, {
         method: 'POST',
         headers: {
@@ -310,7 +316,11 @@ export default function UserManagement() {
         variant: 'destructive',
       });
     } finally {
-      setSendingResetUserId(null);
+      setSendingResetUserIds((prev) => {
+        const next = new Set(prev);
+        next.delete(user.id);
+        return next;
+      });
     }
   };
 
@@ -719,7 +729,7 @@ export default function UserManagement() {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleSendResetLink(user)}
-                          disabled={!user.email || sendingResetUserId === user.id}
+                          disabled={!user.email || sendingResetUserIds.has(user.id)}
                           className={`text-blue-600 hover:bg-blue-100 hover:text-blue-700 ${
                             !user.email ? 'cursor-not-allowed opacity-50' : ''
                           }`}
@@ -729,7 +739,7 @@ export default function UserManagement() {
                               : 'Add a recovery email before sending a reset link'
                           }
                         >
-                          {sendingResetUserId === user.id ? (
+                          {sendingResetUserIds.has(user.id) ? (
                             <LoaderCircle className="h-4 w-4 animate-spin" />
                           ) : (
                             <Send className="h-4 w-4" />

@@ -983,10 +983,15 @@ export function createAuthRouter(): Router {
       // already lives on the user row and would be redundant PII in
       // the audit table. The domain alone is enough to spot "reset
       // link sent to a domain we don't recognize" anomalies later.
+      // `auditWritten` is the per-call latch that guarantees the
+      // catch-all fallback at the bottom only fires when no other
+      // branch already recorded the outcome.
+      let auditWritten = false;
       const writeAudit = async (
         outcome: { success: boolean; errorCode?: string },
         target: { id: number | null; username?: string; emailDomain?: string },
       ) => {
+        auditWritten = true;
         try {
           await pgStorage.recordSecurityAudit({
             actorUserId,
@@ -1059,22 +1064,25 @@ export function createAuthRouter(): Router {
 
         res.json({ success: true });
       } catch (error) {
-        // Failure-side audit (skipped for the early returns above which
-        // already wrote their own row). Keyed off the AppError type so
-        // a NotFound / Validation / ExternalService throw from the
-        // service layer is recorded with the matching errorCode.
-        if (error instanceof AppError && error.code !== 'VALIDATION_ERROR' && error.code !== 'SERVICE_UNAVAILABLE') {
-          await writeAudit(
-            { success: false, errorCode: error.code },
-            { id: Number.isNaN(targetId) ? null : targetId },
-          );
-        } else if (error instanceof AppError && error.code === 'VALIDATION_ERROR' && !Number.isNaN(targetId)) {
-          // Service-layer validation (e.g. "no email on file") wasn't
-          // caught by the early-return path above — record it here.
-          await writeAudit(
-            { success: false, errorCode: error.code },
-            { id: targetId },
-          );
+        // Failure-side audit. Most paths above already wrote their
+        // own row (and the latch keeps us from double-writing). For
+        // service-layer AppError throws that didn't, record with the
+        // matching errorCode; for any unexpected non-AppError, record
+        // a generic UNEXPECTED_ERROR row so the per-call audit
+        // contract holds even when something genuinely unforeseen
+        // bubbles up.
+        if (!auditWritten) {
+          if (error instanceof AppError) {
+            await writeAudit(
+              { success: false, errorCode: error.code },
+              { id: Number.isNaN(targetId) ? null : targetId },
+            );
+          } else {
+            await writeAudit(
+              { success: false, errorCode: 'UNEXPECTED_ERROR' },
+              { id: Number.isNaN(targetId) ? null : targetId },
+            );
+          }
         }
         logger.error(
           'auth.passwordReset.admin_send_error',
