@@ -1,18 +1,37 @@
 /**
- * Regression coverage for the two hard-fail safety guards added by
- * Task #106 in `server/tests/setup.ts`:
+ * Regression coverage for the hard-fail safety guards that protect the
+ * test suite from ever pointing at the live application database:
  *
  *   1. Refuse to start if neither TEST_DATABASE_URL is set nor a
  *      `<live>_test` URL can be derived from DATABASE_URL.
  *   2. Refuse to start if the resolved test URL is byte-equal to
  *      DATABASE_URL.
  *
+ * These guards are duplicated across two files on purpose:
+ *   - `server/tests/setup.ts` (Task #106) — runs in each worker before
+ *     any test imports `server/db.ts`, and rewrites process.env so
+ *     downstream connections land on the test DB.
+ *   - `server/tests/globalSetup.ts` (Task #136) — runs ONCE in the
+ *     main process before any worker is spawned, then truncates every
+ *     public table. It is the most dangerous file in the suite (it
+ *     issues TRUNCATE) so it carries its own copy of the guards rather
+ *     than trusting setup.ts to have already vetted the env.
+ *
+ * Vitest evaluates globalSetup before setupFiles, so when both guards
+ * fire on a misconfigured env, globalSetup wins the race and setup.ts
+ * never runs. The assertions below therefore accept EITHER guard's
+ * message — what matters is that the suite refuses to start at all,
+ * not which file did the refusing. If one guard is ever silently
+ * weakened, the other will still fire and this test will still pass;
+ * only removing both guards (or weakening both at once) flips this
+ * test red, which is exactly the regression signal we want.
+ *
  * Without this file, a future refactor that swaps either `throw` for
  * (e.g.) a `console.warn` fallback to the live DB would silently let
  * the entire suite hammer production rows. We can't assert that from
  * inside the same vitest invocation that already passed setup, so we
  * spawn a fresh `vitest run` subprocess per misconfigured env shape
- * and assert: non-zero exit code AND the canonical guard message in
+ * and assert: non-zero exit code AND a canonical guard message in
  * the combined stdio.
  *
  * The subprocess is pointed at `setupGuardProbe.test.ts`, a
@@ -20,9 +39,9 @@
  * regression that swaps `throw` for `console.warn` still exit
  * non-zero via downstream DB errors, falsely satisfying the
  * `not.toBe(0)` assertion. With a no-op probe, the only thing
- * that can cause a non-zero subprocess exit is the guard itself.
+ * that can cause a non-zero subprocess exit is a guard itself.
  * We additionally pin causality by asserting the combined output
- * contains `server/tests/setup.ts` (the throw site).
+ * contains one of the two guard files (the throw site).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -60,7 +79,7 @@ function spawnVitestWithEnv(env: NodeJS.ProcessEnv): SpawnSyncReturns<string> {
   );
 }
 
-describe('vitest test-DB safety guards (regression for Task #106)', () => {
+describe('vitest test-DB safety guards (regression for Tasks #106 and #136)', () => {
   it(
     'refuses to start when TEST_DATABASE_URL is unset and DATABASE_URL is unset',
     () => {
@@ -76,15 +95,20 @@ describe('vitest test-DB safety guards (regression for Task #106)', () => {
       const stderr = result.stderr ?? '';
       const combined = `${result.stdout ?? ''}${stderr}`;
       // Strict stderr check (per task spec) — vitest writes unhandled
-      // setup errors to stderr; we still keep the combined check as a
-      // safety net in case a future reporter buffers to stdout.
-      expect(stderr).toContain(
-        'Test setup refused to start: TEST_DATABASE_URL is not set',
+      // setup errors to stderr. Either guard's wording is acceptable:
+      // globalSetup runs first today and wins the race, but if a future
+      // refactor reorders things or removes the globalSetup guard, the
+      // setup.ts guard must still trip with an analogous message. The
+      // common substring is `refused ... TEST_DATABASE_URL is not set`.
+      expect(stderr).toMatch(
+        /refused [^\n]*TEST_DATABASE_URL is not set/,
       );
-      // Belt-and-suspenders: pin the failure to setup.ts itself, so a
-      // future db.ts-level error (e.g. "DATABASE_URL must be set")
-      // cannot be mistaken for our guard firing.
-      expect(combined).toContain('server/tests/setup.ts');
+      // Belt-and-suspenders: pin the failure to one of our guard files,
+      // so a future db.ts-level error (e.g. "DATABASE_URL must be set")
+      // cannot be mistaken for a guard firing.
+      expect(combined).toMatch(
+        /server\/tests\/(globalSetup|setup)\.ts/,
+      );
     },
     120_000,
   );
@@ -93,7 +117,7 @@ describe('vitest test-DB safety guards (regression for Task #106)', () => {
     'refuses to start when TEST_DATABASE_URL equals DATABASE_URL',
     () => {
       // Use a syntactically valid Postgres URL that points at an
-      // unroutable sentinel host — the guard fires before any
+      // unroutable sentinel host — the guards fire before any
       // connection is attempted, so the host never has to resolve.
       const sameUrl =
         'postgresql://guarduser:guardpass@safety-guard.invalid:5432/regression_db';
@@ -110,14 +134,18 @@ describe('vitest test-DB safety guards (regression for Task #106)', () => {
 
       const stderr = result.stderr ?? '';
       const combined = `${result.stdout ?? ''}${stderr}`;
-      // Strict stderr check (per task spec); combined kept as a safety
-      // net for reporters that buffer to stdout.
-      expect(stderr).toContain(
-        'resolves to the same connection string as DATABASE_URL',
+      // Strict stderr check (per task spec); either guard's wording
+      // is acceptable. setup.ts says "resolves to the same connection
+      // string as DATABASE_URL"; globalSetup.ts says "resolved test
+      // URL equals DATABASE_URL". Both share `equals DATABASE_URL` /
+      // `same connection string as DATABASE_URL` — match either.
+      expect(stderr).toMatch(
+        /(resolves to the same connection string as DATABASE_URL|resolved test URL equals DATABASE_URL)/,
       );
-      // Belt-and-suspenders: pin the failure to setup.ts itself, so a
-      // future db.ts-level error cannot be mistaken for our guard firing.
-      expect(combined).toContain('server/tests/setup.ts');
+      // Belt-and-suspenders: pin the failure to one of our guard files.
+      expect(combined).toMatch(
+        /server\/tests\/(globalSetup|setup)\.ts/,
+      );
     },
     120_000,
   );

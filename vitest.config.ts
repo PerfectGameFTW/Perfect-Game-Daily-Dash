@@ -15,6 +15,11 @@ export default defineConfig({
     // setup.ts only mutates process.env — it does not import any
     // server modules itself, so the load order is safe.
     setupFiles: ['./server/tests/setup.ts'],
+    // Truncate every public table in the test DB once before the suite
+    // starts so orphan rows from prior aborted runs can't leak across
+    // CI invocations (Task #136). Runs ONCE per `vitest run`, in the
+    // main process, before any worker is spawned.
+    globalSetup: ['./server/tests/globalSetup.ts'],
   },
   plugins: [tsconfigPaths()],
   resolve: {
