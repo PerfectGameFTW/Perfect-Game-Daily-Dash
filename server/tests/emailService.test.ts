@@ -98,6 +98,13 @@ describe('emailService MIME builder', () => {
     process.env.REPLIT_CONNECTORS_HOSTNAME = 'connectors.test.invalid';
     process.env.REPL_IDENTITY = 'test-identity';
     delete process.env.WEB_REPL_RENEWAL;
+    // Opt out of the NODE_ENV=test safety guard in emailService.ts —
+    // these tests exercise the real Gmail branch on purpose with a
+    // mocked global.fetch, so no actual network call leaves the
+    // process. The guard exists to stop integration suites
+    // (passwordReset, emailVerification) from sending real mail to
+    // their fixture addresses now that Gmail is wired by default.
+    process.env.EMAIL_TEST_ALLOW_REAL_SEND = '1';
   });
 
   afterEach(() => {

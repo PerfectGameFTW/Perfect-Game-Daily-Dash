@@ -209,6 +209,25 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
     logger.error('emailService.connector_fetch_failed', errorContext(err));
   }
 
+  // Test-environment safety guard: when NODE_ENV === 'test', refuse to
+  // touch the real Gmail-send branch unless a test has explicitly
+  // opted in by setting EMAIL_TEST_ALLOW_REAL_SEND. Without this guard
+  // any test that drives the password-reset or recovery-email route
+  // against a dev/CI environment with the Gmail connector wired up
+  // (which is now the default) would issue real outbound mail to
+  // fixture addresses like `__pr_test_with_email__@example.test`,
+  // generating bounces against the operator's Workspace inbox and
+  // burning their daily Gmail send quota. Direct emailService unit
+  // tests that intentionally exercise the Gmail branch with a mocked
+  // global.fetch set EMAIL_TEST_ALLOW_REAL_SEND in their setup.
+  if (
+    accessToken &&
+    process.env.NODE_ENV === 'test' &&
+    process.env.EMAIL_TEST_ALLOW_REAL_SEND !== '1'
+  ) {
+    accessToken = null;
+  }
+
   if (!accessToken) {
     if (process.env.NODE_ENV === 'production') {
       // In production, refuse to silently swallow recovery emails.
