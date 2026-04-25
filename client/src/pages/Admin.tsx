@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
-import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone, Database, ShieldAlert, ShieldOff } from 'lucide-react';
+import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone, Database, ShieldAlert, ShieldOff, Activity, Gauge } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import QRCode from 'qrcode';
 import { Input } from '@/components/ui/input';
@@ -138,7 +138,7 @@ export default function Admin() {
         </Card>
 
         <Tabs defaultValue="users" value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6 grid w-full grid-cols-1 md:w-auto md:grid-cols-4">
+          <TabsList className="mb-6 grid w-full grid-cols-1 md:w-auto md:grid-cols-5">
             <TabsTrigger value="users" className="flex items-center">
               <Users className="mr-2 h-4 w-4" />
               <span>Users</span>
@@ -154,6 +154,10 @@ export default function Admin() {
             <TabsTrigger value="security" className="flex items-center">
               <KeyRound className="mr-2 h-4 w-4" />
               <span>Security</span>
+            </TabsTrigger>
+            <TabsTrigger value="diagnostics" className="flex items-center">
+              <Activity className="mr-2 h-4 w-4" />
+              <span>Diagnostics</span>
             </TabsTrigger>
           </TabsList>
 
@@ -257,6 +261,10 @@ export default function Admin() {
           <TabsContent value="security" className="mt-0 space-y-6">
             <TwoFactorAuthCard />
             <AdminSecurityOverviewCard />
+          </TabsContent>
+
+          <TabsContent value="diagnostics" className="mt-0 space-y-6">
+            <UserCacheDiagnosticsCard />
           </TabsContent>
         </Tabs>
       </div>
@@ -1108,6 +1116,134 @@ function AdminSecurityOverviewCard() {
             </div>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface UserCacheStatsResponse {
+  size: number;
+  hits: number;
+  misses: number;
+  ttlSeconds: number;
+  maxEntries: number;
+}
+
+const USER_CACHE_STATS_KEY = ['/api/auth/admin/diagnostics/user-cache'] as const;
+
+function UserCacheDiagnosticsCard() {
+  const {
+    data: stats,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useQuery<UserCacheStatsResponse>({
+    queryKey: USER_CACHE_STATS_KEY,
+    refetchInterval: 5000,
+  });
+
+  const totalLookups = stats ? stats.hits + stats.misses : 0;
+  const hitRatio = totalLookups > 0 ? (stats!.hits / totalLookups) * 100 : null;
+  const formatNumber = (n: number) => n.toLocaleString();
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Gauge className="h-5 w-5 text-muted-foreground" />
+          User Lookup Cache
+        </CardTitle>
+        <CardDescription>
+          Live counters for the in-process user-by-id cache that backs every
+          authenticated request. A high hit ratio means the cache is paying
+          off; a stuck-low ratio suggests the TTL ({stats ? `${stats.ttlSeconds}s` : '…'})
+          may need tuning. Counts are cumulative since the server started.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="h-4 w-4" />
+            <span>Loading cache stats…</span>
+          </div>
+        ) : isError ? (
+          <div className="flex items-center justify-between rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              <span>
+                {error instanceof Error
+                  ? error.message
+                  : 'Failed to load cache stats.'}
+              </span>
+            </div>
+            <Button type="button" size="sm" variant="outline" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        ) : stats ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Hit ratio
+                </p>
+                <p className="mt-1 text-2xl font-semibold">
+                  {hitRatio === null ? '—' : `${hitRatio.toFixed(1)}%`}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {hitRatio === null
+                    ? 'No lookups yet'
+                    : `${formatNumber(totalLookups)} lookups`}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Hits
+                </p>
+                <p className="mt-1 text-2xl font-semibold text-green-600">
+                  {formatNumber(stats.hits)}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Misses
+                </p>
+                <p className="mt-1 text-2xl font-semibold text-amber-600">
+                  {formatNumber(stats.misses)}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Cache size
+                </p>
+                <p className="mt-1 text-2xl font-semibold">
+                  {formatNumber(stats.size)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  of {formatNumber(stats.maxEntries)} max
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                TTL: {stats.ttlSeconds}s · refreshes every 5s
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => refetch()}
+                disabled={isFetching}
+                className="gap-2"
+              >
+                <RefreshCw className={`h-3 w-3 ${isFetching ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

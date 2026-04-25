@@ -108,8 +108,14 @@ const USER_CACHE_MAX_ENTRIES = 5000;
 
 type UserCacheEntry = { user: User; expiresAt: number };
 const userCache = new Map<number, UserCacheEntry>();
+// Cumulative since process start. Never reset, so the admin diagnostics
+// panel can compute a stable hit ratio across the whole uptime window.
 let cacheHits = 0;
 let cacheMisses = 0;
+// Snapshot of the counters at the last periodic-log emission, used to
+// compute the per-window delta without losing the cumulative totals.
+let lastLoggedHits = 0;
+let lastLoggedMisses = 0;
 
 function cacheGet(id: number): User | undefined {
   const entry = userCache.get(id);
@@ -137,6 +143,27 @@ export function invalidateUserCache(userId: number): void {
   userCache.delete(userId);
 }
 
+/**
+ * Snapshot of the in-process user-by-id cache for the admin diagnostics
+ * panel (Task #113). Counts are cumulative since process start so the
+ * UI can compute a stable hit ratio over the whole uptime window.
+ */
+export function getUserCacheStats(): {
+  size: number;
+  hits: number;
+  misses: number;
+  ttlSeconds: number;
+  maxEntries: number;
+} {
+  return {
+    size: userCache.size,
+    hits: cacheHits,
+    misses: cacheMisses,
+    ttlSeconds: USER_CACHE_TTL_MS / 1000,
+    maxEntries: USER_CACHE_MAX_ENTRIES,
+  };
+}
+
 // Periodic summary so hit-rate trends are visible without grepping
 // per-request debug lines. Skipped when there's no traffic so a quiet
 // process doesn't spam the log. unref() keeps the timer from holding
@@ -144,15 +171,19 @@ export function invalidateUserCache(userId: number): void {
 const CACHE_SUMMARY_INTERVAL_MS = 60 * 1000;
 if (process.env.NODE_ENV !== 'test') {
   const t = setInterval(() => {
-    if (cacheHits === 0 && cacheMisses === 0) return;
+    const hitsDelta = cacheHits - lastLoggedHits;
+    const missesDelta = cacheMisses - lastLoggedMisses;
+    if (hitsDelta === 0 && missesDelta === 0) return;
     logger.info('user cache summary', {
-      cacheHits,
-      cacheMisses,
+      cacheHits: hitsDelta,
+      cacheMisses: missesDelta,
+      cacheHitsTotal: cacheHits,
+      cacheMissesTotal: cacheMisses,
       cacheSize: userCache.size,
       ttlMs: USER_CACHE_TTL_MS,
     });
-    cacheHits = 0;
-    cacheMisses = 0;
+    lastLoggedHits = cacheHits;
+    lastLoggedMisses = cacheMisses;
   }, CACHE_SUMMARY_INTERVAL_MS);
   t.unref?.();
 }

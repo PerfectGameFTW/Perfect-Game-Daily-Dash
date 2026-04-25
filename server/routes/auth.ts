@@ -12,7 +12,7 @@
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { authService } from '../services/authService';
+import { authService, getUserCacheStats } from '../services/authService';
 import { totpService } from '../services/totpService';
 import { createSafeUser, createSafeUserAsync, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
@@ -769,6 +769,24 @@ export function createAuthRouter(): Router {
         res.json(rows);
       } catch (error) {
         logger.error('auth.admin.security_overview_error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
+  // Live snapshot of the in-process user-by-id cache (Task #113). The
+  // service emits a once-a-minute summary line to the logs; this
+  // endpoint surfaces the same numbers in-app so operators can see the
+  // hit ratio without grepping logs.
+  router.get(
+    '/admin/diagnostics/user-cache',
+    requireAuth,
+    requireAdmin,
+    (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        res.json(getUserCacheStats());
+      } catch (error) {
+        logger.error('auth.admin.user_cache_stats_error', errorContext(error));
         next(error);
       }
     },
