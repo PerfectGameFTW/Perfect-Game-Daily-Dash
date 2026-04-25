@@ -63,4 +63,16 @@ fi
 #
 # server/tests/setup.ts will read TEST_DATABASE_URL (exported above)
 # and rewrite process.env.DATABASE_URL before any test imports the db.
+#
+# Concurrency note (Task #139):
+#   server/tests/globalSetup.ts acquires a Postgres advisory lock on
+#   the test DB before truncating it, and holds the lock for the entire
+#   `vitest run`. So if two post-merge hooks (or a developer running
+#   `npm test` while CI is mid-flight) target the same Postgres host,
+#   the second `npm test` BLOCKS at globalSetup until the first run's
+#   teardown releases the lock. Runs are serialized — they do not
+#   each get their own ephemeral DB. Expect the second run to spend
+#   extra time waiting at startup; the lock wait is bounded at 15
+#   minutes via Postgres `lock_timeout` so a stuck previous run
+#   surfaces a clear error instead of hanging this hook indefinitely.
 npm test
