@@ -464,6 +464,141 @@ describe('emailService MIME builder', () => {
     }
   });
 
+  it('reads the access token from the legacy `settings.access_token` shape and forwards it as a Bearer credential to Gmail', async () => {
+    // The `installFetchMock` helper already plants the token under
+    // `settings.access_token` (the legacy/flat shape), but the existing
+    // tests in this file only assert the *body* of the Gmail call. This
+    // companion test specifically pins the Authorization header so a
+    // future refactor that drops the flat-shape branch in
+    // `getGmailAccessTokenFromConnector` fails here instead of in
+    // production.
+    const m = installFetchMock('legacy-shape-token');
+    try {
+      await sendEmail({
+        to: 'r@example.test',
+        subject: 's',
+        text: 't',
+      });
+
+      const gmailCall = m.fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes('gmail.googleapis.com'),
+      );
+      expect(gmailCall).toBeDefined();
+      const init = gmailCall![1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer legacy-shape-token');
+    } finally {
+      m.restore();
+    }
+  });
+
+  it('reads the access token from the nested `settings.oauth.credentials.access_token` shape and forwards it as a Bearer credential to Gmail', async () => {
+    // Forward-compatibility path: newer connector revisions return the
+    // OAuth payload nested under `oauth.credentials`. `installFetchMock`
+    // hard-codes the legacy flat shape, so we hand-roll the connector
+    // response here. If a refactor drops the nested-shape fallback in
+    // `getGmailAccessTokenFromConnector`, this test fails before the
+    // change reaches a deployment that has the new connector wired.
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                settings: {
+                  oauth: {
+                    credentials: { access_token: 'nested-shape-token' },
+                  },
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (u.includes('gmail.googleapis.com')) {
+        return new Response(JSON.stringify({ id: 'mock-msg' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected fetch in emailService.test.ts: ${u}`);
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    try {
+      await sendEmail({
+        to: 'r@example.test',
+        subject: 's',
+        text: 't',
+      });
+
+      const gmailCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes('gmail.googleapis.com'),
+      );
+      expect(gmailCall).toBeDefined();
+      const init = gmailCall![1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer nested-shape-token');
+    } finally {
+      (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
+  it('falls back to the unconfigured-token branch (production throw) when the connector returns an item with neither token shape present', async () => {
+    // Negative path: the connector probe succeeds and even returns an
+    // item, but its `settings` payload contains neither
+    // `access_token` nor `oauth.credentials.access_token` (e.g. a
+    // future revision swaps the field name again, or the operator
+    // wired a partially-provisioned connection). The function must
+    // treat that as "no token available" and fall through to the
+    // unconfigured branch — in production that means a hard throw, not
+    // a silent send with an empty Bearer header.
+    process.env.NODE_ENV = 'production';
+
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/v2/connection')) {
+        // settings exists, but neither shape carries a token.
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                settings: {
+                  oauth: { credentials: {} },
+                  some_other_field: 'irrelevant',
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      throw new Error(`Unexpected fetch in emailService.test.ts: ${u}`);
+    });
+    (global as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    try {
+      await expect(
+        sendEmail({ to: 'r@example.test', subject: 's', text: 't' }),
+      ).rejects.toThrow(/Gmail not configured/i);
+
+      // The connector probe is allowed; the Gmail send must not be
+      // attempted with an empty / undefined Bearer token.
+      const gmailCalls = fetchMock.mock.calls.filter((c) =>
+        String(c[0]).includes('gmail.googleapis.com'),
+      );
+      expect(gmailCalls.length).toBe(0);
+    } finally {
+      (global as unknown as { fetch: typeof fetch }).fetch = originalFetch;
+    }
+  });
+
   it('writes a developer stub file and resolves in non-production when no Gmail token is available', async () => {
     delete process.env.REPLIT_CONNECTORS_HOSTNAME;
     process.env.NODE_ENV = 'development';
