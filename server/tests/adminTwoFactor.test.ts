@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import express from 'express';
 import session from 'express-session';
-import connectPgSimple from 'connect-pg-simple';
 import http from 'http';
 import { AddressInfo } from 'net';
 import { eq, inArray, desc } from 'drizzle-orm';
@@ -11,6 +10,7 @@ import { users, securityAuditLog, appSettings, REQUIRE_ADMIN_2FA_SETTING_KEY } f
 import { authService } from '../services/authService';
 import { totpService } from '../services/totpService';
 import { createAuthRouter } from '../routes/auth';
+import { sessionStore } from '../session';
 
 let __ipCounter = 0;
 function uniqueIp(): string {
@@ -557,7 +557,12 @@ describe('Admin Security overview + require-2FA toggle (Task #100)', () => {
 // disable-totp on the target, and then re-uses the target's cookie
 // against /me. requireAuth must reject it with 401.
 describe('Task #127 E2E: a real session cookie is rejected after admin disable-TOTP', () => {
-  const PgStore = connectPgSimple(session);
+  // Reuse the production-configured connect-pg-simple store rather
+  // than constructing a parallel one here. Same `sessions` table,
+  // same pool, same store class — and avoids the `pool as any` cast
+  // that PgSession's type signature would otherwise require because
+  // its declared `Pool` shape doesn't match Neon's pg-compatible
+  // pool interface 1:1.
   const E2E_ADMIN = '__e2e_t127_admin__';
   const E2E_TARGET = '__e2e_t127_target__';
   const PWD = 'E2eT127Pwd!9876';
@@ -583,13 +588,10 @@ describe('Task #127 E2E: a real session cookie is rejected after admin disable-T
     e2eApp.use(express.json());
     e2eApp.use(
       session({
-        // Real PG-backed store — the same store class production uses,
-        // talking to the same `sessions` table the helper purges.
-        store: new PgStore({
-          pool: pool as any,
-          tableName: 'sessions',
-          createTableIfMissing: true,
-        }),
+        // Real PG-backed store talking to the same `sessions` table
+        // the helper purges (imported from server/session.ts so we
+        // share the production store instance).
+        store: sessionStore,
         // Distinct cookie name from the other suites so a leaked
         // cookie from this app can't accidentally satisfy auth in
         // another running test app.
