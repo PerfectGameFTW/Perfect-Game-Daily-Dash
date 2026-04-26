@@ -139,6 +139,17 @@ class TotpAuthAlerter {
     if (opts.now) this.now = opts.now;
   }
 
+  /**
+   * Read-only snapshot of the active config. The in-product alerts
+   * panel (Task #177) uses these numbers as its default window /
+   * threshold so it shows the same accounts the webhook would have
+   * fired on, without re-loading the env vars at the route layer.
+   * Returned by value so callers cannot mutate the live config.
+   */
+  getConfig(): Readonly<AlertConfig> {
+    return { ...this.config };
+  }
+
   /** Test-only: reset to env defaults. */
   reset(): void {
     this.failures.clear();

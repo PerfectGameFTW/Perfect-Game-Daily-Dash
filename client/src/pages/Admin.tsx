@@ -265,6 +265,7 @@ export default function Admin() {
           <TabsContent value="security" className="mt-0 space-y-6">
             <TwoFactorAuthCard />
             <AdminSecurityOverviewCard />
+            <TotpAuthAlertsCard />
             <SecurityAuditLogCard />
           </TabsContent>
 
@@ -1596,6 +1597,235 @@ function UserCacheDiagnosticsCard() {
             </div>
           </div>
         ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface TotpBruteForceAlertRow {
+  userId: number;
+  username: string | null;
+  failureCount: number;
+  peakAttemptCount: number;
+  firstEventAt: string;
+  lastEventAt: string;
+}
+
+interface TotpRecoveryBurstAlertRow {
+  userId: number;
+  username: string | null;
+  recoveryCount: number;
+  firstEventAt: string;
+  lastEventAt: string;
+}
+
+interface TotpAuthAlertsResponse {
+  bruteForce: TotpBruteForceAlertRow[];
+  recoveryBurst: TotpRecoveryBurstAlertRow[];
+  windowMs: number;
+  failureThreshold: number;
+  recoveryThreshold: number;
+  generatedAt: string;
+}
+
+const TOTP_ALERTS_KEY = ['/api/auth/admin/security/totp-alerts'] as const;
+
+/**
+ * In-product surface for the TOTP brute-force / recovery-code-burst
+ * alerts (Task #177). The webhook in `services/totpAuthAlert.ts` is
+ * the immediate page-on-call channel; this card is the long-tail
+ * review surface — same window + thresholds, sourced from the
+ * `security_audit_log` rows that the webhook already fires off so
+ * the panel survives a server restart and an operator who never
+ * wired the webhook still has somewhere to triage from.
+ *
+ * Polls every 30s for near-real-time updates without hammering the
+ * DB. We intentionally do NOT show every individual failure event —
+ * the audit log card right below this one already has the row-level
+ * browser; this card is the per-account headline.
+ */
+function TotpAuthAlertsCard() {
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TotpAuthAlertsResponse>({
+    queryKey: TOTP_ALERTS_KEY,
+    refetchInterval: 30_000,
+    // Background refetches let the panel feel live without an
+    // operator manually clicking "Refresh"; the in-flight indicator
+    // on the Refresh button surfaces long-running fetches.
+    refetchIntervalInBackground: false,
+  });
+
+  const formatWindow = (ms: number) => {
+    const minutes = Math.round(ms / 60_000);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = minutes / 60;
+    return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
+  };
+
+  const totalAlerts = (data?.bruteForce.length ?? 0) + (data?.recoveryBurst.length ?? 0);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldAlert className="h-5 w-5 text-muted-foreground" />
+          Two-Factor Brute-Force Alerts
+        </CardTitle>
+        <CardDescription>
+          Accounts that crossed the brute-force or recovery-code-burst
+          thresholds inside the active rolling window. Same data the
+          webhook fires on, so this panel surfaces real attacks even
+          when no webhook is configured. Updates every 30 seconds.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm text-muted-foreground">
+            {isLoading ? (
+              'Loading…'
+            ) : data ? (
+              <>
+                Window: <span className="font-medium text-foreground">last {formatWindow(data.windowMs)}</span>
+                {' • '}
+                Brute-force threshold: <span className="font-medium text-foreground">{data.failureThreshold}</span>
+                {' • '}
+                Recovery threshold: <span className="font-medium text-foreground">{data.recoveryThreshold}</span>
+              </>
+            ) : (
+              '—'
+            )}
+          </p>
+          <div className="flex items-center gap-2">
+            {data && totalAlerts > 0 ? (
+              <Badge variant="destructive">{totalAlerts} active</Badge>
+            ) : data && !isLoading ? (
+              <Badge variant="outline" className="text-muted-foreground">
+                No active alerts
+              </Badge>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="gap-1"
+            >
+              <RefreshCw className={`h-3 w-3 ${isFetching ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+        </div>
+
+        {isError ? (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-medium">Could not load alerts.</p>
+              <p className="text-xs opacity-80">
+                {error instanceof Error ? error.message : 'Please try again.'}
+              </p>
+            </div>
+          </div>
+        ) : isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="h-4 w-4" />
+            <span>Loading alerts…</span>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div>
+              <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                <ShieldOff className="h-4 w-4 text-destructive" />
+                Brute-force on verify endpoint
+              </h4>
+              {data && data.bruteForce.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No accounts have crossed the brute-force threshold in the window.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2">Account</th>
+                        <th className="px-3 py-2">Failures in window</th>
+                        <th className="px-3 py-2">Peak attemptCount</th>
+                        <th className="px-3 py-2">First seen</th>
+                        <th className="px-3 py-2">Last seen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data?.bruteForce.map((row) => (
+                        <tr key={`bf-${row.userId}`} className="border-t">
+                          <td className="px-3 py-2 font-medium">
+                            {row.username ?? <span className="text-muted-foreground">user #{row.userId}</span>}
+                            <span className="ml-1 text-xs text-muted-foreground">(id {row.userId})</span>
+                          </td>
+                          <td className="px-3 py-2 font-mono">{row.failureCount}</td>
+                          <td className="px-3 py-2 font-mono">{row.peakAttemptCount}</td>
+                          <td className="px-3 py-2 text-xs">
+                            {format(new Date(row.firstEventAt), 'MMM d, HH:mm:ss')}
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            {formatDistanceToNow(new Date(row.lastEventAt), { addSuffix: true })}
+                            <span className="ml-1 text-muted-foreground">
+                              ({format(new Date(row.lastEventAt), 'HH:mm:ss')})
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                <KeyRound className="h-4 w-4 text-amber-600" />
+                Recovery-code burst
+              </h4>
+              {data && data.recoveryBurst.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No accounts have crossed the recovery-code-burst threshold in the window.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2">Account</th>
+                        <th className="px-3 py-2">Codes used in window</th>
+                        <th className="px-3 py-2">First seen</th>
+                        <th className="px-3 py-2">Last seen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data?.recoveryBurst.map((row) => (
+                        <tr key={`rb-${row.userId}`} className="border-t">
+                          <td className="px-3 py-2 font-medium">
+                            {row.username ?? <span className="text-muted-foreground">user #{row.userId}</span>}
+                            <span className="ml-1 text-xs text-muted-foreground">(id {row.userId})</span>
+                          </td>
+                          <td className="px-3 py-2 font-mono">{row.recoveryCount}</td>
+                          <td className="px-3 py-2 text-xs">
+                            {format(new Date(row.firstEventAt), 'MMM d, HH:mm:ss')}
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            {formatDistanceToNow(new Date(row.lastEventAt), { addSuffix: true })}
+                            <span className="ml-1 text-muted-foreground">
+                              ({format(new Date(row.lastEventAt), 'HH:mm:ss')})
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -14,6 +14,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authService, getUserCacheStats } from '../services/authService';
 import { totpService } from '../services/totpService';
+import { totpAuthAlerter } from '../services/totpAuthAlert';
 import { createSafeUser, createSafeUserAsync, requireAuth, requireAdmin } from '../middleware/auth';
 import { z } from 'zod';
 import {
@@ -1093,6 +1094,51 @@ export function createAuthRouter(): Router {
         res.json(page);
       } catch (error) {
         logger.error('auth.admin.security_audit_list_error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------
+  // Admin: in-product TOTP brute-force / recovery-burst alerts (Task #177)
+  // ---------------------------------------------------------------------
+  //
+  // The webhook in `services/totpAuthAlert.ts` is the immediate
+  // "page on-call" channel; this endpoint is the long-tail review
+  // surface — same window + thresholds, but read from the
+  // `security_audit_log` rows so it survives a server restart and an
+  // operator who never wired the webhook still has somewhere to
+  // triage from. Defaults track the in-process alerter's config so
+  // the panel surfaces the same set of accounts the webhook would
+  // have fired on; query params let an operator widen the lens for
+  // forensic review without restarting the deployment.
+  router.get(
+    '/admin/security/totp-alerts',
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        // Cap the window at 24h so a typo doesn't trigger a multi-day
+        // aggregate scan. The alerter's default window is 15m and
+        // operators rarely need more than an hour of context.
+        const querySchema = z.object({
+          windowMs: z.coerce.number().int().min(60_000).max(24 * 60 * 60 * 1000).optional(),
+          failureThreshold: z.coerce.number().int().min(1).max(1000).optional(),
+          recoveryThreshold: z.coerce.number().int().min(1).max(100).optional(),
+        });
+        const parsed = querySchema.safeParse(req.query);
+        if (!parsed.success) {
+          throw new ValidationError('Invalid alert filter parameters');
+        }
+        const cfg = totpAuthAlerter.getConfig();
+        const page = await pgStorage.listTotpAuthAlerts({
+          windowMs: parsed.data.windowMs ?? cfg.windowMs,
+          failureThreshold: parsed.data.failureThreshold ?? cfg.failureThreshold,
+          recoveryThreshold: parsed.data.recoveryThreshold ?? cfg.recoveryThreshold,
+        });
+        res.json(page);
+      } catch (error) {
+        logger.error('auth.admin.totp_alerts_list_error', errorContext(error));
         next(error);
       }
     },

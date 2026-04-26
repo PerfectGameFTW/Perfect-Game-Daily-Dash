@@ -21,7 +21,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { InvalidOrderDataError, OrderNotFoundError } from './errors';
 
 // Import IStorage interface from './storage'
-import { IStorage, McpQueryAuditFilters, McpQueryAuditPage, SyncAuditFilters, SyncAuditPage, SyncAuditEntry, SecurityAuditFilters, SecurityAuditPage } from './storage';
+import { IStorage, McpQueryAuditFilters, McpQueryAuditPage, SyncAuditFilters, SyncAuditPage, SyncAuditEntry, SecurityAuditFilters, SecurityAuditPage, TotpAuthAlertsFilters, TotpAuthAlertsPage } from './storage';
 
 class PgStorage implements IStorage {
   // User methods
@@ -667,6 +667,92 @@ class PgStorage implements IStorage {
       limit,
       offset,
       actions: actionsResult.rows.map((r) => r.action as string),
+    };
+  }
+
+  // Aggregated read for the in-product TOTP brute-force / recovery-
+  // burst alerts panel (Task #177). Sister to the in-process
+  // `totpAuthAlerter` webhook: same window + thresholds, but read
+  // from the `security_audit_log` rows the totp service already
+  // writes (`totp.login_failure`, `totp.recovery_code_used`) so the
+  // panel survives a server restart and an operator who never wired
+  // the webhook still sees the same set of accounts.
+  //
+  // We aggregate inside the SQL so the route handler can return
+  // hundreds of accounts' worth of failures without round-tripping
+  // every event row over the wire. `peak_attempt_count` comes from
+  // the metadata JSON the totp service stores per failure — it
+  // matches the criterion the alerter uses to fire on a single
+  // hammered pending cookie even when only one log line landed.
+  //
+  // `target_user_id` is the canonical grouping key here. The totp
+  // service writes both `actor_user_id` and `target_user_id` to the
+  // same value (the user being verified), but the public face of a
+  // brute-force alert is "which account is under attack", so we group
+  // on the target side. Rows without a target_user_id (none today,
+  // but defensive) are excluded from the aggregation.
+  async listTotpAuthAlerts(
+    filters: TotpAuthAlertsFilters,
+  ): Promise<TotpAuthAlertsPage> {
+    const generatedAt = new Date();
+    const cutoff = new Date(generatedAt.getTime() - filters.windowMs);
+
+    const bruteForceResult = await db.execute(sql`
+      SELECT
+        a.target_user_id AS user_id,
+        u.username AS username,
+        COUNT(*)::int AS failure_count,
+        COALESCE(MAX((a.metadata->>'attemptCount')::int), 0) AS peak_attempt_count,
+        MIN(a.created_at) AS first_event_at,
+        MAX(a.created_at) AS last_event_at
+      FROM security_audit_log a
+      LEFT JOIN users u ON u.id = a.target_user_id
+      WHERE a.action = 'totp.login_failure'
+        AND a.target_user_id IS NOT NULL
+        AND a.created_at >= ${cutoff.toISOString()}::timestamptz
+      GROUP BY a.target_user_id, u.username
+      HAVING COUNT(*) >= ${filters.failureThreshold}
+          OR COALESCE(MAX((a.metadata->>'attemptCount')::int), 0) >= ${filters.failureThreshold}
+      ORDER BY MAX(a.created_at) DESC, a.target_user_id ASC
+    `);
+
+    const recoveryResult = await db.execute(sql`
+      SELECT
+        a.target_user_id AS user_id,
+        u.username AS username,
+        COUNT(*)::int AS recovery_count,
+        MIN(a.created_at) AS first_event_at,
+        MAX(a.created_at) AS last_event_at
+      FROM security_audit_log a
+      LEFT JOIN users u ON u.id = a.target_user_id
+      WHERE a.action = 'totp.recovery_code_used'
+        AND a.target_user_id IS NOT NULL
+        AND a.created_at >= ${cutoff.toISOString()}::timestamptz
+      GROUP BY a.target_user_id, u.username
+      HAVING COUNT(*) >= ${filters.recoveryThreshold}
+      ORDER BY MAX(a.created_at) DESC, a.target_user_id ASC
+    `);
+
+    return {
+      bruteForce: bruteForceResult.rows.map((row) => ({
+        userId: Number(row.user_id),
+        username: (row.username as string | null) ?? null,
+        failureCount: Number(row.failure_count),
+        peakAttemptCount: Number(row.peak_attempt_count ?? 0),
+        firstEventAt: new Date(row.first_event_at as string),
+        lastEventAt: new Date(row.last_event_at as string),
+      })),
+      recoveryBurst: recoveryResult.rows.map((row) => ({
+        userId: Number(row.user_id),
+        username: (row.username as string | null) ?? null,
+        recoveryCount: Number(row.recovery_count),
+        firstEventAt: new Date(row.first_event_at as string),
+        lastEventAt: new Date(row.last_event_at as string),
+      })),
+      windowMs: filters.windowMs,
+      failureThreshold: filters.failureThreshold,
+      recoveryThreshold: filters.recoveryThreshold,
+      generatedAt,
     };
   }
 

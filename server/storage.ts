@@ -95,6 +95,64 @@ export interface SecurityAuditPage {
   actions: string[];
 }
 
+// ---------------------------------------------------------------------
+// In-app surface for the TOTP brute-force / recovery-code-burst
+// alerter (Task #177). The webhook in `totpAuthAlert.ts` is the
+// real-time channel; this type backs the read-only admin panel that
+// shows the same per-account aggregations sourced from the
+// security_audit_log table (so it persists across server restarts and
+// is identical to what the webhook would have fired on).
+// ---------------------------------------------------------------------
+export interface TotpAuthAlertsFilters {
+  // How far back the aggregation window stretches. Mirrors
+  // `TOTP_AUTH_ALERT_WINDOW_MS` so the panel surfaces the same set of
+  // accounts the in-process alerter would have fired on. The route
+  // layer defaults this to the alerter's current config.
+  windowMs: number;
+  // Minimum count required for an account to appear in the
+  // brute-force alert list. Mirrors `TOTP_AUTH_ALERT_FAILURE_THRESHOLD`.
+  failureThreshold: number;
+  // Minimum count required for an account to appear in the
+  // recovery-code-burst list. Mirrors `TOTP_AUTH_ALERT_RECOVERY_THRESHOLD`.
+  recoveryThreshold: number;
+}
+
+export interface TotpBruteForceAlertRow {
+  userId: number;
+  username: string | null;
+  failureCount: number;
+  // Highest `attemptCount` recorded across the events in the window.
+  // The alerter fires on either the rolling count crossing the
+  // threshold OR a single event reporting an attemptCount above it,
+  // so this is the headline number an operator wants to see.
+  peakAttemptCount: number;
+  firstEventAt: Date;
+  lastEventAt: Date;
+}
+
+export interface TotpRecoveryBurstAlertRow {
+  userId: number;
+  username: string | null;
+  recoveryCount: number;
+  firstEventAt: Date;
+  lastEventAt: Date;
+}
+
+export interface TotpAuthAlertsPage {
+  bruteForce: TotpBruteForceAlertRow[];
+  recoveryBurst: TotpRecoveryBurstAlertRow[];
+  // Echo the resolved window and thresholds back to the caller so the
+  // UI can label the panel ("brute-force alerts in the last 15m,
+  // threshold 5") without having to recompute them from env hints.
+  windowMs: number;
+  failureThreshold: number;
+  recoveryThreshold: number;
+  // Server clock at the moment the aggregation ran, so the UI's
+  // "fired N seconds ago" label uses the server's notion of "now"
+  // and stays consistent if the operator's local clock is skewed.
+  generatedAt: Date;
+}
+
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
 
 export interface IStorage {
@@ -177,6 +235,16 @@ export interface IStorage {
   // the page so the front-end can populate a filter dropdown without
   // having to hard-code the current set of action strings.
   listSecurityAudit(filters: SecurityAuditFilters): Promise<SecurityAuditPage>;
+
+  // Aggregated view of recent TOTP brute-force / recovery-code-burst
+  // alerts (Task #177). Reads `security_audit_log` rows whose action
+  // is `totp.login_failure` or `totp.recovery_code_used`, groups by
+  // target account inside the window, and returns only those rows
+  // crossing the alerter's thresholds. Backed by the same audit table
+  // the webhook fires off, so the panel persists across server
+  // restarts and surfaces the same accounts the in-process alerter
+  // would have alerted on.
+  listTotpAuthAlerts(filters: TotpAuthAlertsFilters): Promise<TotpAuthAlertsPage>;
 
   // Per-deployment runtime settings (app_settings table). The key is
   // constrained to the typed registry in `shared/schema.ts`, and the
