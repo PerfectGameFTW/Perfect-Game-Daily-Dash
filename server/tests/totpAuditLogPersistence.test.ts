@@ -346,6 +346,80 @@ describe('TOTP audit-log DB persistence (Task #131)', () => {
     });
   });
 
+  it('persists totp.self_disabled when a user voluntarily turns off their own 2FA (Task #176)', async () => {
+    // Set up a fully enrolled user and clear the enrollment-phase
+    // rows so we assert specifically on the disable row.
+    const user = (await authService.getUserById(userId))!;
+    const enrollment = await totpService.beginEnrollment(user, { ip: uniqueIp() });
+    await totpService.verifyAndEnable(
+      userId,
+      currentCode(enrollment.secret, USERNAME),
+      { ip: uniqueIp() },
+    );
+    await flushAuditWrites();
+    await db
+      .delete(securityAuditLog)
+      .where(eq(securityAuditLog.actorUserId, userId));
+
+    const ip = uniqueIp();
+    const requestId = 'req-self-disable-1';
+    await totpService.disable(userId, { requestId, ip, actorRole: 'self' });
+    await flushAuditWrites();
+
+    // The state mutation must have committed regardless of the audit
+    // row landing — but here we additionally assert the row IS there,
+    // which is the whole point of Task #176.
+    const after = await db.select().from(users).where(eq(users.id, userId));
+    expect(after[0]?.totpEnabled).toBe(false);
+
+    const rows = await rowsFor('totp.self_disabled');
+    expect(rows).toHaveLength(1);
+    // Self-service: actor and target are the same user — matches the
+    // convention persistAuditRow already uses for enrollment/login.
+    // A SOC reviewer can filter by either dimension and surface the
+    // disable in either direction.
+    expect(rows[0].actorUserId).toBe(userId);
+    expect(rows[0].targetUserId).toBe(userId);
+    expect(rows[0].actorIp).toBe(ip);
+    expect(rows[0].metadata).toMatchObject({
+      event: 'totp_disabled',
+      requestId,
+      actorRole: 'self',
+    });
+  });
+
+  it('persists totp.self_disabled with a null actorIp / null requestId when the caller omits them', async () => {
+    // The default ctx ({}, used by e.g. userCacheRevocation.test.ts)
+    // must still produce a valid audit row — null-vs-undefined matters
+    // because the metadata column is jsonb and a stringified
+    // `undefined` would silently drop the key. Pinning the null shape
+    // here means a future change that switches to undefined would
+    // fail loudly instead of producing a row that's missing fields.
+    const user = (await authService.getUserById(userId))!;
+    const enrollment = await totpService.beginEnrollment(user, { ip: uniqueIp() });
+    await totpService.verifyAndEnable(
+      userId,
+      currentCode(enrollment.secret, USERNAME),
+      { ip: uniqueIp() },
+    );
+    await flushAuditWrites();
+    await db
+      .delete(securityAuditLog)
+      .where(eq(securityAuditLog.actorUserId, userId));
+
+    await totpService.disable(userId);
+    await flushAuditWrites();
+
+    const rows = await rowsFor('totp.self_disabled');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].actorIp).toBeNull();
+    expect(rows[0].metadata).toMatchObject({
+      event: 'totp_disabled',
+      requestId: null,
+      actorRole: 'self',
+    });
+  });
+
   it('does not block the auth flow when the audit-row insert fails', async () => {
     // Force the persistence layer to reject. The TOTP operation itself
     // must still succeed — that is the whole point of fire-and-forget.

@@ -562,6 +562,7 @@ export class TotpService {
       })
       .where(eq(users.id, userId));
     invalidateUserCache(userId);
+    const actorRole = ctx.actorRole ?? 'self';
     logger.warn('auth.totp.disabled', {
       event: 'totp_disabled',
       userId,
@@ -572,7 +573,37 @@ export class TotpService {
       // the log line lets an operator filter for "someone else flipped
       // off my 2FA" without having to join against the security audit
       // table.
-      actorRole: ctx.actorRole ?? 'self',
+      actorRole,
+    });
+    // Persist the same event to the security_audit_log table so SOC
+    // reviewers querying the audit table see a complete picture of
+    // 2FA-disable events alongside enrollment / login / recovery rows
+    // (Task #176). The admin-disable path
+    // (/admin/security/users/:id/disable-totp) writes its own row with
+    // action 'user.totp_disabled_by_admin' through
+    // pgStorage.disableUserTotpWithAudit (transactional with the state
+    // mutation, Task #100); this row is the self-service counterpart,
+    // intentionally namespaced under totp.* to match the other rows
+    // TotpService originates. For self-service the user is BOTH actor
+    // and target — same convention persistAuditRow already uses for
+    // enrollment/login.
+    this.persistAuditRow({
+      actorUserId: userId,
+      actorIp: ctx.ip ?? null,
+      action: 'totp.self_disabled',
+      targetUserId: userId,
+      metadata: {
+        event: 'totp_disabled',
+        requestId: ctx.requestId ?? null,
+        // Carried for parity with the structured stdout shape so a
+        // reviewer who pivots from a log line to a DB row sees the
+        // same fields. In practice this is always 'self' for rows
+        // produced by this method (the admin path bypasses
+        // TotpService.disable entirely), but keeping the field
+        // explicit means a future caller that does pass actorRole
+        // doesn't silently lose that signal.
+        actorRole,
+      },
     });
   }
 
