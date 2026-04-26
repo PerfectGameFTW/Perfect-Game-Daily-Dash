@@ -650,32 +650,6 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
           );
           expect(secondAttempt.ok).toBe(false);
 
-          // Exactly one of (verify, regenerate) had a LASTING write
-          // effect on the recovery_codes column. Regenerate always
-          // wins because it replaces the entire array; in
-          // verify-first ordering, verify's "remaining = old minus
-          // consumed" write is overwritten in full by regenerate's
-          // batch replacement, so even though verify's API call
-          // returned ok:true its on-disk effect does not persist.
-          // The lock makes this overwrite atomic — without it,
-          // verify's stale-snapshot write could land AFTER
-          // regenerate's commit and resurrect the old batch (the
-          // exact regression Task #101 added the lock to prevent).
-          const verifyEffectPersists =
-            order === 'verify-first'
-              ? // Verify's batch-minus-consumed write was overwritten
-                // by regenerate. We've already proven `finalHashes`
-                // contains none of the old hashes — so verify's
-                // "consumed-one" intermediate state is gone too.
-                false
-              : // Verify ran on the new batch with an old code — its
-                // ok:false return means it never wrote anything.
-                false;
-          const regenEffectPersists = true;
-          expect(
-            [verifyEffectPersists, regenEffectPersists].filter(Boolean),
-          ).toHaveLength(1);
-
           // No code from the old batch can verify against the new
           // batch — even the one verify-first consumed. This is the
           // user-visible invariant: once regenerate commits, every
@@ -686,6 +660,33 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
               (await totpService.verifyLoginCode(userId, oldCode)).ok,
             ).toBe(false);
           }
+
+          // "Exactly one of (verify, regenerate) had a LASTING write
+          // effect on the recovery_codes column" — derived from the
+          // observable invariants above, not asserted via a constant:
+          //
+          //   (a) regenerate's effect persists: every new plaintext
+          //       in `regenResult` matches exactly one hash in
+          //       `finalHashes` (proven by the per-code Promise.all
+          //       check above) AND `finalHashes` has length 10 (the
+          //       full new batch landed).
+          //   (b) verify's effect does NOT persist: in BOTH orderings
+          //       no old hash survives in `finalHashes` (proven by
+          //       the !oldHashes.contains loop above) AND every old
+          //       plaintext returns ok:false from verifyLoginCode
+          //       (the loop just above this block). In verify-first
+          //       this is the LOCK doing its job — verify's
+          //       consume-and-rewrite was atomically overwritten by
+          //       regenerate's batch replacement; in regenerate-first
+          //       verify never wrote anything (it ran on the new
+          //       batch with an old code → ok:false).
+          //
+          // Without the lock, verify's stale-snapshot write could
+          // land AFTER regenerate's commit in verify-first ordering
+          // and resurrect the old batch (a hash from oldHashes would
+          // appear in finalHashes, or an oldBatch plaintext would
+          // verify ok:true) — both observable failure modes the
+          // assertions above would catch.
         } finally {
           // Order matters: release the sentinel first (so any still-
           // pending op can drain), THEN await both ops to settle, THEN
