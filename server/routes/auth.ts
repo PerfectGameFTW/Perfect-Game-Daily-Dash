@@ -588,20 +588,90 @@ export function createAuthRouter(): Router {
         throwOnInvalidInput(parsed);
 
         const { token, newPassword } = parsed.data!;
-        const success = await authService.completePasswordReset(
+        const userId = await authService.completePasswordReset(
           token,
           newPassword,
         );
 
-        if (!success) {
+        if (!userId) {
           throw new ValidationError(
             'This reset link is invalid or has expired. Please request a new one.',
           );
         }
 
+        // Revoke every active session for this account immediately so an
+        // attacker who had a stolen session cookie is signed out the
+        // moment the legitimate owner resets their password (Task #171).
+        // Best-effort by design — a session-store hiccup must not roll
+        // back the just-committed password change.
+        await revokeAllSessionsForUser(userId, 'self_password_changed');
+
+        // If the current request itself has an authenticated session
+        // (e.g. the user is in the `mustRotatePassword` flow and is
+        // therefore already signed in), re-persist it so they stay
+        // signed in on this device after the revoke wipes all rows.
+        if (req.session?.userId) {
+          await new Promise<void>((resolve) => req.session.save(() => resolve()));
+        }
+
         res.json({ success: true });
       } catch (error) {
         logger.error('auth.completeReset.error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
+  // Self-service password change for a signed-in user (account page).
+  // Verifies the current password before accepting the new one so a
+  // momentarily unattended browser or stolen session cannot silently
+  // rotate credentials. On success every OTHER active session for this
+  // account is immediately invalidated (Task #171) while the requesting
+  // device stays signed in.
+  const changeOwnPasswordSchema = z.object({
+    currentPassword: z.string().min(1).max(128),
+    newPassword: strongPasswordSchema,
+  });
+
+  router.post(
+    '/me/password',
+    requireAuth,
+    authLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const userId = req.user!.id;
+        const parsed = changeOwnPasswordSchema.safeParse(req.body);
+        throwOnInvalidInput(parsed);
+        const { currentPassword, newPassword } = parsed.data!;
+
+        // Re-verify the current password. This prevents a stolen
+        // session without the current credentials from silently rotating
+        // to an attacker-chosen password.
+        const verified = await authService.loginUser(
+          req.user!.username,
+          currentPassword,
+        );
+        if (!verified || verified.id !== userId) {
+          throw new UnauthorizedError('Current password is incorrect');
+        }
+
+        await authService.changeOwnPassword(userId, newPassword);
+
+        // Revoke every active session for this account (best-effort).
+        await revokeAllSessionsForUser(userId, 'self_password_changed');
+
+        // Re-persist the current session so this device remains signed
+        // in. The DELETE above wiped the DB row; save() recreates it
+        // using the in-memory session data.
+        await new Promise<void>((resolve, reject) => {
+          req.session.save((err: Error | null) =>
+            err ? reject(err) : resolve(),
+          );
+        });
+
+        res.json({ success: true });
+      } catch (error) {
+        logger.error('auth.changePassword.error', errorContext(error));
         next(error);
       }
     },

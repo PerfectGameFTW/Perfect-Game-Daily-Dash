@@ -31,6 +31,11 @@ const ALLOWED_FIELDS = new Set<string>([
   'path',
   'status',
   'durationMs',
+  // actor / target identifiers (opaque IDs, never names/emails)
+  'actorUserId',
+  'targetUserId',
+  // operational counts
+  'revoked',
   // domain identifiers (opaque IDs, never names/notes/emails)
   'syncType',
   'page',

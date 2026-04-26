@@ -244,8 +244,9 @@ describe('User cache invalidation on revocation paths (Task #112)', () => {
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     });
 
-    const ok = await authService.completePasswordReset(rawToken, NEW_STRONG_PASSWORD);
-    expect(ok).toBe(true);
+    const userId = await authService.completePasswordReset(rawToken, NEW_STRONG_PASSWORD);
+    // completePasswordReset returns the userId (number) on success or false.
+    expect(typeof userId).toBe('number');
 
     // Next cached read must reflect the rewritten password row, not
     // the seeded copy.

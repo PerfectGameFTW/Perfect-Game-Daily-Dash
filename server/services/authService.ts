@@ -714,10 +714,11 @@ export class AuthService {
    * user's password is updated in a single transaction so a token can
    * never be redeemed twice.
    *
-   * Returns true on success, false if the token is unknown, expired, or
-   * already consumed.
+   * Returns the userId of the account whose password was reset on
+   * success, or `false` if the token is unknown, expired, or already
+   * consumed.
    */
-  async completePasswordReset(rawToken: string, newPassword: string): Promise<boolean> {
+  async completePasswordReset(rawToken: string, newPassword: string): Promise<number | false> {
     if (!rawToken || typeof rawToken !== 'string') return false;
     const tokenHash = hashResetToken(rawToken);
 
@@ -778,7 +779,34 @@ export class AuthService {
     // can't refill the cache with the pre-commit row between the
     // invalidate and the COMMIT.
     if (ok && resetUserId !== null) invalidateUserCache(resetUserId);
-    return ok;
+    // resetUserId is assigned inside the transaction before `ok` is set
+    // to true, so when ok===true it cannot be null. The non-null
+    // assertion is safe here; the cast avoids a misleading TS error
+    // about null vs number.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    return ok ? resetUserId! : false;
+  }
+
+  /**
+   * Update the password for an already-authenticated user (self-service
+   * account-page change). Hashes the new password and clears any
+   * legacy-rotation flag. Does NOT invalidate sessions — the caller is
+   * responsible for calling `revokeAllSessionsForUser` so other devices
+   * are immediately signed out.
+   */
+  async changeOwnPassword(userId: number, newPassword: string): Promise<void> {
+    const hashedPassword = await hashPassword(newPassword);
+    await db
+      .update(users)
+      .set({
+        password: hashedPassword,
+        // Changing password satisfies the legacy-password rotation
+        // requirement (Task #55) — clear the flag so the force-change
+        // screen no longer appears after the next login.
+        mustRotatePassword: false,
+      })
+      .where(eq(users.id, userId));
+    invalidateUserCache(userId);
   }
 
   /**

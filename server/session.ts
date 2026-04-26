@@ -188,7 +188,8 @@ export async function revokeAllSessionsForUser(
   reason:
     | 'admin_disabled_totp'
     | 'admin_password_reset_initiated'
-    | 'user_deleted',
+    | 'user_deleted'
+    | 'self_password_changed',
 ): Promise<{ revoked: number }> {
   try {
     const result = await pool.query<{ count: string }>(
