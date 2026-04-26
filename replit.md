@@ -327,6 +327,9 @@ When an alert fires, do **not** fix the row by editing it directly in psql — t
 
 Hand edits in production leave no audit trail and re-create the same silent-drift problem the alerter exists to catch.
 
+#### App settings registry status panel (Task #167)
+The Admin → Alerts tab now includes an **App settings registry** card listing every key in `appSettingsRegistry` with its current validation status (`valid` / `invalid` / `missing`). Backed by `GET /api/admin/app-settings/validation` (admin-only, `Cache-Control: no-store`) which calls `pgStorage.validateAllAppSettings()` to re-validate every persisted row against its registered zod schema and return the same issue list the alert payload contains for any failures. The endpoint is read-only and intentionally does **not** fire the invalid-row alerter so an admin polling the panel cannot bypass the per-key cooldown. Refreshing the panel re-runs validation, so an on-call who lands here after the one-shot Task #122 alert can confirm a fix-up migration actually landed without ssh-ing into the box.
+
 ## Agent Workflow Preferences
 
 ### Follow-up task proposals

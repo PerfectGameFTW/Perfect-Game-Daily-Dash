@@ -259,6 +259,7 @@ export default function Admin() {
           <TabsContent value="alerts" className="mt-0 space-y-6">
             <SquareRateLimitAlertSettingsCard />
             <SquareRateLimitAlertRuntimeStateCard />
+            <AppSettingsRegistryStatusCard />
           </TabsContent>
 
           <TabsContent value="security" className="mt-0 space-y-6">
@@ -607,6 +608,184 @@ function SquareRateLimitAlertRuntimeStateCard() {
                 </ul>
               )}
             </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface AppSettingsValidationIssue {
+  path: string;
+  message: string;
+}
+
+interface AppSettingsValidationEntry {
+  key: string;
+  status: 'valid' | 'invalid' | 'missing';
+  issues: AppSettingsValidationIssue[];
+  updatedAt: string | null;
+  validatedAt: string;
+}
+
+interface AppSettingsValidationResponse {
+  validatedAt: string;
+  entries: AppSettingsValidationEntry[];
+}
+
+const APP_SETTINGS_VALIDATION_KEY = ['/api/admin/app-settings/validation'] as const;
+
+/**
+ * Read-only panel that lists every key registered in
+ * `appSettingsRegistry` and shows whether its persisted JSON still
+ * parses against the registered zod schema (Task #167). Companion to
+ * the invalid-row alerter (Task #122) — the alerter only fires once
+ * per key per cooldown window, so an admin who joins after the alert
+ * needs an in-app way to see which keys are still broken.
+ *
+ * "Refresh" re-runs the validation server-side; useful for
+ * confirming that a fix-up migration has actually landed without
+ * having to ssh into the box and re-trigger a read.
+ */
+function AppSettingsRegistryStatusCard() {
+  const { data, isLoading, isError, error, refetch, isFetching } =
+    useQuery<AppSettingsValidationResponse>({
+      queryKey: APP_SETTINGS_VALIDATION_KEY,
+    });
+
+  const invalidCount = data?.entries.filter((e) => e.status === 'invalid').length ?? 0;
+  const validatedLabel = data
+    ? `${formatDistanceToNow(new Date(data.validatedAt), { addSuffix: true })} (${format(new Date(data.validatedAt), 'PP p')})`
+    : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Database className="h-5 w-5 text-muted-foreground" />
+          App settings registry
+          {invalidCount > 0 ? (
+            <Badge variant="destructive" className="ml-2">
+              {invalidCount} broken
+            </Badge>
+          ) : null}
+        </CardTitle>
+        <CardDescription>
+          Each row in <code>app_settings</code> is re-validated against the schema registered in{' '}
+          <code>shared/schema.ts</code>. The on-call alert fires only once per key per cooldown
+          window; this panel is the durable view of which rows are currently broken. Use Refresh
+          after shipping a fix-up migration to confirm the row now parses.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="h-4 w-4" />
+            <span>Loading validation status...</span>
+          </div>
+        ) : isError || !data ? (
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-medium">Could not load validation status.</p>
+                <p className="text-xs opacity-80">
+                  {error instanceof Error ? error.message : 'Please try again.'}
+                </p>
+              </div>
+            </div>
+            <Button type="button" variant="outline" onClick={() => refetch()} className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Last validated {validatedLabel}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => refetch()}
+                disabled={isFetching}
+                className="gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+                {isFetching ? 'Refreshing...' : 'Refresh'}
+              </Button>
+            </div>
+
+            {data.entries.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No keys are registered in <code>appSettingsRegistry</code>.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {data.entries.map((entry) => (
+                  <li
+                    key={entry.key}
+                    className="rounded-md border bg-muted/20 px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <code className="text-sm font-medium">{entry.key}</code>
+                      <div className="flex items-center gap-2">
+                        {entry.status === 'valid' ? (
+                          <Badge
+                            variant="outline"
+                            className="border-green-500/40 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300"
+                          >
+                            <CheckCircle className="mr-1 h-3 w-3" />
+                            Valid
+                          </Badge>
+                        ) : entry.status === 'invalid' ? (
+                          <Badge variant="destructive">
+                            <AlertCircle className="mr-1 h-3 w-3" />
+                            Invalid
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary">No row (using defaults)</Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {entry.updatedAt
+                            ? `updated ${formatDistanceToNow(new Date(entry.updatedAt), { addSuffix: true })}`
+                            : '—'}
+                        </span>
+                      </div>
+                    </div>
+                    {entry.status === 'invalid' && entry.issues.length > 0 ? (
+                      // Show the same zod issue list the alert payload
+                      // contains so an on-call who lands here without
+                      // the alert in front of them sees the same
+                      // diagnostic detail.
+                      <ul className="mt-2 space-y-1 border-t border-destructive/20 pt-2 text-xs text-destructive">
+                        {entry.issues.map((issue, idx) => (
+                          <li key={idx} className="flex gap-2">
+                            <span className="font-mono">
+                              {issue.path || '(root)'}:
+                            </span>
+                            <span>{issue.message}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {invalidCount > 0 ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  Affected consumers are silently falling back to defaults. Ship a one-off
+                  migration that either rewrites the row to the new shape or deletes it — never
+                  hand-edit <code>app_settings</code> in production.
+                </span>
+              </div>
+            ) : null}
           </div>
         )}
       </CardContent>

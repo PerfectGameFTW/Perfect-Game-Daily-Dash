@@ -1,5 +1,5 @@
 import { db } from './db';
-import { sql, eq, and, desc } from 'drizzle-orm';
+import { sql, eq, and, desc, inArray } from 'drizzle-orm';
 import { 
   users, transactions, giftCards, giftCardRedemptions, 
   orders, orderLineItems, orderModifiers, orderDiscounts, syncState,
@@ -807,6 +807,109 @@ class PgStorage implements IStorage {
         set: { value: parsed, updatedAt: sql`CURRENT_TIMESTAMP` },
       });
   }
+
+  // Walk every key registered in `appSettingsRegistry`, fetch its
+  // current persisted row (if any), and re-validate it against the
+  // registered zod schema. Powers the admin "App settings registry"
+  // panel (Task #167) so an operator who joins after the one-shot
+  // invalid-row alert has fired can still see at a glance which keys
+  // are currently broken — without ssh-ing into the box and
+  // re-triggering a read.
+  //
+  // Read-only and side-effect free: this does NOT call into
+  // `recordAppSettingsInvalidRowForAlerting`, on purpose. The alerter's
+  // per-key cooldown is sized for a real read path (one alert per
+  // broken row per hour); having an admin pull the panel be able to
+  // re-arm or duplicate alerts would defeat that quiet-period
+  // contract. The alerter remains driven exclusively by
+  // `getAppSetting`.
+  async validateAllAppSettings(): Promise<AppSettingsRegistryValidationEntry[]> {
+    const keys = Object.keys(appSettingsRegistry) as AppSettingKey[];
+    const validatedAt = new Date().toISOString();
+
+    if (keys.length === 0) return [];
+
+    const rows = await db
+      .select({
+        key: appSettings.key,
+        value: appSettings.value,
+        updatedAt: appSettings.updatedAt,
+      })
+      .from(appSettings)
+      .where(inArray(appSettings.key, keys as unknown as string[]));
+
+    const rowByKey = new Map(rows.map((r) => [r.key, r]));
+
+    return keys.map((key) => {
+      const row = rowByKey.get(key);
+      const updatedAt =
+        row?.updatedAt instanceof Date
+          ? row.updatedAt.toISOString()
+          : row?.updatedAt
+            ? new Date(row.updatedAt as unknown as string).toISOString()
+            : null;
+
+      // No row at all is the "fall back to defaults" path — a
+      // perfectly normal state on a fresh deploy where the operator
+      // hasn't tuned the setting yet. Surface it as a distinct
+      // status so the panel doesn't paint untouched keys red.
+      if (!row) {
+        return {
+          key,
+          status: 'missing' as const,
+          issues: [],
+          updatedAt: null,
+          validatedAt,
+        };
+      }
+
+      const schema = appSettingsRegistry[key];
+      const parsed = schema.safeParse(row.value);
+      if (parsed.success) {
+        return {
+          key,
+          status: 'valid' as const,
+          issues: [],
+          updatedAt,
+          validatedAt,
+        };
+      }
+
+      return {
+        key,
+        status: 'invalid' as const,
+        issues: parsed.error.issues.map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+        updatedAt,
+        validatedAt,
+      };
+    });
+  }
+}
+
+export interface AppSettingsRegistryValidationIssue {
+  path: string;
+  message: string;
+}
+
+export interface AppSettingsRegistryValidationEntry {
+  key: AppSettingKey;
+  /**
+   * `valid`   — row exists and matches the registered schema.
+   * `invalid` — row exists but the JSON failed schema validation.
+   *             `issues` will be populated with the zod issue list.
+   * `missing` — no row in `app_settings` for this key. Consumers
+   *             fall back to their built-in defaults; this is a
+   *             healthy state, not an error.
+   */
+  status: 'valid' | 'invalid' | 'missing';
+  issues: AppSettingsRegistryValidationIssue[];
+  /** ISO8601 of the row's `updated_at`, or null when status='missing'. */
+  updatedAt: string | null;
+  /** ISO8601 of when this validation pass ran. */
+  validatedAt: string;
 }
 
 export const pgStorage = new PgStorage();

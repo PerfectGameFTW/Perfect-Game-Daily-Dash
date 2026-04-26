@@ -879,6 +879,32 @@ export function createApiRouter(): Router {
     },
   );
 
+  // Admin: re-validate every key registered in `appSettingsRegistry`
+  // and report each one's current status (Task #167). The
+  // invalid-row alerter (Task #122) only fires once per key per
+  // cooldown window, so an admin who joins after the alert has
+  // fired has no other in-app way to see which rows are still
+  // broken — this endpoint is that view. Re-validates on every
+  // call so a follow-up GET after a fix-up migration confirms the
+  // row now parses; `Cache-Control: no-store` keeps a stale
+  // response from masking a broken row.
+  router.get(
+    '/admin/app-settings/validation',
+    requireAdmin,
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const entries = await pgStorage.validateAllAppSettings();
+        res.set('Cache-Control', 'no-store');
+        res.json({
+          validatedAt: new Date().toISOString(),
+          entries,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   router.put(
     '/admin/alerts/square-rate-limit',
     requireAdmin,
