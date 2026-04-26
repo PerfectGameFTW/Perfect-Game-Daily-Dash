@@ -36,6 +36,7 @@ import { invalidateUserCache } from './authService';
 import { encryptTotpSecret, decryptTotpSecret } from './totpCrypto';
 import { logger, errorContext } from '../logger';
 import { pgStorage } from '../pgStorage';
+import { totpAuthAlerter } from './totpAuthAlert';
 // Recovery codes use the same hashing primitive as user passwords so
 // the codebase has a single hash policy. The verifyPassword helper
 // auto-dispatches between argon2id and any legacy bcrypt-hashed code,
@@ -319,6 +320,11 @@ export class TotpService {
           reason: 'not_enrolled',
         },
       });
+      // Feed the brute-force alerter (Task #132). The not-enrolled
+      // path is a dead-end for the attacker but still worth counting:
+      // if a stolen pending cookie is being walked across many user
+      // ids, this is the branch we'll see most of.
+      totpAuthAlerter.recordLoginFailure(userId, ctx.attemptCount);
       return { ok: false };
     }
 
@@ -419,6 +425,11 @@ export class TotpService {
           recoveryCodesRemaining: result.remaining,
         },
       });
+      // Feed the recovery-code-burst alerter (Task #132): repeated
+      // recovery-code consumption on a single account inside the
+      // window is anomalous (the codes are one-time and most users
+      // never consume more than one in their lifetime).
+      totpAuthAlerter.recordRecoveryCodeUsed(userId);
       return { ok: true, factor: 'recovery', recoveryCodesRemaining: result.remaining };
     }
 
@@ -440,6 +451,10 @@ export class TotpService {
         attemptCount: ctx.attemptCount ?? null,
       },
     });
+    // Feed the brute-force alerter (Task #132). This is the primary
+    // signal — a stolen pending cookie being walked through the
+    // 6-digit codespace lands here on every miss.
+    totpAuthAlerter.recordLoginFailure(userId, ctx.attemptCount);
     return { ok: false };
   }
 

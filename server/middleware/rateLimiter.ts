@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 export const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
@@ -65,7 +65,11 @@ export const totpRecoveryRegenerateIpLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  keyGenerator: (req) => `ip:${req.ip ?? 'unknown'}`,
+  // Use express-rate-limit's ipKeyGenerator helper so IPv6 addresses are
+  // bucketed by /64 prefix instead of by individual address — otherwise
+  // a single IPv6 client would get a fresh limit per request because
+  // their source address rotates within their assigned subnet.
+  keyGenerator: (req) => `ip:${ipKeyGenerator(req.ip ?? 'unknown')}`,
   message: {
     error: 'Too many recovery code regeneration attempts, please try again later.',
   },
@@ -84,7 +88,12 @@ export const totpRecoveryRegenerateAccountLimiter = rateLimit({
   // and prevents this middleware from throwing.
   keyGenerator: (req: Request) => {
     const userId = req.user?.id ?? req.session?.userId;
-    return userId != null ? `acct:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+    // IP fallback only fires for the impossible case where requireAuth
+    // didn't set req.user; route through ipKeyGenerator so IPv6 clients
+    // are bucketed by /64 subnet (see ipLimiter above for rationale).
+    return userId != null
+      ? `acct:${userId}`
+      : `ip:${ipKeyGenerator(req.ip ?? 'unknown')}`;
   },
   message: {
     error: 'Too many recovery code regeneration attempts for this account, please try again later.',
