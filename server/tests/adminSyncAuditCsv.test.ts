@@ -23,7 +23,7 @@ import { AddressInfo } from 'net';
 import { eq, inArray } from 'drizzle-orm';
 
 import { db } from '../db';
-import { users, syncAudit } from '@shared/schema';
+import { users, syncAudit, appSettings, REQUIRE_ADMIN_2FA_SETTING_KEY } from '@shared/schema';
 import { authService } from '../services/authService';
 import { createApiRouter } from '../routes/api';
 
@@ -174,6 +174,12 @@ describe('GET /api/admin/sync-audit.csv (Task #117)', () => {
   beforeAll(async () => {
     await db.delete(users).where(eq(users.username, TEST_ADMIN_USERNAME));
     await db.delete(users).where(eq(users.username, TEST_USER_USERNAME));
+    // Defensively disable the require-admin-2FA toggle so a parallel
+    // test suite that enables it can't cause requireAuth to return 403
+    // for this file's non-TOTP admin user (Task #127 / test isolation).
+    await db
+      .delete(appSettings)
+      .where(eq(appSettings.key, REQUIRE_ADMIN_2FA_SETTING_KEY));
 
     const admin = await authService.registerUser(
       TEST_ADMIN_USERNAME,
@@ -275,9 +281,16 @@ describe('GET /api/admin/sync-audit.csv (Task #117)', () => {
     await db.delete(users).where(eq(users.id, userId));
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     authService.invalidateUserCache?.(adminId);
     authService.invalidateUserCache?.(userId);
+    // Keep the require-admin-2FA setting cleared for every test so a
+    // concurrent suite's enablement can't race with our requests and
+    // cause unexpected 403s (requireAuth returns 403 if an admin has
+    // no TOTP enrolled and the setting is enabled).
+    await db
+      .delete(appSettings)
+      .where(eq(appSettings.key, REQUIRE_ADMIN_2FA_SETTING_KEY));
   });
 
   it('rejects unauthenticated GET with 401 and no CSV body', async () => {
