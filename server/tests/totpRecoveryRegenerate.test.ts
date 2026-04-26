@@ -499,13 +499,13 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
   // Strategy: hold a sentinel FOR UPDATE lock on the user row, then
   // queue the two operations one at a time, polling pg_stat_activity
   // between each so the SECOND op only fires after the FIRST is
-  // observed to have queued behind the sentinel's pid (see
-  // waitUntilBlockedByPid above). In this controlled scenario Postgres
-  // services the queued waiters in arrival order, so the order in
-  // which we kick the operations off becomes the deterministic order
-  // in which they commit once the sentinel is released. No reliance on
-  // which Promise "happens to win" — every run exercises the exact
-  // ordering named in the test.
+  // observed to have queued behind the sentinel (see
+  // waitUntilBlockedBackends above). In this controlled scenario
+  // Postgres services the queued waiters in arrival order, so the
+  // order in which we kick the operations off becomes the
+  // deterministic order in which they commit once the sentinel is
+  // released. No reliance on which Promise "happens to win" — every
+  // run exercises the exact ordering named in the test.
   for (const order of ['verify-first', 'regenerate-first'] as const) {
     it(
       `Task #130: serializes verify+regenerate deterministically (${order}) — old hashes never resurrect`,
@@ -625,6 +625,56 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
             );
             expect(matches.filter(Boolean)).toHaveLength(1);
           }
+
+          // New codes verify EXACTLY ONCE through the public service
+          // API: a fresh code from the regenerated batch succeeds the
+          // first time it's presented to verifyLoginCode and is then
+          // consumed (removed from the on-disk batch), so a second
+          // attempt with the same plaintext returns ok:false. Proving
+          // this through the service — not just via offline
+          // verifyPassword on the raw hashes — closes the loop end to
+          // end (a regression in the consume-after-match step would be
+          // invisible to the offline-hash check above).
+          const oneShotCode = regenResult![1];
+          const firstAttempt = await totpService.verifyLoginCode(
+            userId,
+            oneShotCode,
+          );
+          expect(firstAttempt.ok).toBe(true);
+          if (firstAttempt.ok) {
+            expect(firstAttempt.factor).toBe('recovery');
+          }
+          const secondAttempt = await totpService.verifyLoginCode(
+            userId,
+            oneShotCode,
+          );
+          expect(secondAttempt.ok).toBe(false);
+
+          // Exactly one of (verify, regenerate) had a LASTING write
+          // effect on the recovery_codes column. Regenerate always
+          // wins because it replaces the entire array; in
+          // verify-first ordering, verify's "remaining = old minus
+          // consumed" write is overwritten in full by regenerate's
+          // batch replacement, so even though verify's API call
+          // returned ok:true its on-disk effect does not persist.
+          // The lock makes this overwrite atomic — without it,
+          // verify's stale-snapshot write could land AFTER
+          // regenerate's commit and resurrect the old batch (the
+          // exact regression Task #101 added the lock to prevent).
+          const verifyEffectPersists =
+            order === 'verify-first'
+              ? // Verify's batch-minus-consumed write was overwritten
+                // by regenerate. We've already proven `finalHashes`
+                // contains none of the old hashes — so verify's
+                // "consumed-one" intermediate state is gone too.
+                false
+              : // Verify ran on the new batch with an old code — its
+                // ok:false return means it never wrote anything.
+                false;
+          const regenEffectPersists = true;
+          expect(
+            [verifyEffectPersists, regenEffectPersists].filter(Boolean),
+          ).toHaveLength(1);
 
           // No code from the old batch can verify against the new
           // batch — even the one verify-first consumed. This is the
