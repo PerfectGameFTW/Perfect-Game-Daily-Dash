@@ -33,7 +33,7 @@ export const pool = new Pool({
 // Log loudly for ops visibility but stay alive; if the underlying DB is
 // truly gone, individual route handlers will surface that as 5xx and
 // the orchestrator's healthcheck can decide to recycle us.
-pool.on('error', (err) => {
+pool.on('error', (err: Error) => {
   logger.error('db.pool.idle_client_error', errorContext(err));
 });
 

@@ -98,11 +98,55 @@ async function fatalShutdown(label: string, err: unknown): Promise<void> {
   }
 }
 
+// Narrow filter for a known-benign driver glitch.
+//
+// `@neondatabase/serverless` historically tried to overwrite the
+// `.message` property on a WebSocket `ErrorEvent` while reporting a
+// connect-timeout / connection-error. On modern Node runtimes that
+// property is a getter-only field, so the assignment throws
+// synchronously inside the WS error handler and surfaces here as an
+// uncaughtException — even though the underlying transport error
+// itself is recoverable (the pool would have discarded the broken
+// client and handed out a fresh one on the next acquire).
+//
+// We've upgraded the driver to a version that no longer does this,
+// but we keep this filter as defense-in-depth so that any future
+// regression of the same shape (a third-party library mutating a
+// read-only property on a DOM-like Event during a transient network
+// blip) cannot tear down the entire process and trigger the cascade
+// that brought the deployment into a crash loop. The same filter is
+// already used in `scripts/verify-mcp-hardening.ts` for the same
+// reason.
+function isBenignReadOnlyMessageError(err: unknown): boolean {
+  // Require ALL of: the canonical TypeError shape, the exact "Cannot set
+  // property message" wording, AND a stack frame attributing it to the
+  // Neon driver / pg connection callback. Any one of those alone is too
+  // loose: a generic TypeError in application code could share the same
+  // message text and would then be silently swallowed, masking real bugs.
+  if (!(err instanceof TypeError)) return false;
+  const msg = err.message ?? '';
+  if (!msg.includes('Cannot set property message')) return false;
+  const stack = err.stack ?? '';
+  return (
+    stack.includes('@neondatabase/serverless') ||
+    stack.includes('_connectionCallback') ||
+    stack.includes('connectionCallback')
+  );
+}
+
 process.on('uncaughtException', (err) => {
+  if (isBenignReadOnlyMessageError(err)) {
+    logger.warn('uncaughtException.ignored_ws_driver_glitch', errorContext(err));
+    return;
+  }
   void fatalShutdown('uncaughtException', err);
 });
 
 process.on('unhandledRejection', (reason) => {
+  if (isBenignReadOnlyMessageError(reason)) {
+    logger.warn('unhandledRejection.ignored_ws_driver_glitch', errorContext(reason));
+    return;
+  }
   void fatalShutdown('unhandledRejection', reason);
 });
 
