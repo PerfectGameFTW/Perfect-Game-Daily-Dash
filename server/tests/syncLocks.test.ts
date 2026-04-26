@@ -244,4 +244,133 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
       expect(stored[0]?.pagesUsed).toBe(5);
     });
   });
+
+  // No-refund-on-failure contract (Task #120). The production loops
+  // (e.g. `syncGiftCardsHistoricalBackfill` in `server/services/
+  // syncService.ts`) call `consumeDailyBudget(1)` BEFORE issuing a
+  // Square API request, then process the page. If the per-page work
+  // throws after the consume — Square API error, DB hiccup, anything
+  // — the consumed budget stays consumed. The contract is deliberate:
+  // Square has already been called (or attempted), and a "refund on
+  // failure" semantics would let a hostile / buggy retry loop crash
+  // partway through page processing many times in a row, exhausting
+  // the daily cap many multiples over while appearing never to spend
+  // it. These tests pin that invariant down so a future "helpful"
+  // rollback refactor of `consumeDailyBudget` cannot quietly weaken
+  // the abuse guarantee from Task #86.
+  describe('no-refund-on-failure contract (Task #120)', () => {
+    it('a synthetic mid-page failure after consumeDailyBudget leaves the counter advanced', async () => {
+      const day = testDay();
+      // Mirror the production sequence: row exists at 5 pages used,
+      // a sync loop reserves 3 more, then a Square fetch throws
+      // before any "rollback" path could plausibly run.
+      await db.insert(syncDailyBudget).values({
+        day,
+        pagesUsed: 5,
+      });
+
+      // The `try` block emulates one iteration of the production
+      // backfill loop. The `expect.rejects` wrapper proves the
+      // failure surfaces — important so a future refactor can't
+      // silently swallow the throw and make this test vacuous.
+      await expect(
+        (async () => {
+          const grant = await consumeDailyBudget(3, day);
+          expect(grant.ok).toBe(true);
+          expect(grant.used).toBe(8);
+          // Synthetic stand-in for a Square 5xx / network blip
+          // happening AFTER the budget reservation but BEFORE
+          // pages are actually processed. The whole point of the
+          // contract is that this is the worst case to defend
+          // against — the retrying caller looks legitimate but
+          // would otherwise re-spend budget on every crash.
+          throw new Error('synthetic mid-page fetch failure');
+        })(),
+      ).rejects.toThrow(/synthetic mid-page fetch failure/);
+
+      // Counter MUST still be at 5 + 3 = 8. If a future refactor
+      // adds a try/catch in consumeDailyBudget that decrements on
+      // error, or wraps the whole thing in a transaction that
+      // rolls back, this assertion fails immediately.
+      const stored = await db
+        .select()
+        .from(syncDailyBudget)
+        .where(eq(syncDailyBudget.day, day))
+        .limit(1);
+      expect(stored[0]?.pagesUsed).toBe(8);
+    });
+
+    it('repeated consume-then-throw cycles accumulate spend so a crash-loop cannot reset the cap', async () => {
+      // The abuse scenario the contract exists to defend against:
+      // an attacker (or a buggy retry handler) triggers many
+      // backfill attempts that each consume 1 page and then crash.
+      // If consumed budget were refunded on failure, the cap would
+      // never advance and the attacker could call Square forever.
+      // Pin down that EVERY consume sticks, even when the caller
+      // throws on every iteration.
+      const day = testDay();
+      await db.insert(syncDailyBudget).values({
+        day,
+        pagesUsed: 0,
+      });
+
+      const ATTEMPTS = 5;
+      for (let i = 0; i < ATTEMPTS; i++) {
+        await expect(
+          (async () => {
+            const grant = await consumeDailyBudget(1, day);
+            expect(grant.ok).toBe(true);
+            // Caller does some work, then dies. Production
+            // analogues include `throw fetchErr` after
+            // `logIfSquare429(...)` in the historical gift-card
+            // loop and any uncaught DB error inside the per-page
+            // body of the orders/payments backfill.
+            throw new Error(`crash on iteration ${i}`);
+          })(),
+        ).rejects.toThrow(/crash on iteration/);
+      }
+
+      // After ATTEMPTS crash-loops, the counter must reflect every
+      // consume — proving the cap moves toward exhaustion exactly
+      // as fast as the underlying Square traffic does, regardless
+      // of whether the caller succeeds or fails on each page.
+      const stored = await db
+        .select()
+        .from(syncDailyBudget)
+        .where(eq(syncDailyBudget.day, day))
+        .limit(1);
+      expect(stored[0]?.pagesUsed).toBe(ATTEMPTS);
+    });
+
+    it('a denial (ok:false) followed by a thrown error still leaves the counter unchanged', async () => {
+      // Companion to the above: a request that's REJECTED at the
+      // cap MUST NOT be charged even if the caller subsequently
+      // throws while handling the rejection. The denial path was
+      // already covered by the cap-rejection test, but pairing it
+      // with a post-rejection throw guards against a future
+      // refactor that uses a single try/finally to "best effort"
+      // commit budget regardless of the SQL outcome.
+      const day = testDay();
+      await db.insert(syncDailyBudget).values({
+        day,
+        pagesUsed: MAX_SQUARE_PAGES_PER_DAY,
+      });
+
+      await expect(
+        (async () => {
+          const grant = await consumeDailyBudget(1, day);
+          expect(grant.ok).toBe(false);
+          expect(grant.used).toBe(MAX_SQUARE_PAGES_PER_DAY);
+          throw new Error('synthetic post-rejection failure');
+        })(),
+      ).rejects.toThrow(/synthetic post-rejection failure/);
+
+      const stored = await db
+        .select()
+        .from(syncDailyBudget)
+        .where(eq(syncDailyBudget.day, day))
+        .limit(1);
+      expect(stored[0]?.pagesUsed).toBe(MAX_SQUARE_PAGES_PER_DAY);
+    });
+  });
 });

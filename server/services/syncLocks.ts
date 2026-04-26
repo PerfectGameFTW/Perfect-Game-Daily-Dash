@@ -256,6 +256,18 @@ export async function getDailyBudgetStatus(): Promise<{
  * `dayOverride` exists solely so the test suite can exercise the
  * conditional-UPDATE guard without mutating today's real budget row in
  * a shared dev DB. Production callers always omit it.
+ *
+ * No-refund-on-failure contract (Task #120):
+ *   Consumed budget is intentionally NOT refunded when the caller
+ *   throws after a successful `consumeDailyBudget(...)` call. Square
+ *   has already been called (or, at minimum, an attempt was made),
+ *   so refunding would let a hostile / buggy retry loop crash
+ *   partway through page processing many times in a row and exhaust
+ *   the daily cap without ever appearing to spend it. The pessimistic
+ *   "consume-up-front, never refund" semantics are a deliberate
+ *   security property — see `server/tests/syncLocks.test.ts` for the
+ *   regression guard that pins this invariant down so a future
+ *   "helpful" rollback refactor can't quietly weaken it.
  */
 export async function consumeDailyBudget(
   pages: number,
