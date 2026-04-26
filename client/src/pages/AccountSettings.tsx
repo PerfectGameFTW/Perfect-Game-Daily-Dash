@@ -21,30 +21,17 @@ import {
 } from '@/components/ui/card';
 
 /**
- * Self-service account settings page (Task #179).
- *
- * Currently hosts a single "Change password" form that posts to
- * POST /api/auth/me/password (Task #171). The endpoint:
- *   1. Verifies the current password before accepting a new one (so a
- *      stolen session cannot silently rotate credentials).
- *   2. Revokes every OTHER active session for this account on success
- *      while re-persisting THIS request's session — the device that
- *      initiated the change stays signed in, every other tab/device
- *      gets booted to /login on its next API call (the global
- *      navigation guard in App.tsx redirects on a null /api/auth/me
- *      response).
- *
- * The form mirrors the server's strong-password policy so users get
- * immediate feedback before submitting; the server is still the
- * authority and any policy update there will be reflected in the
- * 400 response we surface inline.
+ * Self-service account settings page (Task #179). Currently hosts the
+ * "Change password" form, which posts to POST /api/auth/me/password
+ * (Task #171). The endpoint verifies the current password, then revokes
+ * every OTHER active session while re-persisting this one — other
+ * tabs/devices get redirected to /login on their next /api/auth/me
+ * poll via the global navigation guard in App.tsx.
  */
 
-// Mirror of shared/schema.ts strongPasswordSchema. Duplicated rather
-// than imported from @shared so the bundle stays lean and the client
-// doesn't pull the whole drizzle/zod schema graph; if the policy ever
-// drifts the server will reject the value with a 400 we already
-// surface inline.
+// Mirror of shared/schema.ts strongPasswordSchema. Duplicated for
+// bundle-size reasons; the server is authoritative and any policy
+// drift surfaces as a 400 we map inline.
 const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, 'Please enter your current password'),
@@ -61,10 +48,8 @@ const changePasswordSchema = z
     path: ['confirmPassword'],
   })
   .refine((data) => data.newPassword !== data.currentPassword, {
-    // Cheap client-side sanity check. The server doesn't currently
-    // forbid same-value rotations explicitly but a UX where the
-    // "change" silently re-uses the same password (and revokes every
-    // other device anyway) is confusing — fail fast here.
+    // Block no-op rotations — they'd revoke every other device for
+    // a password that didn't actually change.
     message: 'New password must be different from your current password',
     path: ['newPassword'],
   });
@@ -88,8 +73,7 @@ export default function AccountSettings() {
 
   const changePassword = useMutation({
     mutationFn: async (values: FormValues) => {
-      // The endpoint accepts ONLY the two server-validated fields; the
-      // confirmPassword is a client-side guard.
+      // confirmPassword is a client-side guard only; don't send it.
       return await apiRequest('POST', '/api/auth/me/password', {
         body: JSON.stringify({
           currentPassword: values.currentPassword,
@@ -107,42 +91,33 @@ export default function AccountSettings() {
       setServerError(null);
     },
     onError: (error: unknown) => {
-      // apiRequest throws `Error('${status}: ${body}')`. Pull the body
-      // off so we can pin the wrong-current-password case to the right
-      // field instead of dumping a generic banner.
+      // apiRequest throws `Error('${status}: ${body}')`. Parse status
+      // and body so we can map 401/400 to the right field instead of
+      // showing a generic banner.
       const raw = error instanceof Error ? error.message : String(error);
       const status = raw.match(/^(\d{3}):/)?.[1];
-      // Body after the "<status>: " prefix may be JSON or plain text.
       const bodyText = raw.replace(/^\d{3}:\s*/, '');
       let serverMsg = bodyText;
       try {
         const parsed = JSON.parse(bodyText) as { error?: string; message?: string };
         serverMsg = parsed.error || parsed.message || bodyText;
       } catch {
-        // Not JSON — keep the raw text.
+        // Plain-text body — keep it.
       }
 
       if (status === '401') {
-        // Wrong current password (or session expired). The endpoint
-        // returns 401 in both cases; if the user got logged out the
-        // global guard will redirect them on their next /api/auth/me
-        // poll, so we just surface the message inline here.
         form.setError('currentPassword', {
           type: 'server',
           message: serverMsg || 'Current password is incorrect',
         });
         setServerError(null);
       } else if (status === '400') {
-        // Server-side strong-password rejection. Show against the new
-        // password field so the user can correct it without hunting.
         form.setError('newPassword', {
           type: 'server',
           message: serverMsg || 'That password does not meet our policy.',
         });
         setServerError(null);
       } else if (status === '429') {
-        // Hit the auth rate limiter. Distinct banner so the user knows
-        // to wait rather than thinking their input was bad.
         setServerError(
           'Too many password-change attempts. Please wait a few minutes and try again.',
         );
