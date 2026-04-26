@@ -31,12 +31,12 @@ import {
 } from '../services/syncLocks';
 import { syncService } from '../services/syncService';
 
-// Synthetic day key used for budget tests. Using a fake far-future
-// date keeps the test from ever colliding with the real current-day
-// budget row in the shared dev DB, addressing the architect's note
-// about test isolation. The implementation under test treats `day`
-// as an opaque text key, so any unique string works.
-const SYNTHETIC_TEST_DAY = '9999-12-31';
+// Synthetic day key used for budget tests. Must NOT start with '9999-'
+// because syncDailyBudgetTrim.test.ts uses '9999-' as its cleanup
+// prefix and would delete this row when both suites run in parallel.
+// The implementation under test treats `day` as an opaque text key,
+// so any unique string works — '8888-12-31' is reserved for this file.
+const SYNTHETIC_TEST_DAY = '8888-12-31';
 
 function testDay(): string {
   return SYNTHETIC_TEST_DAY;
