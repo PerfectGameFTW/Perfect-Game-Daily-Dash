@@ -168,6 +168,86 @@ function utcDayKey(d: Date = new Date()): string {
 }
 
 /**
+ * How many days of `sync_daily_budget` history to keep before the
+ * trim job (Task #119) deletes them. The table grows by one row per
+ * UTC day, so without trimming it would accumulate forever — small
+ * in absolute terms, but enough to hide the rolling window an
+ * operator scanning the table cares about.
+ *
+ * 90 days is the smallest window that comfortably covers a quarterly
+ * audit lookback while keeping the table small enough to scan by eye.
+ */
+export const SYNC_DAILY_BUDGET_RETENTION_DAYS = 90;
+
+/**
+ * Delete `sync_daily_budget` rows older than `retentionDays` UTC days
+ * ago. Returns the count actually deleted plus the cutoff key used,
+ * so the scheduler log can prove what was pruned.
+ *
+ * Concurrency: the underlying DELETE only ever targets rows whose
+ * `day` is strictly less than today-minus-N — i.e. an immutable,
+ * fixed set of expired keys. Two instances racing this query land on
+ * the same target set, so the worst case is a wasted round-trip; no
+ * advisory lock is needed. (Documented in the task plan as
+ * "DELETE-only-old semantics".)
+ */
+export async function trimDailyBudget(
+  retentionDays: number = SYNC_DAILY_BUDGET_RETENTION_DAYS,
+): Promise<{ deleted: number; cutoff: string }> {
+  // Defensive lower bound: a caller passing 0 or a negative value
+  // would otherwise sweep today's live row out from under the
+  // budget enforcer mid-sync. Clamp to at least 1 day of retention
+  // so a misconfigured caller can never delete the row that
+  // `consumeDailyBudget` is reading right now.
+  const days = Math.max(1, Math.floor(retentionDays));
+  const cutoffDate = new Date();
+  cutoffDate.setUTCDate(cutoffDate.getUTCDate() - days);
+  const cutoff = utcDayKey(cutoffDate);
+
+  // `day` is stored as canonical YYYY-MM-DD text, so lex comparison
+  // is equivalent to date comparison and Postgres can use the PK
+  // index for the range scan.
+  const result = await db.execute(sql`
+    DELETE FROM sync_daily_budget
+    WHERE day < ${cutoff}
+  `);
+
+  // node-postgres exposes affected-row count on `rowCount`; drizzle
+  // surfaces the same field on the wrapped result. Default to 0 if
+  // the driver ever stops reporting it so the return shape stays
+  // stable.
+  const deleted =
+    typeof (result as { rowCount?: number | null }).rowCount === 'number'
+      ? ((result as { rowCount?: number | null }).rowCount as number)
+      : 0;
+  return { deleted, cutoff };
+}
+
+/**
+ * Snapshot of today's budget consumption for the admin Backfill
+ * Audit page widget (Task #119). Returns 0/cap if the day's row
+ * hasn't been created yet — that just means no backfill has spent
+ * any budget today, NOT that the budget is missing.
+ */
+export async function getDailyBudgetStatus(): Promise<{
+  day: string;
+  pagesUsed: number;
+  cap: number;
+}> {
+  const day = utcDayKey();
+  const rows = await db
+    .select()
+    .from(syncDailyBudget)
+    .where(eq(syncDailyBudget.day, day))
+    .limit(1);
+  return {
+    day,
+    pagesUsed: rows[0]?.pagesUsed ?? 0,
+    cap: MAX_SQUARE_PAGES_PER_DAY,
+  };
+}
+
+/**
  * Atomically reserve `pages` worth of Square page-fetch budget for the
  * current UTC day. Returns `{ ok: false }` if granting the request would
  * push us over `MAX_SQUARE_PAGES_PER_DAY` for the day; the counter is

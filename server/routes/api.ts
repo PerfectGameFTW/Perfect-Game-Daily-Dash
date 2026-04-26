@@ -11,7 +11,12 @@ import { dashboardService } from '../services/dashboardService';
 import { pgStorage } from '../pgStorage';
 import { giftCardService } from '../services/giftCardService';
 import { syncService } from '../services/syncService';
-import { tryAcquireSyncLock, recordAuditStart, recordAuditFinish } from '../services/syncLocks';
+import {
+  tryAcquireSyncLock,
+  recordAuditStart,
+  recordAuditFinish,
+  getDailyBudgetStatus,
+} from '../services/syncLocks';
 import { paymentService } from '../services/paymentService';
 import { DateRange, dateRangeSchema } from '../../shared/schema';
 import { broadcast } from '../ws';
@@ -1023,6 +1028,28 @@ export function createApiRouter(): Router {
           'Content-Disposition, X-Sync-Audit-Row-Count, X-Sync-Audit-Truncated',
         );
         res.send(csv);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // Admin: today's Square page-budget snapshot for the Backfill Audit
+  // page widget (Task #119). Returns the UTC day key, how many pages
+  // backfills have spent against today's row, and the hard cap. The
+  // widget exists so an operator can see the rolling window without
+  // dropping into psql.
+  router.get(
+    '/admin/sync-budget',
+    requireAdmin,
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const status = await getDailyBudgetStatus();
+        // Data, not a webpage — and the value moves every time a
+        // backfill consumes a page, so a cached response would be
+        // immediately stale. no-store keeps the widget honest.
+        res.setHeader('Cache-Control', 'no-store');
+        res.json(status);
       } catch (err) {
         next(err);
       }

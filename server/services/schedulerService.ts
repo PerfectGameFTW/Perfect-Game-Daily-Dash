@@ -18,6 +18,7 @@
 
 import cron from 'node-cron';
 import { syncService } from './syncService';
+import { trimDailyBudget } from './syncLocks';
 import { backfillGiftCardActivationAmounts } from './enhancedGiftCardFix';
 import { giftCardService } from './giftCardService';
 import { payoutService } from './payoutService';
@@ -508,6 +509,18 @@ export async function runNightlySync(): Promise<void> {
     logger.info('scheduler.nightly.intercard_done', { label });
   } catch (err) {
     logger.error('scheduler.nightly.intercard_failed', { ...errorContext(err), label });
+  }
+
+  // Prune `sync_daily_budget` rows older than the retention window
+  // (Task #119). Piggy-backing on the nightly job avoids a separate
+  // cron entry; the trim is idempotent and uses DELETE-only-old
+  // semantics so multiple instances racing this query is safe.
+  try {
+    logger.info('scheduler.nightly.budgetTrim_start', { label });
+    const { deleted, cutoff } = await trimDailyBudget();
+    logger.info('scheduler.nightly.budgetTrim_done', { label, deleted, cutoff });
+  } catch (err) {
+    logger.error('scheduler.nightly.budgetTrim_failed', { ...errorContext(err), label });
   }
 
   logger.info('scheduler.nightly.complete', { label });

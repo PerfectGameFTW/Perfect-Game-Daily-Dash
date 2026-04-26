@@ -13,7 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Download, History, ChevronDown, ChevronRight, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { ArrowLeft, Download, History, ChevronDown, ChevronRight, AlertCircle, CheckCircle, Clock, Gauge } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface SyncAuditEntry {
@@ -38,6 +39,12 @@ interface SyncAuditPage {
   limit: number;
   offset: number;
   syncTypes: string[];
+}
+
+interface SyncBudgetStatus {
+  day: string;
+  pagesUsed: number;
+  cap: number;
 }
 
 const PAGE_SIZE = 25;
@@ -107,6 +114,25 @@ export default function SyncAudit() {
       }
       return res.json();
     },
+  });
+
+  // Today's Square page-budget snapshot for the widget. Refreshed
+  // every 30s so an operator watching a backfill drain the cap sees
+  // the counter move without having to reload the page.
+  const { data: budget } = useQuery<SyncBudgetStatus>({
+    queryKey: ['/api/admin/sync-budget'],
+    queryFn: async () => {
+      const res = await fetch('/api/admin/sync-budget', {
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (!res.ok) {
+        const text = (await res.text()) || res.statusText;
+        throw new Error(`${res.status}: ${text}`);
+      }
+      return res.json();
+    },
+    refetchInterval: 30_000,
   });
 
   if (authLoading) {
@@ -182,6 +208,47 @@ export default function SyncAudit() {
             Back to Admin
           </button>
         </div>
+
+        {budget && (
+          <Card className="mb-6" data-testid="card-sync-budget">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Gauge className="h-4 w-4 text-purple-600" />
+                  Today's Square page budget
+                </CardTitle>
+                <span className="text-xs text-muted-foreground">
+                  UTC {budget.day}
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <div className="flex items-baseline justify-between">
+                  <p className="text-sm">
+                    <span className="font-mono text-base font-semibold" data-testid="text-budget-used">
+                      {budget.pagesUsed.toLocaleString()}
+                    </span>
+                    <span className="text-muted-foreground"> / </span>
+                    <span className="font-mono" data-testid="text-budget-cap">
+                      {budget.cap.toLocaleString()}
+                    </span>
+                    <span className="text-muted-foreground"> pages used</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {budget.cap > 0
+                      ? `${Math.min(100, Math.round((budget.pagesUsed / budget.cap) * 100))}%`
+                      : '—'}
+                  </p>
+                </div>
+                <Progress
+                  value={budget.cap > 0 ? Math.min(100, (budget.pagesUsed / budget.cap) * 100) : 0}
+                  className="h-2"
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="mb-6">
           <CardHeader>
