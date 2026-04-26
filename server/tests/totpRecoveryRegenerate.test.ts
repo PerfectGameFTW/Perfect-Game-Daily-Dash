@@ -13,6 +13,10 @@ import { totpService } from '../services/totpService';
 import { createAuthRouter } from '../routes/auth';
 import { decryptTotpSecret } from '../services/totpCrypto';
 import { verifyPassword } from '../services/passwordHash';
+import {
+  totpRecoveryRegenerateAccountLimiter,
+  totpRecoveryRegenerateIpLimiter,
+} from '../middleware/rateLimiter';
 
 let __ip = 0;
 function uniqueIp(): string {
@@ -30,10 +34,11 @@ async function jsonReq(
   method: 'GET' | 'POST',
   payload: unknown,
   cookie?: string,
+  ipOverride?: string,
 ): Promise<JsonResp> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Forwarded-For': uniqueIp(),
+    'X-Forwarded-For': ipOverride ?? uniqueIp(),
   };
   if (cookie) headers['Cookie'] = cookie;
   const r = await fetch(url, {
@@ -108,10 +113,34 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     secretBase32 = enrollment.secret;
     await db
       .update(users)
-      .set({ totpEnabled: true, totpRecoveryCodes: ['$argon2id$placeholder'] })
+      .set({
+        totpEnabled: true,
+        totpRecoveryCodes: ['$argon2id$placeholder'],
+        // Clear any per-account lockout state left over from a previous
+        // test that hit loginUser with a wrong password — the throttle
+        // tests below intentionally exceed the 5-strike lockout
+        // threshold to drain the rate-limit bucket.
+        failedLoginCount: 0,
+        lockedUntil: null,
+      })
       .where(eq(users.id, userId));
     authService.invalidateUserCache(userId);
+    // Reset the regenerate-throttle bucket for this user so a previous
+    // test that drained it doesn't leave the next test pre-throttled.
+    // Per-IP buckets are naturally isolated by uniqueIp() in jsonReq.
+    totpRecoveryRegenerateAccountLimiter.resetKey(`acct:${userId}`);
   });
+
+  // Drains the per-account password-lockout state so a tight loop of
+  // wrong-password requests can exercise the rate limiter without
+  // tripping the unrelated lockout-after-5-failures defense.
+  async function resetAccountLockout(): Promise<void> {
+    await db
+      .update(users)
+      .set({ failedLoginCount: 0, lockedUntil: null })
+      .where(eq(users.id, userId));
+    authService.invalidateUserCache(userId);
+  }
 
   async function login(): Promise<string> {
     const r1 = await jsonReq(`${baseUrl}/api/auth/login`, 'POST', {
@@ -310,6 +339,148 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     // the second old code must NEVER work after this point.
     expect(typeof verifyOutcome.ok === 'boolean').toBe(true);
     expect((await totpService.verifyLoginCode(userId, oldBatch[1])).ok).toBe(false);
+  });
+
+  it('throttles with 429 after 10 failed attempts from the same IP (Task #129)', async () => {
+    const cookie = await login();
+    const ATTACKER_IP = '198.51.100.7';
+    // Reset both buckets so prior tests / unique-IP traffic in this
+    // file don't poison the per-account counter.
+    totpRecoveryRegenerateIpLimiter.resetKey(`ip:${ATTACKER_IP}`);
+    totpRecoveryRegenerateAccountLimiter.resetKey(`acct:${userId}`);
+
+    // 10 failed attempts (wrong password) all return 401 — the budget
+    // for this IP is exactly 10, matching authLimiter / totpVerifyLimiter.
+    // We reset the per-account password-lockout state between attempts
+    // so the unrelated lockout-after-5-failures defense doesn't flip
+    // the response code from 401 to a different failure shape mid-loop.
+    for (let i = 0; i < 10; i++) {
+      await resetAccountLockout();
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
+        'POST',
+        { password: 'definitely-not-the-password', code: currentCode(secretBase32) },
+        cookie,
+        ATTACKER_IP,
+      );
+      expect(r.status).toBe(401);
+    }
+
+    // 11th attempt from the same IP is throttled — the limiter runs
+    // before the route handler, so even a correct password+code combo
+    // would be blocked here.
+    await resetAccountLockout();
+    const blocked = await jsonReq(
+      `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
+      'POST',
+      { password: PWD, code: currentCode(secretBase32) },
+      cookie,
+      ATTACKER_IP,
+    );
+    expect(blocked.status).toBe(429);
+
+    // Confirm the DB wasn't touched while throttled.
+    const after = await db.select().from(users).where(eq(users.id, userId));
+    expect(after[0]?.totpRecoveryCodes).toEqual(['$argon2id$placeholder']);
+  });
+
+  it('throttle bucket clears after a successful regenerate (Task #129)', async () => {
+    const cookie = await login();
+    const ATTACKER_IP = '198.51.100.42';
+    // Start from a clean bucket so this test is independent of others.
+    totpRecoveryRegenerateIpLimiter.resetKey(`ip:${ATTACKER_IP}`);
+    totpRecoveryRegenerateAccountLimiter.resetKey(`acct:${userId}`);
+
+    // Burn 9 of the 10 attempts on bad passwords.
+    for (let i = 0; i < 9; i++) {
+      await resetAccountLockout();
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
+        'POST',
+        { password: 'definitely-not-the-password', code: currentCode(secretBase32) },
+        cookie,
+        ATTACKER_IP,
+      );
+      expect(r.status).toBe(401);
+    }
+
+    // One successful regenerate. The route calls resetKey() on success,
+    // which fully clears both the per-IP and per-account buckets.
+    await resetAccountLockout();
+    const ok = await jsonReq(
+      `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
+      'POST',
+      { password: PWD, code: currentCode(secretBase32) },
+      cookie,
+      ATTACKER_IP,
+    );
+    expect(ok.status).toBe(200);
+    expect(ok.body.success).toBe(true);
+
+    // After the success, we should be able to make a fresh batch of
+    // 10 failed attempts without ever hitting 429 — proof the bucket
+    // was cleared, not just decremented by one.
+    for (let i = 0; i < 10; i++) {
+      await resetAccountLockout();
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
+        'POST',
+        { password: 'definitely-not-the-password', code: currentCode(secretBase32) },
+        cookie,
+        ATTACKER_IP,
+      );
+      expect(r.status).toBe(401);
+    }
+
+    // And the 11th still throttles — the limiter is still functional,
+    // it just got reset by the prior success.
+    await resetAccountLockout();
+    const blocked = await jsonReq(
+      `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
+      'POST',
+      { password: PWD, code: currentCode(secretBase32) },
+      cookie,
+      ATTACKER_IP,
+    );
+    expect(blocked.status).toBe(429);
+  });
+
+  it('throttles per-account even when failed attempts come from many IPs (Task #129)', async () => {
+    const cookie = await login();
+    // Reset the per-account bucket so prior tests don't interfere.
+    totpRecoveryRegenerateAccountLimiter.resetKey(`acct:${userId}`);
+
+    // 10 failed attempts spread across 10 different IPs. The per-IP
+    // limiter never trips (each IP is at 1/10), but the per-account
+    // limiter sees all 10 hits against the same userId.
+    for (let i = 0; i < 10; i++) {
+      await resetAccountLockout();
+      const ip = `203.0.113.${i + 1}`;
+      totpRecoveryRegenerateIpLimiter.resetKey(`ip:${ip}`);
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
+        'POST',
+        { password: 'definitely-not-the-password', code: currentCode(secretBase32) },
+        cookie,
+        ip,
+      );
+      expect(r.status).toBe(401);
+    }
+
+    // 11th attempt from yet another fresh IP is blocked by the
+    // per-account limiter even though that IP has never hit this
+    // endpoint before.
+    await resetAccountLockout();
+    const freshIp = '203.0.113.250';
+    totpRecoveryRegenerateIpLimiter.resetKey(`ip:${freshIp}`);
+    const blocked = await jsonReq(
+      `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
+      'POST',
+      { password: PWD, code: currentCode(secretBase32) },
+      cookie,
+      freshIp,
+    );
+    expect(blocked.status).toBe(429);
   });
 
   it('sanity: secret and password column not exposed in the response', async () => {

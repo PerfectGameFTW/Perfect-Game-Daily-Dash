@@ -42,6 +42,8 @@ import {
   emailVerificationConfirmLimiter,
   emailVerificationRequestLimiter,
   passwordResetRequestLimiter,
+  totpRecoveryRegenerateAccountLimiter,
+  totpRecoveryRegenerateIpLimiter,
   totpVerifyLimiter,
 } from '../middleware/rateLimiter';
 import { SESSION_COOKIE_NAME } from '../sessionConfig';
@@ -439,6 +441,13 @@ export function createAuthRouter(): Router {
   router.post(
     '/totp/recovery-codes/regenerate',
     requireAuth,
+    // Per-IP and per-account throttling (Task #129). Mirrors the
+    // login/TOTP-verify shape (10 attempts / 15 min). Both buckets
+    // skip successful requests; on confirmed success we additionally
+    // call resetKey() so a legitimate rotation fully clears the bucket
+    // for both keys.
+    totpRecoveryRegenerateIpLimiter,
+    totpRecoveryRegenerateAccountLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const parsed = regenerateRecoveryCodesSchema.safeParse(req.body);
@@ -459,6 +468,18 @@ export function createAuthRouter(): Router {
           throw new ValidationError(
             'That authenticator code did not match. Make sure your device clock is correct and try the next code.',
           );
+        }
+        // Clear both throttle buckets so a successful rotation fully
+        // resets the next-15-minute window for this IP and account.
+        // skipSuccessfulRequests already prevents this hit from being
+        // counted; resetKey additionally undoes any prior failures.
+        try {
+          totpRecoveryRegenerateIpLimiter.resetKey(`ip:${req.ip ?? 'unknown'}`);
+          totpRecoveryRegenerateAccountLimiter.resetKey(`acct:${req.user!.id}`);
+        } catch (resetErr) {
+          // Reset is best-effort; never fail a successful rotation
+          // because the limiter store hiccupped.
+          logger.warn('auth.totpRegenerate.reset_key_failed', errorContext(resetErr));
         }
         res.json({ success: true, recoveryCodes: codes });
       } catch (error) {

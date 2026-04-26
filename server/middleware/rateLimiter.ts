@@ -1,3 +1,4 @@
+import type { Request } from 'express';
 import rateLimit from 'express-rate-limit';
 
 export const apiLimiter = rateLimit({
@@ -42,6 +43,52 @@ export const totpVerifyLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many verification attempts, please try again later.' },
+});
+
+// Recovery-code regeneration limiters (Task #129). The
+// /api/auth/totp/recovery-codes/regenerate endpoint requires both a
+// current password AND a live authenticator code, but without
+// throttling an attacker who has a stolen authenticated session can
+// brute-force the password gate at full speed. We mirror the
+// login/TOTP-verify shape (10 attempts per 15 min) and apply two
+// independent buckets:
+//   - per-IP: stops one host from hammering many accounts
+//   - per-account: stops a botnet from spreading attempts across IPs
+//     against a single victim account
+// Both use skipSuccessfulRequests: true so a legitimate rotation
+// doesn't count toward the bucket. The route additionally calls
+// resetKey() on success so the next 15-minute window starts fresh
+// after every confirmed-good rotation.
+export const totpRecoveryRegenerateIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => `ip:${req.ip ?? 'unknown'}`,
+  message: {
+    error: 'Too many recovery code regeneration attempts, please try again later.',
+  },
+});
+
+export const totpRecoveryRegenerateAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  // requireAuth runs before this middleware on the regenerate route,
+  // so req.user is set (typed via the global Express.Request and
+  // express-session augmentations in server/middleware/auth.ts). The
+  // IP fallback only fires for the impossible case where it isn't,
+  // and prevents this middleware from throwing.
+  keyGenerator: (req: Request) => {
+    const userId = req.user?.id ?? req.session?.userId;
+    return userId != null ? `acct:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+  },
+  message: {
+    error: 'Too many recovery code regeneration attempts for this account, please try again later.',
+  },
 });
 
 // Password-reset request limiter. Tighter than authLimiter because each
