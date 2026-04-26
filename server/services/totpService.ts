@@ -27,10 +27,15 @@ import { Secret, TOTP } from 'otpauth';
 import { randomBytes } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
-import { users, type User } from '../../shared/schema';
+import {
+  users,
+  type User,
+  type InsertSecurityAuditLog,
+} from '../../shared/schema';
 import { invalidateUserCache } from './authService';
 import { encryptTotpSecret, decryptTotpSecret } from './totpCrypto';
-import { logger } from '../logger';
+import { logger, errorContext } from '../logger';
+import { pgStorage } from '../pgStorage';
 // Recovery codes use the same hashing primitive as user passwords so
 // the codebase has a single hash policy. The verifyPassword helper
 // auto-dispatches between argon2id and any legacy bcrypt-hashed code,
@@ -120,6 +125,29 @@ export type TotpLoginResult =
 
 export class TotpService {
   /**
+   * Persist a TOTP audit event to the security_audit_log table
+   * (Task #131). Best-effort and fire-and-forget — must NEVER block
+   * the auth flow or regress login latency, so callers do not await
+   * this. A failure here is logged via `auth.totp.audit_persist_failed`
+   * but never propagates to the caller (the canonical structured stdout
+   * line has already been emitted at the call site, so no audit signal
+   * is lost on a transient DB hiccup).
+   *
+   * For self-service TOTP events the user is BOTH the actor and the
+   * target — the row carries the same user id in both columns so a
+   * SOC reviewer can filter by either dimension and surface every
+   * event involving a given account in one query.
+   */
+  private persistAuditRow(entry: InsertSecurityAuditLog): void {
+    pgStorage.recordSecurityAudit(entry).catch((err) => {
+      logger.error('auth.totp.audit_persist_failed', {
+        action: entry.action,
+        ...errorContext(err),
+      });
+    });
+  }
+
+  /**
    * Begin enrollment: generates a fresh secret, stores its encrypted
    * envelope on the user row (with totpEnabled left false), invalidates
    * any prior recovery codes, and returns the otpauth URL for QR
@@ -152,6 +180,13 @@ export class TotpService {
       userId: user.id,
       requestId: ctx.requestId,
       ip: ctx.ip,
+    });
+    this.persistAuditRow({
+      actorUserId: user.id,
+      actorIp: ctx.ip ?? null,
+      action: 'totp.enrollment_started',
+      targetUserId: user.id,
+      metadata: { event: 'enrollment_started', requestId: ctx.requestId ?? null },
     });
     return {
       secret: secret.base32,
@@ -192,6 +227,16 @@ export class TotpService {
         requestId: ctx.requestId,
         ip: ctx.ip,
       });
+      this.persistAuditRow({
+        actorUserId: userId,
+        actorIp: ctx.ip ?? null,
+        action: 'totp.enrollment_verify_failed',
+        targetUserId: userId,
+        metadata: {
+          event: 'enrollment_verify_failed',
+          requestId: ctx.requestId ?? null,
+        },
+      });
       return null;
     }
 
@@ -216,6 +261,17 @@ export class TotpService {
       requestId: ctx.requestId,
       ip: ctx.ip,
       recoveryCodesRemaining: plaintextCodes.length,
+    });
+    this.persistAuditRow({
+      actorUserId: userId,
+      actorIp: ctx.ip ?? null,
+      action: 'totp.enrollment_verified',
+      targetUserId: userId,
+      metadata: {
+        event: 'enrollment_verified',
+        requestId: ctx.requestId ?? null,
+        recoveryCodesRemaining: plaintextCodes.length,
+      },
     });
     return plaintextCodes;
   }
@@ -251,6 +307,18 @@ export class TotpService {
         attemptCount: ctx.attemptCount,
         reason: 'not_enrolled',
       });
+      this.persistAuditRow({
+        actorUserId: userId,
+        actorIp: ctx.ip ?? null,
+        action: 'totp.login_failure',
+        targetUserId: userId,
+        metadata: {
+          event: 'totp_login_failure',
+          requestId: ctx.requestId ?? null,
+          attemptCount: ctx.attemptCount ?? null,
+          reason: 'not_enrolled',
+        },
+      });
       return { ok: false };
     }
 
@@ -277,6 +345,18 @@ export class TotpService {
           requestId: ctx.requestId,
           ip: ctx.ip,
           recoveryCodesRemaining: remainingBefore,
+        });
+        this.persistAuditRow({
+          actorUserId: userId,
+          actorIp: ctx.ip ?? null,
+          action: 'totp.login_success',
+          targetUserId: userId,
+          metadata: {
+            event: 'totp_login_success',
+            factor: 'totp',
+            requestId: ctx.requestId ?? null,
+            recoveryCodesRemaining: remainingBefore,
+          },
         });
         return { ok: true, factor: 'totp', recoveryCodesRemaining: remainingBefore };
       }
@@ -327,6 +407,18 @@ export class TotpService {
         ip: ctx.ip,
         recoveryCodesRemaining: result.remaining,
       });
+      this.persistAuditRow({
+        actorUserId: userId,
+        actorIp: ctx.ip ?? null,
+        action: 'totp.recovery_code_used',
+        targetUserId: userId,
+        metadata: {
+          event: 'recovery_code_used',
+          factor: 'recovery',
+          requestId: ctx.requestId ?? null,
+          recoveryCodesRemaining: result.remaining,
+        },
+      });
       return { ok: true, factor: 'recovery', recoveryCodesRemaining: result.remaining };
     }
 
@@ -336,6 +428,17 @@ export class TotpService {
       requestId: ctx.requestId,
       ip: ctx.ip,
       attemptCount: ctx.attemptCount,
+    });
+    this.persistAuditRow({
+      actorUserId: userId,
+      actorIp: ctx.ip ?? null,
+      action: 'totp.login_failure',
+      targetUserId: userId,
+      metadata: {
+        event: 'totp_login_failure',
+        requestId: ctx.requestId ?? null,
+        attemptCount: ctx.attemptCount ?? null,
+      },
     });
     return { ok: false };
   }

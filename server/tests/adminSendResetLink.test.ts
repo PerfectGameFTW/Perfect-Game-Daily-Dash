@@ -89,6 +89,13 @@ describe('Admin send-reset-link endpoint (Task #116)', () => {
   let normalUserId: number;
   let targetWithEmailId: number;
   let targetNoEmailId: number;
+  // The admin actor is TOTP-enrolled, so a successful login goes through
+  // the two-step flow and (since Task #131) writes a totp.login_success
+  // row to security_audit_log. The per-test audit-row counts here only
+  // care about password-reset rows, so we log in EXACTLY ONCE per suite,
+  // cache the cookie, and let beforeEach scrub the login_success row
+  // along with any prior reset rows before each assertion.
+  let adminCookie: string | null = null;
   let prevAppBaseUrl: string | undefined;
 
   beforeAll(async () => {
@@ -153,6 +160,14 @@ describe('Admin send-reset-link endpoint (Task #116)', () => {
       server.listen(0, '127.0.0.1', () => resolve());
     });
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    // Pre-warm the admin's authenticated cookie BEFORE any test runs so
+    // the very first beforeEach (which scrubs every row for the admin
+    // actor) also clears the totp.login_success row. If we let the
+    // first test trigger the login, that row would land between
+    // beforeEach's scrub and the test's audit-count assertion and
+    // inflate the count by one. See `adminCookie` for the cache.
+    await loginAs(ADMIN);
   });
 
   afterAll(async () => {
@@ -185,6 +200,14 @@ describe('Admin send-reset-link endpoint (Task #116)', () => {
   });
 
   async function loginAs(username: string): Promise<string> {
+    // Reuse the cached admin cookie when possible: re-running the login
+    // flow per test would write a fresh totp.login_success row mid-test
+    // and break the per-test audit-row count assertions (Task #131).
+    // Server-side sessions persist across the suite — there's no logout
+    // or session destroy in beforeEach — so the cached cookie stays
+    // valid for the lifetime of the suite.
+    if (username === ADMIN && adminCookie) return adminCookie;
+
     const r = await jsonReq(`${baseUrl}/api/auth/login`, 'POST', {
       username,
       password: STRONG_PASSWORD,
@@ -214,6 +237,7 @@ describe('Admin send-reset-link endpoint (Task #116)', () => {
       // The verify endpoint regenerates the session; pick up the new sid.
       if (v.cookie) cookie = v.cookie.split(';')[0];
     }
+    if (username === ADMIN) adminCookie = cookie;
     return cookie;
   }
 
