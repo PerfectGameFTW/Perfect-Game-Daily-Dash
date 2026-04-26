@@ -21,7 +21,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { InvalidOrderDataError, OrderNotFoundError } from './errors';
 
 // Import IStorage interface from './storage'
-import { IStorage, McpQueryAuditFilters, McpQueryAuditPage, SyncAuditFilters, SyncAuditPage, SyncAuditEntry } from './storage';
+import { IStorage, McpQueryAuditFilters, McpQueryAuditPage, SyncAuditFilters, SyncAuditPage, SyncAuditEntry, SecurityAuditFilters, SecurityAuditPage } from './storage';
 
 class PgStorage implements IStorage {
   // User methods
@@ -584,6 +584,89 @@ class PgStorage implements IStorage {
       limit,
       offset,
       syncTypes: typesResult.rows.map((r) => r.sync_type as string),
+    };
+  }
+
+  // Paginated browser for the security_audit_log table (Task #126).
+  // The table is intentionally append-only (see `recordSecurityAudit`
+  // and the WithAudit transactional helpers above), so this is the
+  // only read path the admin UI uses to investigate who turned a
+  // security toggle on/off or who disabled another admin's 2FA.
+  //
+  // Joined with `users` (twice — once for the actor, once for the
+  // target) via LEFT JOIN so a deleted account doesn't make its
+  // historical rows vanish from the audit trail; the username comes
+  // back as `null` and the UI labels it accordingly.
+  //
+  // Filters are kept simple per the task brief: action (exact match
+  // against the action code), actor (substring against username),
+  // target (substring against username). The distinct list of action
+  // codes is returned alongside the page so the dropdown stays in
+  // sync with whatever is actually in the table.
+  async listSecurityAudit(filters: SecurityAuditFilters): Promise<SecurityAuditPage> {
+    const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+    const offset = Math.max(filters.offset ?? 0, 0);
+
+    const conditions: any[] = [];
+    if (filters.action && filters.action.trim() !== '') {
+      conditions.push(sql`a.action = ${filters.action.trim()}`);
+    }
+    if (filters.actorUsername && filters.actorUsername.trim() !== '') {
+      const needle = `%${filters.actorUsername.trim().toLowerCase()}%`;
+      conditions.push(sql`LOWER(actor.username) LIKE ${needle}`);
+    }
+    if (filters.targetUsername && filters.targetUsername.trim() !== '') {
+      const needle = `%${filters.targetUsername.trim().toLowerCase()}%`;
+      conditions.push(sql`LOWER(target.username) LIKE ${needle}`);
+    }
+
+    const whereClause = conditions.length === 0
+      ? sql``
+      : sql`WHERE ${sql.join(conditions, sql` AND `)}`;
+
+    const rowsResult = await db.execute(sql`
+      SELECT a.id, a.actor_user_id, a.actor_ip, a.action,
+             a.target_user_id, a.metadata, a.created_at,
+             actor.username AS actor_username,
+             target.username AS target_username
+      FROM security_audit_log a
+      LEFT JOIN users actor ON actor.id = a.actor_user_id
+      LEFT JOIN users target ON target.id = a.target_user_id
+      ${whereClause}
+      ORDER BY a.created_at DESC, a.id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+
+    const totalResult = await db.execute(sql`
+      SELECT COUNT(*)::int AS total
+      FROM security_audit_log a
+      LEFT JOIN users actor ON actor.id = a.actor_user_id
+      LEFT JOIN users target ON target.id = a.target_user_id
+      ${whereClause}
+    `);
+
+    const actionsResult = await db.execute(sql`
+      SELECT DISTINCT action FROM security_audit_log ORDER BY action ASC
+    `);
+
+    const entries = rowsResult.rows.map((row) => ({
+      id: Number(row.id),
+      actorUserId: row.actor_user_id === null ? null : Number(row.actor_user_id),
+      actorIp: (row.actor_ip as string | null) ?? null,
+      action: row.action as string,
+      targetUserId: row.target_user_id === null ? null : Number(row.target_user_id),
+      metadata: (row.metadata as Record<string, unknown> | null) ?? null,
+      createdAt: new Date(row.created_at as string),
+      actorUsername: (row.actor_username as string | null) ?? null,
+      targetUsername: (row.target_username as string | null) ?? null,
+    }));
+
+    return {
+      entries,
+      total: Number(totalResult.rows[0]?.total ?? 0),
+      limit,
+      offset,
+      actions: actionsResult.rows.map((r) => r.action as string),
     };
   }
 

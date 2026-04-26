@@ -935,6 +935,39 @@ export function createAuthRouter(): Router {
     },
   );
 
+  // Admin: paginated browser for the security audit log (Task #126).
+  // Read-only counterpart to the WithAudit transactional helpers in
+  // pgStorage — there is intentionally no DELETE/PATCH route, so a
+  // compromised admin can't scrub their own actions out of the
+  // history. Filters mirror the storage layer: `action` is an exact
+  // match against the action code; `actorUsername` and
+  // `targetUsername` are substring matches against the joined users
+  // table. The page response also carries the distinct list of action
+  // codes so the UI can populate its dropdown without hard-coding.
+  router.get(
+    '/admin/security/audit',
+    requireAuth,
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const querySchema = z.object({
+          action: z.string().trim().max(100).optional(),
+          actorUsername: z.string().trim().max(100).optional(),
+          targetUsername: z.string().trim().max(100).optional(),
+          limit: z.coerce.number().int().min(1).max(200).optional(),
+          offset: z.coerce.number().int().min(0).optional(),
+        });
+        const parsed = querySchema.safeParse(req.query);
+        throwOnInvalidInput(parsed);
+        const page = await pgStorage.listSecurityAudit(parsed.data!);
+        res.json(page);
+      } catch (error) {
+        logger.error('auth.admin.security_audit_list_error', errorContext(error));
+        next(error);
+      }
+    },
+  );
+
   // Get all users (admin only)
   router.get('/users', requireAuth, requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {
     try {

@@ -7,7 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
-import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone, Database, ShieldAlert, ShieldOff, Activity, Gauge } from 'lucide-react';
+import { ShieldCheck, Users, ArrowLeft, RefreshCw, Clock, CheckCircle, AlertCircle, Bell, KeyRound, Smartphone, Database, ShieldAlert, ShieldOff, Activity, Gauge, History, ChevronDown, ChevronRight } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import QRCode from 'qrcode';
 import { Input } from '@/components/ui/input';
@@ -263,6 +264,7 @@ export default function Admin() {
           <TabsContent value="security" className="mt-0 space-y-6">
             <TwoFactorAuthCard />
             <AdminSecurityOverviewCard />
+            <SecurityAuditLogCard />
           </TabsContent>
 
           <TabsContent value="diagnostics" className="mt-0 space-y-6">
@@ -1415,6 +1417,331 @@ function UserCacheDiagnosticsCard() {
             </div>
           </div>
         ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface SecurityAuditEntry {
+  id: number;
+  actorUserId: number | null;
+  actorUsername: string | null;
+  actorIp: string | null;
+  action: string;
+  targetUserId: number | null;
+  targetUsername: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+interface SecurityAuditPage {
+  entries: SecurityAuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  actions: string[];
+}
+
+const SECURITY_AUDIT_PAGE_SIZE = 25;
+
+/**
+ * Security audit history (Task #126). Read-only paginated browser
+ * over the security_audit_log table — surfaces who flipped the
+ * require-2FA toggle, who disabled another admin's 2FA, and any
+ * future security-relevant action recorded with `recordSecurityAudit`
+ * / the WithAudit transactional helpers in pgStorage. There is
+ * intentionally no UI to delete or edit entries; the table is
+ * append-only by design so a compromised admin can be reconstructed
+ * after the fact.
+ */
+function SecurityAuditLogCard() {
+  // Form inputs (what the operator is currently typing).
+  const [actorInput, setActorInput] = useState('');
+  const [targetInput, setTargetInput] = useState('');
+  const [actionInput, setActionInput] = useState<string>('all');
+
+  // Applied filters (what's actually in the query). Splitting the
+  // "typed" vs "applied" state mirrors the pattern in the standalone
+  // McpAudit / SyncAudit pages so a partial filter doesn't refetch on
+  // every keystroke.
+  const [filters, setFilters] = useState<{
+    actorUsername: string;
+    targetUsername: string;
+    action: string;
+  }>({ actorUsername: '', targetUsername: '', action: 'all' });
+  const [page, setPage] = useState(0);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const queryKey = [
+    '/api/auth/admin/security/audit',
+    {
+      actorUsername: filters.actorUsername,
+      targetUsername: filters.targetUsername,
+      action: filters.action,
+      limit: SECURITY_AUDIT_PAGE_SIZE,
+      offset: page * SECURITY_AUDIT_PAGE_SIZE,
+    },
+  ] as const;
+
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<SecurityAuditPage>({
+    queryKey,
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.actorUsername.trim()) params.set('actorUsername', filters.actorUsername.trim());
+      if (filters.targetUsername.trim()) params.set('targetUsername', filters.targetUsername.trim());
+      if (filters.action && filters.action !== 'all') params.set('action', filters.action);
+      params.set('limit', String(SECURITY_AUDIT_PAGE_SIZE));
+      params.set('offset', String(page * SECURITY_AUDIT_PAGE_SIZE));
+      const res = await fetch(`/api/auth/admin/security/audit?${params.toString()}`, {
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (!res.ok) {
+        const text = (await res.text()) || res.statusText;
+        throw new Error(`${res.status}: ${text}`);
+      }
+      return res.json();
+    },
+  });
+
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / SECURITY_AUDIT_PAGE_SIZE));
+  const currentPage = page + 1;
+
+  const applyFilters = () => {
+    setFilters({
+      actorUsername: actorInput,
+      targetUsername: targetInput,
+      action: actionInput,
+    });
+    setPage(0);
+    setExpanded(new Set());
+  };
+
+  const resetFilters = () => {
+    setActorInput('');
+    setTargetInput('');
+    setActionInput('all');
+    setFilters({ actorUsername: '', targetUsername: '', action: 'all' });
+    setPage(0);
+    setExpanded(new Set());
+  };
+
+  const toggleExpanded = (id: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <History className="h-5 w-5 text-muted-foreground" />
+          Security Audit Log
+        </CardTitle>
+        <CardDescription>
+          Tamper-resistant history of admin security actions: who flipped
+          the require-2FA toggle, who disabled another admin&apos;s second
+          factor, and similar events. Read-only; entries are never
+          edited or removed.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            applyFilters();
+          }}
+          className="grid grid-cols-1 gap-3 md:grid-cols-4"
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="security-audit-action">Action</Label>
+            <Select value={actionInput} onValueChange={setActionInput}>
+              <SelectTrigger id="security-audit-action">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All actions</SelectItem>
+                {(data?.actions ?? []).map((a) => (
+                  <SelectItem key={a} value={a}>{a}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="security-audit-actor">Actor (admin) username</Label>
+            <Input
+              id="security-audit-actor"
+              placeholder="(any)"
+              value={actorInput}
+              onChange={(e) => setActorInput(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="security-audit-target">Target username</Label>
+            <Input
+              id="security-audit-target"
+              placeholder="(any)"
+              value={targetInput}
+              onChange={(e) => setTargetInput(e.target.value)}
+            />
+          </div>
+          <div className="flex items-end gap-2">
+            <Button type="submit" className="flex-1">Apply</Button>
+            <Button type="button" variant="outline" onClick={resetFilters}>Reset</Button>
+          </div>
+        </form>
+
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            {isLoading
+              ? 'Loading…'
+              : `${total.toLocaleString()} matching ${total === 1 ? 'entry' : 'entries'}`}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={page === 0 || isLoading}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Previous
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Page {currentPage} of {totalPages}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isLoading || currentPage >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="gap-1"
+            >
+              <RefreshCw className={`h-3 w-3 ${isFetching ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="h-4 w-4" />
+            <span>Loading audit entries…</span>
+          </div>
+        ) : isError ? (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-medium">Could not load audit entries.</p>
+              <p className="text-xs opacity-80">
+                {error instanceof Error ? error.message : 'Please try again.'}
+              </p>
+            </div>
+          </div>
+        ) : data && data.entries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No matching audit entries.</p>
+        ) : (
+          <div className="space-y-2">
+            {data?.entries.map((entry) => {
+              const isOpen = expanded.has(entry.id);
+              const actorLabel = entry.actorUsername
+                ?? (entry.actorUserId !== null ? `user #${entry.actorUserId}` : 'unknown');
+              const targetLabel = entry.targetUsername
+                ?? (entry.targetUserId !== null ? `user #${entry.targetUserId}` : null);
+              return (
+                <div key={entry.id} className="rounded-lg border">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(entry.id)}
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-muted/40"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      {isOpen ? (
+                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <ShieldCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          <span className="font-mono text-xs rounded bg-muted px-1.5 py-0.5 mr-2">
+                            {entry.action}
+                          </span>
+                          <span>{actorLabel}</span>
+                          {targetLabel && (
+                            <>
+                              <span className="text-muted-foreground"> → </span>
+                              <span>{targetLabel}</span>
+                            </>
+                          )}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {format(new Date(entry.createdAt), 'MMM d, yyyy HH:mm:ss')} • {entry.actorIp ?? 'no ip'}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                  {isOpen && (
+                    <div className="space-y-3 border-t bg-muted/20 px-3 py-3">
+                      <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                        <div>
+                          <span className="font-semibold uppercase tracking-wide text-muted-foreground">Actor: </span>
+                          <span>
+                            {actorLabel}
+                            {entry.actorUserId !== null && (
+                              <span className="text-muted-foreground"> (id {entry.actorUserId})</span>
+                            )}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-semibold uppercase tracking-wide text-muted-foreground">Target: </span>
+                          <span>
+                            {targetLabel ?? '—'}
+                            {entry.targetUserId !== null && (
+                              <span className="text-muted-foreground"> (id {entry.targetUserId})</span>
+                            )}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-semibold uppercase tracking-wide text-muted-foreground">IP: </span>
+                          <span>{entry.actorIp ?? '—'}</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold uppercase tracking-wide text-muted-foreground">When: </span>
+                          <span>{format(new Date(entry.createdAt), 'MMM d, yyyy HH:mm:ss xxx')}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Metadata
+                        </p>
+                        <pre className="max-h-72 overflow-auto rounded border bg-background p-2 font-mono text-xs whitespace-pre-wrap break-words">
+                          {entry.metadata === null
+                            ? '(none)'
+                            : JSON.stringify(entry.metadata, null, 2)}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

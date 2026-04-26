@@ -15,6 +15,7 @@ import {
   InsertSecurityAuditLog,
   McpQueryAudit,
   SyncAudit,
+  SecurityAuditLog,
   AppSettingKey,
   AppSettingValue,
 } from "@shared/schema";
@@ -55,6 +56,43 @@ export interface SyncAuditPage {
   limit: number;
   offset: number;
   syncTypes: string[];
+}
+
+export interface SecurityAuditFilters {
+  // Free-form action string (e.g. "require_admin_2fa.set"). When set,
+  // only rows whose `action` column matches exactly are returned —
+  // partial/substring matching would muddy the filter for short
+  // prefixes ("user.") so we keep this strict and let the UI populate
+  // a dropdown from the distinct list returned alongside the page.
+  action?: string;
+  // Substring match against the actor's username (the admin who took
+  // the action). LEFT JOIN with users so an action whose actor was
+  // since-deleted still shows up under "(unknown)" rather than
+  // disappearing from the audit trail.
+  actorUsername?: string;
+  // Substring match against the target user's username (the account
+  // the action was applied to, when applicable). Same LEFT JOIN
+  // semantics as actorUsername.
+  targetUsername?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface SecurityAuditEntry extends SecurityAuditLog {
+  actorUsername: string | null;
+  targetUsername: string | null;
+}
+
+export interface SecurityAuditPage {
+  entries: SecurityAuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  // Distinct action strings present in the table, ascending. The UI
+  // uses this to populate a filter dropdown without hard-coding the
+  // current set of action codes — new actions added by future tasks
+  // surface automatically.
+  actions: string[];
 }
 
 import { format, startOfDay, endOfDay, subDays, startOfMonth, endOfMonth } from "date-fns";
@@ -133,6 +171,12 @@ export interface IStorage {
   // there is intentionally no "delete" or "update" entry point so a
   // compromised admin cannot scrub their own actions.
   recordSecurityAudit(entry: InsertSecurityAuditLog): Promise<void>;
+  // Paginated browser for the same table (Task #126). Newest-first,
+  // joined with `users` so the UI can show usernames instead of bare
+  // numeric IDs. Returns the distinct list of action codes alongside
+  // the page so the front-end can populate a filter dropdown without
+  // having to hard-code the current set of action strings.
+  listSecurityAudit(filters: SecurityAuditFilters): Promise<SecurityAuditPage>;
 
   // Per-deployment runtime settings (app_settings table). The key is
   // constrained to the typed registry in `shared/schema.ts`, and the
