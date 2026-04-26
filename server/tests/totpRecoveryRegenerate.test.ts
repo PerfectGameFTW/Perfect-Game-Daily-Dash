@@ -6,7 +6,7 @@ import { AddressInfo } from 'net';
 import { eq, inArray } from 'drizzle-orm';
 import { Secret, TOTP } from 'otpauth';
 
-import { db } from '../db';
+import { db, pool } from '../db';
 import { users } from '@shared/schema';
 import { authService } from '../services/authService';
 import { totpService } from '../services/totpService';
@@ -292,53 +292,159 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     expect(r.status).toBe(401);
   });
 
-  it('concurrent recovery-code consumption cannot resurrect old hashes after regeneration (FOR UPDATE serializes)', { timeout: 20000 }, async () => {
-    const cookie = await login();
-    // Seed two real recovery codes against the current batch.
+  it('regenerate blocks behind a held row lock and produces a clean batch when released — deterministic FOR UPDATE proof', { timeout: 30000 }, async () => {
+    // Deterministic replacement for an earlier `Promise.all`-style
+    // race test (Task #130). The previous version fired
+    // `verifyLoginCode` and the regenerate HTTP call concurrently and
+    // hoped the two operations actually overlapped in time. They
+    // often did not (the in-process function call beat the HTTP round
+    // trip every run on most machines), and the only assertion about
+    // ordering was `expect(typeof outcome.ok === 'boolean').toBe(true)`
+    // — a tautology. The test could pass without ever exercising the
+    // FOR UPDATE serialization it was meant to cover.
+    //
+    // This version drives the contention deterministically:
+    //   1. Lease a dedicated pg client and acquire `SELECT ... FOR
+    //      UPDATE` on the user row from the test itself.
+    //   2. Kick off `regenerateRecoveryCodes` (do NOT await). It will
+    //      block at its own `for('update')` because Postgres serializes
+    //      conflicting row locks — this is a guaranteed wait, not a
+    //      hoped-for one.
+    //   3. Observe the wait via pg_stat_activity. Postgres exposes
+    //      `wait_event_type='Lock' / wait_event='transactionid'` on
+    //      the blocked backend, so we can poll for it directly. The
+    //      poll loop terminates as soon as the wait appears (which it
+    //      MUST, given the lock semantics) — there is no fixed sleep.
+    //   4. While regen is blocked, snapshot the row to prove it is
+    //      still pre-regen state (no half-applied write).
+    //   5. Commit our transaction → release the lock → regen runs to
+    //      completion. Assert the final state contains only the new
+    //      batch hashes.
+    //
+    // If a future refactor removed the `for('update')` from
+    // `regenerateRecoveryCodes`, regen would NOT block here, the
+    // pg_stat_activity poll would time out, and this test would fail
+    // loudly — which is exactly the regression we want to catch.
+    await login();
     const oldBatch = (await totpService.verifyAndEnable(userId, currentCode(secretBase32)))!;
     expect(oldBatch.length).toBeGreaterThanOrEqual(2);
-
-    // Race verifyLoginCode (with an old code) against the regenerate
-    // endpoint. The lock guarantees one of two terminal states:
-    //   (a) verify wins → its remove-one-hash write commits first,
-    //       then regen overwrites with the brand-new batch.
-    //   (b) regen wins → verify's read sees the new batch and the
-    //       stale code is rejected.
-    // In BOTH cases the final DB state must contain ONLY hashes for
-    // the freshly returned codes — never any of the original hashes.
     const beforeRegen = await db.select().from(users).where(eq(users.id, userId));
     const oldHashes = beforeRegen[0]!.totpRecoveryCodes ?? [];
+    expect(oldHashes.length).toBeGreaterThan(0);
 
-    const [verifyOutcome, regenResp] = await Promise.all([
-      totpService.verifyLoginCode(userId, oldBatch[0]),
-      jsonReq(
-        `${baseUrl}/api/auth/totp/recovery-codes/regenerate`,
-        'POST',
-        { password: PWD, code: currentCode(secretBase32) },
-        cookie,
-      ),
-    ]);
-    expect(regenResp.status).toBe(200);
-    const newCodes = regenResp.body.recoveryCodes as string[];
+    // Note: this deterministic-contention pattern requires pool capacity
+    // >= 2 (one client to hold the blocker lock, one for regen). The
+    // app pool is sized well above that; if a future test infrastructure
+    // change shrinks it, this test will time out at the lock-wait poll
+    // — caller-visible failure, not a silent skip.
+    const blocker = await pool.connect();
+    let blockerCommitted = false;
+    let regenPromise: Promise<string[] | null> | null = null;
+    try {
+      await blocker.query('BEGIN');
+      // Same lock target regenerate's transaction will reach for.
+      await blocker.query(
+        'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+        [userId],
+      );
 
-    const after = await db.select().from(users).where(eq(users.id, userId));
-    const finalHashes = after[0]!.totpRecoveryCodes ?? [];
-    // None of the old hashes survive.
-    for (const h of finalHashes) {
-      expect(oldHashes).not.toContain(h);
+      // Fire regenerate but DO NOT await — it must reach its
+      // `for('update')` and then block on our held lock. We attach
+      // `.catch(() => {})` only to silence the unhandled-rejection
+      // bookkeeping during the poll; the real outcome is awaited
+      // (and re-thrown) at the end of the try block, and the finally
+      // drains it on every error path.
+      regenPromise = totpService.regenerateRecoveryCodes(
+        userId,
+        currentCode(secretBase32),
+      );
+      regenPromise.catch(() => {});
+
+      // Poll pg_stat_activity for ANY non-poller backend on this DB
+      // that is blocked by another backend. `pg_blocking_pids` returns
+      // the set of pids holding a lock the queried pid is waiting on,
+      // so a non-empty result deterministically means "some backend is
+      // blocked behind some other backend right now". With the
+      // single-suite advisory lock from globalSetup ensuring no other
+      // traffic shares this DB, the only candidate is regen blocked
+      // behind our `blocker` connection.
+      //
+      // The condition is guaranteed to become true given Postgres's
+      // lock semantics; the timeout exists only as a safety net for a
+      // real regression (e.g. the FOR UPDATE got removed from
+      // `regenerateRecoveryCodes`).
+      const POLL_DEADLINE_MS = 20_000;
+      const POLL_INTERVAL_MS = 25;
+      const start = Date.now();
+      let observedBlocked = false;
+      while (Date.now() - start < POLL_DEADLINE_MS) {
+        const r = await pool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+             FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND pid <> pg_backend_pid()
+              AND cardinality(pg_blocking_pids(pid)) > 0`,
+        );
+        if (Number(r.rows[0]?.count ?? '0') > 0) {
+          observedBlocked = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      }
+      expect(observedBlocked).toBe(true);
+
+      // While regen is blocked the row must still hold the original
+      // batch verbatim — no partial write has been applied. A plain
+      // SELECT (snapshot read) is not blocked by FOR UPDATE so this
+      // observation is safe to make from the test connection.
+      const midRow = await db.select().from(users).where(eq(users.id, userId));
+      expect(midRow[0]?.totpRecoveryCodes).toEqual(oldHashes);
+
+      // Release our lock; regen now proceeds.
+      await blocker.query('COMMIT');
+      blockerCommitted = true;
+
+      const newCodes = await regenPromise;
+      regenPromise = null; // already drained — finally must not redrain.
+      expect(newCodes).not.toBeNull();
+      expect(newCodes!).toHaveLength(10);
+
+      const after = await db.select().from(users).where(eq(users.id, userId));
+      const finalHashes = after[0]!.totpRecoveryCodes ?? [];
+      expect(finalHashes).toHaveLength(10);
+      // No old hash survives the regenerate.
+      for (const h of finalHashes) {
+        expect(oldHashes).not.toContain(h);
+      }
+      // Every new plaintext code matches exactly one stored hash —
+      // the regenerated batch is internally consistent.
+      for (const c of newCodes!) {
+        const stripped = c.replace('-', '');
+        // eslint-disable-next-line no-await-in-loop
+        const matches = await Promise.all(
+          finalHashes.map((h) => verifyPassword(stripped, h)),
+        );
+        expect(matches.filter(Boolean)).toHaveLength(1);
+      }
+      // And the previously-issued recovery codes are now dead — a
+      // regression that resurrected them would fail this check.
+      expect((await totpService.verifyLoginCode(userId, oldBatch[0])).ok).toBe(false);
+      expect((await totpService.verifyLoginCode(userId, oldBatch[1])).ok).toBe(false);
+    } finally {
+      // Order matters: release the lock first (so a still-pending
+      // regen can drain), THEN await regen to settle, THEN release
+      // the connection. Without the drain step a poll-timeout or
+      // mid-test assertion failure would leave a background
+      // regenerate landing AFTER the test returns, corrupting the
+      // next test's expectations.
+      if (!blockerCommitted) {
+        await blocker.query('ROLLBACK').catch(() => {});
+      }
+      if (regenPromise) {
+        await regenPromise.catch(() => {});
+      }
+      blocker.release();
     }
-    // And every new code matches exactly one stored hash (i.e. the
-    // verify did not corrupt the regenerated batch).
-    for (const c of newCodes) {
-      const stripped = c.replace('-', '');
-      // eslint-disable-next-line no-await-in-loop
-      const matches = await Promise.all(finalHashes.map((h) => verifyPassword(stripped, h)));
-      expect(matches.filter(Boolean)).toHaveLength(1);
-    }
-    // The verify either succeeded (race won) or failed (regen won), but
-    // the second old code must NEVER work after this point.
-    expect(typeof verifyOutcome.ok === 'boolean').toBe(true);
-    expect((await totpService.verifyLoginCode(userId, oldBatch[1])).ok).toBe(false);
   });
 
   it('throttles with 429 after 10 failed attempts from the same IP (Task #129)', async () => {
