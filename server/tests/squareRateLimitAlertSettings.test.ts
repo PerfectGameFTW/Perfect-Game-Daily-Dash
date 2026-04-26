@@ -243,6 +243,65 @@ describe('Square 429 alert settings — admin tunable end-to-end (Task #96)', ()
     });
   });
 
+  // Admin-route auth + response-shape coverage for the live state
+  // endpoint added in Task #121. The unit-level snapshot semantics
+  // are covered in `squareRateLimitAlert.test.ts`; this block just
+  // pins down that the route is admin-gated, never cached, and
+  // returns a JSON payload with the documented shape so the admin
+  // UI's TypeScript interface stays honest.
+  describe('GET /admin/alerts/square-rate-limit/state — admin-gated live snapshot (Task #121)', () => {
+    it('rejects unauthenticated requests with 401', async () => {
+      const r = await getJson(`${baseUrl}/api/admin/alerts/square-rate-limit/state`);
+      expect(r.status).toBe(401);
+    });
+
+    it('rejects non-admin requests with 403', async () => {
+      const r = await getJson(
+        `${baseUrl}/api/admin/alerts/square-rate-limit/state`,
+        { 'x-test-user-id': String(userId) },
+      );
+      expect(r.status).toBe(403);
+    });
+
+    it('returns the documented snapshot shape and Cache-Control: no-store for admins', async () => {
+      // Seed a few synthetic events so the breakdown isn't trivially
+      // empty — exercises the wire shape end-to-end.
+      squareRateLimitAlerter.record('historical_sync', 'fetchOrders');
+      squareRateLimitAlerter.record('historical_sync', 'fetchOrders');
+      squareRateLimitAlerter.record('historical_sync', 'fetchPayments');
+
+      const r = await fetch(
+        `${baseUrl}/api/admin/alerts/square-rate-limit/state`,
+        { headers: { 'x-test-user-id': String(adminId) } },
+      );
+      expect(r.status).toBe(200);
+      // Admin polls this every few seconds — any cached response
+      // would be stale by the time the operator looks at it.
+      expect(r.headers.get('cache-control')).toBe('no-store');
+
+      const body = (await r.json()) as Record<string, unknown>;
+      expect(typeof body.now).toBe('number');
+      expect(typeof body.eventCount).toBe('number');
+      expect(typeof body.windowMs).toBe('number');
+      expect(Array.isArray(body.breakdown)).toBe(true);
+      expect(body).toHaveProperty('lastAlertAt');
+      expect(typeof body.cooldownRemainingMs).toBe('number');
+      expect(typeof body.episodeActive).toBe('boolean');
+      expect(typeof body.webhookConfigured).toBe('boolean');
+
+      // The seeded events should all be in the window with no
+      // alert fired (default env baseline threshold may vary, so
+      // we just check the count + breakdown shape, not whether
+      // an alert fired).
+      expect(body.eventCount).toBeGreaterThanOrEqual(3);
+      const breakdown = body.breakdown as Array<{ key: string; count: number }>;
+      const orders = breakdown.find((b) => b.key === 'historical_sync/fetchOrders');
+      const payments = breakdown.find((b) => b.key === 'historical_sync/fetchPayments');
+      expect(orders?.count).toBeGreaterThanOrEqual(2);
+      expect(payments?.count).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   describe('boot-time hydration re-applies the persisted override', () => {
     it('loadSquareRateLimitAlertOverride() restores the alerter to the persisted values after a simulated cold start', async () => {
       const next = { threshold: 23, windowMs: 6 * 60_000, cooldownMs: 13 * 60_000 };

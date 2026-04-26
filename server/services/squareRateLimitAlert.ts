@@ -51,6 +51,46 @@ export interface AlertTunableConfig {
   cooldownMs: number;
 }
 
+/**
+ * Snapshot of the alerter's in-process state. Exposed so the admin
+ * settings UI can show on-call exactly what the alerter sees right
+ * now — how many 429s are in the rolling window, when the last alert
+ * fired, and whether we're inside a cooldown — without anyone having
+ * to ssh into the box and read logs. Pure read; never mutates the
+ * rolling buffer or any other internal state, so it's safe to poll
+ * every few seconds from the UI.
+ */
+export interface AlertRuntimeState {
+  /** Server clock at snapshot time (ms since epoch). Lets the UI
+   *  render "X seconds ago" without having to trust the client clock. */
+  now: number;
+  /** Number of 429 events currently inside the effective rolling window. */
+  eventCount: number;
+  /** The effective window width in ms (env baseline merged with
+   *  any admin override) — useful so the UI can label the count
+   *  with the right "in the last N minutes" wording. */
+  windowMs: number;
+  /** Event count keyed by `${syncType}/${source}` for events inside
+   *  the rolling window, sorted descending. Mirrors the breakdown
+   *  shown in the actual webhook alert. */
+  breakdown: Array<{ key: string; count: number }>;
+  /** Timestamp of the most recent fired alert, or null if no alert
+   *  has fired since process start (or since the last config change
+   *  that cleared the cooldown). */
+  lastAlertAt: number | null;
+  /** ms remaining on the cooldown timer, or 0 if not in cooldown.
+   *  Computed from `lastAlertAt` and the effective `cooldownMs`. */
+  cooldownRemainingMs: number;
+  /** True iff an alert has fired and the matching recovery
+   *  notification has not yet been sent. The UI uses this to flag
+   *  an "incident in progress" badge. */
+  episodeActive: boolean;
+  /** Whether a webhook is wired up at all. When false, the UI
+   *  should warn that even if thresholds are exceeded no alert
+   *  will actually be delivered. */
+  webhookConfigured: boolean;
+}
+
 function intFromEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -149,6 +189,51 @@ class RateLimitAlerter {
   getTunable(): AlertTunableConfig {
     const c = this.effectiveConfig();
     return { threshold: c.threshold, windowMs: c.windowMs, cooldownMs: c.cooldownMs };
+  }
+
+  /**
+   * Returns a non-mutating snapshot of the alerter's live state for
+   * the admin UI (Task #121). Filters the rolling buffer by the
+   * effective window without modifying it, so polling this method
+   * every few seconds from the admin page is free aside from the
+   * O(events-in-window) walk.
+   */
+  getRuntimeState(): AlertRuntimeState {
+    const cfg = this.effectiveConfig();
+    const t = this.now();
+    const cutoff = t - cfg.windowMs;
+
+    // Count + breakdown over the live window only. Don't mutate
+    // `this.events` — that's the job of `record()` / `fireRecovery()`,
+    // and a read endpoint that quietly compacts state would make
+    // the live alerter behaviour depend on whether the admin page
+    // happens to be open.
+    const counts = new Map<string, number>();
+    let inWindow = 0;
+    for (const e of this.events) {
+      if (e.ts < cutoff) continue;
+      inWindow++;
+      const key = `${e.syncType}/${e.source}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const breakdown = Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, count]) => ({ key, count }));
+
+    const cooldownRemainingMs = this.lastAlertAt === null
+      ? 0
+      : Math.max(0, this.lastAlertAt + cfg.cooldownMs - t);
+
+    return {
+      now: t,
+      eventCount: inWindow,
+      windowMs: cfg.windowMs,
+      breakdown,
+      lastAlertAt: this.lastAlertAt,
+      cooldownRemainingMs,
+      episodeActive: this.episodeActive,
+      webhookConfigured: cfg.webhookUrl !== null || this.notifier !== null,
+    };
   }
 
   /** Apply (or clear) an admin-supplied override. Takes effect

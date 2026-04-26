@@ -857,6 +857,28 @@ export function createApiRouter(): Router {
     },
   );
 
+  // Admin: live state of the in-process Square 429 alerter (Task #121).
+  // Returns the rolling event count, breakdown by syncType+source,
+  // last-alert timestamp, remaining cooldown, and episode flag — all
+  // derived from process memory, no DB hit. `Cache-Control: no-store`
+  // because the UI polls this every few seconds and any cached
+  // response would be stale by the time the operator sees it.
+  router.get(
+    '/admin/alerts/square-rate-limit/state',
+    requireAdmin,
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { squareRateLimitAlerter } = await import(
+          '../services/squareRateLimitAlert'
+        );
+        res.set('Cache-Control', 'no-store');
+        res.json(squareRateLimitAlerter.getRuntimeState());
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   router.put(
     '/admin/alerts/square-rate-limit',
     requireAdmin,

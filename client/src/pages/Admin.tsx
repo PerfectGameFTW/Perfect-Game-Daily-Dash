@@ -12,6 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import QRCode from 'qrcode';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { formatDistanceToNow, format } from 'date-fns';
@@ -256,6 +257,7 @@ export default function Admin() {
 
           <TabsContent value="alerts" className="mt-0 space-y-6">
             <SquareRateLimitAlertSettingsCard />
+            <SquareRateLimitAlertRuntimeStateCard />
           </TabsContent>
 
           <TabsContent value="security" className="mt-0 space-y-6">
@@ -435,6 +437,175 @@ function SquareRateLimitAlertSettingsCard() {
               </Button>
             </div>
           </form>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface AlertRuntimeStateResponse {
+  now: number;
+  eventCount: number;
+  windowMs: number;
+  breakdown: Array<{ key: string; count: number }>;
+  lastAlertAt: number | null;
+  cooldownRemainingMs: number;
+  episodeActive: boolean;
+  webhookConfigured: boolean;
+}
+
+const ALERT_RUNTIME_STATE_KEY = ['/api/admin/alerts/square-rate-limit/state'] as const;
+
+/**
+ * Read-only panel that surfaces the alerter's live in-process state
+ * (Task #121). Lets on-call see — without ssh-ing into the box and
+ * grepping logs — whether their freshly-tuned thresholds would
+ * actually have fired during the most recent incident: how many 429s
+ * are currently in the rolling window, the per-source breakdown, when
+ * the last alert went out, and whether we're still inside cooldown.
+ *
+ * Polls every 5s while the Alerts tab is open. The endpoint is a
+ * pure read against process memory, so the cost is trivial.
+ */
+function SquareRateLimitAlertRuntimeStateCard() {
+  const { data, isLoading, isError, error, refetch, isFetching } =
+    useQuery<AlertRuntimeStateResponse>({
+      queryKey: ALERT_RUNTIME_STATE_KEY,
+      // 5s feels live without hammering the box; the underlying
+      // operation is O(events-in-window) memory access only.
+      refetchInterval: 5_000,
+      refetchIntervalInBackground: false,
+    });
+
+  // Render the "last alert" timestamp relative to the SERVER clock
+  // returned by the snapshot, so a skewed client clock never shows
+  // misleading "in 3 minutes" values.
+  const lastAlertLabel = (() => {
+    if (!data || data.lastAlertAt === null) return 'no alert since process start';
+    const ageMs = Math.max(0, data.now - data.lastAlertAt);
+    return `${formatDistanceToNow(new Date(Date.now() - ageMs), { addSuffix: true })}`;
+  })();
+
+  const cooldownLabel = (() => {
+    if (!data) return '';
+    if (data.cooldownRemainingMs <= 0) return 'ready to fire';
+    const sec = Math.ceil(data.cooldownRemainingMs / 1000);
+    if (sec < 60) return `${sec}s remaining`;
+    const min = Math.ceil(sec / 60);
+    return `${min}m remaining`;
+  })();
+
+  const windowMin = data ? Math.max(1, Math.round(data.windowMs / 60_000)) : 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Activity className="h-5 w-5 text-muted-foreground" />
+          Alerter live state
+          {data?.episodeActive ? (
+            <Badge variant="destructive" className="ml-2">incident in progress</Badge>
+          ) : null}
+        </CardTitle>
+        <CardDescription>
+          What the in-process alerter sees right now. Refreshes every few seconds — useful for
+          checking whether a freshly-tuned threshold would have caught the last incident.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="h-4 w-4" />
+            <span>Loading alerter state...</span>
+          </div>
+        ) : isError || !data ? (
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-medium">Could not load alerter state.</p>
+                <p className="text-xs opacity-80">
+                  {error instanceof Error ? error.message : 'Please try again.'}
+                </p>
+              </div>
+            </div>
+            <Button type="button" variant="outline" onClick={() => refetch()} className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-md border bg-muted/30 px-3 py-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  In-window 429s
+                </div>
+                <div className="mt-1 text-2xl font-semibold tabular-nums">
+                  {data.eventCount}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  in the last {windowMin}m
+                </div>
+              </div>
+              <div className="rounded-md border bg-muted/30 px-3 py-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Last alert
+                </div>
+                <div className="mt-1 text-sm font-medium">{lastAlertLabel}</div>
+                <div className="text-xs text-muted-foreground">
+                  {data.lastAlertAt === null
+                    ? '—'
+                    : `at ${format(new Date(Date.now() - (data.now - data.lastAlertAt)), 'PP p')}`}
+                </div>
+              </div>
+              <div className="rounded-md border bg-muted/30 px-3 py-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Cooldown
+                </div>
+                <div className="mt-1 text-sm font-medium">{cooldownLabel}</div>
+                <div className="text-xs text-muted-foreground">
+                  {data.cooldownRemainingMs > 0
+                    ? 'next alert is suppressed'
+                    : 'next threshold breach will alert'}
+                </div>
+              </div>
+            </div>
+
+            {!data.webhookConfigured ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  No webhook URL is configured — even if thresholds are exceeded, no alert will be
+                  delivered. Set <code>SQUARE_RATE_LIMIT_ALERT_WEBHOOK_URL</code> in the deployment
+                  env to enable delivery.
+                </span>
+              </div>
+            ) : null}
+
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-medium">Breakdown by sync path</div>
+                {isFetching ? (
+                  <Spinner className="h-3 w-3 text-muted-foreground" />
+                ) : null}
+              </div>
+              {data.breakdown.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No 429 events in the rolling window.
+                </p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {data.breakdown.map((b) => (
+                    <li key={b.key} className="flex items-center justify-between rounded border bg-muted/20 px-3 py-1.5">
+                      <code className="text-xs">{b.key}</code>
+                      <span className="font-semibold tabular-nums">{b.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>
