@@ -37,6 +37,7 @@ import {
   sendError,
   toSafeErrorResponse,
 } from '../errors';
+import { ipKeyGenerator } from 'express-rate-limit';
 import {
   authLimiter,
   emailVerificationConfirmLimiter,
@@ -474,7 +475,14 @@ export function createAuthRouter(): Router {
         // skipSuccessfulRequests already prevents this hit from being
         // counted; resetKey additionally undoes any prior failures.
         try {
-          totpRecoveryRegenerateIpLimiter.resetKey(`ip:${req.ip ?? 'unknown'}`);
+          // Reset key MUST be derived through ipKeyGenerator() to match
+          // the bucket key the limiter actually wrote — for IPv6
+          // clients the limiter normalizes to /64, so a raw req.ip
+          // here would miss the active bucket and the reset would be
+          // a no-op.
+          totpRecoveryRegenerateIpLimiter.resetKey(
+            `ip:${ipKeyGenerator(req.ip ?? 'unknown')}`,
+          );
           totpRecoveryRegenerateAccountLimiter.resetKey(`acct:${req.user!.id}`);
         } catch (resetErr) {
           // Reset is best-effort; never fail a successful rotation
