@@ -27,6 +27,7 @@ import { syncAudit, syncDailyBudget } from '@shared/schema';
 import {
   tryAcquireSyncLock,
   consumeDailyBudget,
+  withDailyBudget,
   MAX_SQUARE_PAGES_PER_DAY,
 } from '../services/syncLocks';
 import { syncService } from '../services/syncService';
@@ -435,6 +436,128 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
         .where(eq(syncDailyBudget.day, day))
         .limit(1);
       expect(stored[0]?.pagesUsed).toBe(ATTEMPTS);
+    });
+
+    it('withDailyBudget preserves the no-refund-on-failure contract end-to-end (Task #164)', async () => {
+      // The whole point of `withDailyBudget` is that callers who
+      // wrap their work with it get the Task #120 abuse guarantee
+      // by construction — they cannot accidentally invert "fetch
+      // then consume" or sneak in a refund-on-error try/catch.
+      // This test pins down all four legs of that contract:
+      //
+      //   (1) consume happens BEFORE the callback runs;
+      //   (2) callback never runs when the cap is already exhausted
+      //       (so Square is not called when budget is denied);
+      //   (3) an error thrown from the callback propagates UNCHANGED;
+      //   (4) the consumed budget STAYS consumed even when the
+      //       callback throws — no refund.
+      //
+      // A future refactor that wraps the callback in a try/catch and
+      // decrements the counter on error would fail this test on
+      // step (4); a refactor that swaps the consume/work order would
+      // fail step (1) (callbackRanBeforeConsumeReturned would be
+      // observable via a too-low `pagesUsedAtCallbackEntry`).
+
+      const day = testDay();
+      // Seed the day at 0 so we can observe the consume-then-throw
+      // pattern moving the counter exactly +3 per attempt.
+      await db.insert(syncDailyBudget).values({ day, pagesUsed: 0 });
+
+      // (1) + (3) + (4): callback throws, counter MUST advance.
+      let callbackEntered = false;
+      let pagesUsedAtCallbackEntry = -1;
+      const sentinelErr = new Error('synthetic mid-callback Square failure');
+      await expect(
+        withDailyBudget(
+          3,
+          async () => {
+            callbackEntered = true;
+            // Read the persisted counter at the exact moment the
+            // callback runs. If consume hadn't happened yet this
+            // would be 0; the contract guarantees it's already 3.
+            const inFlight = await db
+              .select()
+              .from(syncDailyBudget)
+              .where(eq(syncDailyBudget.day, day))
+              .limit(1);
+            pagesUsedAtCallbackEntry = inFlight[0]?.pagesUsed ?? -1;
+            throw sentinelErr;
+          },
+          day,
+        ),
+      ).rejects.toBe(sentinelErr); // rethrown unchanged — same identity
+
+      expect(callbackEntered).toBe(true);
+      // Step (1): consume ran first. If the helper ever inverts this,
+      // pagesUsedAtCallbackEntry would be 0 instead of 3.
+      expect(pagesUsedAtCallbackEntry).toBe(3);
+
+      // Step (4): the throw did NOT refund.
+      const after1 = await db
+        .select()
+        .from(syncDailyBudget)
+        .where(eq(syncDailyBudget.day, day))
+        .limit(1);
+      expect(after1[0]?.pagesUsed).toBe(3);
+
+      // (2): when the day is already at the cap, the callback must
+      // not run at all — Square would otherwise be called for a
+      // page we've already paid for elsewhere.
+      await db
+        .update(syncDailyBudget)
+        .set({ pagesUsed: MAX_SQUARE_PAGES_PER_DAY })
+        .where(eq(syncDailyBudget.day, day));
+
+      let callbackRanAfterDenial = false;
+      const denied = await withDailyBudget(
+        1,
+        async () => {
+          callbackRanAfterDenial = true;
+          return 'should-never-be-returned';
+        },
+        day,
+      );
+      expect(denied.ok).toBe(false);
+      // Even though the helper denies, callback MUST NOT have run.
+      expect(callbackRanAfterDenial).toBe(false);
+      // Counter is unchanged by the denial path (already at cap; the
+      // conditional UPDATE rejected, no debit applied).
+      const after2 = await db
+        .select()
+        .from(syncDailyBudget)
+        .where(eq(syncDailyBudget.day, day))
+        .limit(1);
+      expect(after2[0]?.pagesUsed).toBe(MAX_SQUARE_PAGES_PER_DAY);
+    });
+
+    it('withDailyBudget returns the callback result on success (Task #164)', async () => {
+      // Companion happy-path test so a refactor that, say, always
+      // returns `ok: false` would fail loudly here even if the
+      // throw-path test above somehow still passed.
+      const day = testDay();
+      await db.insert(syncDailyBudget).values({ day, pagesUsed: 0 });
+
+      const result = await withDailyBudget(
+        2,
+        async () => ({ payload: 'ok', items: [1, 2, 3] }),
+        day,
+      );
+
+      expect(result.ok).toBe(true);
+      // Discriminated union: TS narrows .result only on the ok:true
+      // branch. Asserting .ok above proves the narrowing target.
+      if (result.ok) {
+        expect(result.result).toEqual({ payload: 'ok', items: [1, 2, 3] });
+        expect(result.used).toBe(2);
+        expect(result.cap).toBe(MAX_SQUARE_PAGES_PER_DAY);
+      }
+
+      const stored = await db
+        .select()
+        .from(syncDailyBudget)
+        .where(eq(syncDailyBudget.day, day))
+        .limit(1);
+      expect(stored[0]?.pagesUsed).toBe(2);
     });
 
     it('a denial (ok:false) followed by a thrown error still leaves the counter unchanged', async () => {

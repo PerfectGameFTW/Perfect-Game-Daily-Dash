@@ -28,7 +28,7 @@ import {
   tryAcquireSyncLock,
   recordAuditStart,
   recordAuditFinish,
-  consumeDailyBudget,
+  withDailyBudget,
   logIfSquare429,
   type SyncLock,
 } from './syncLocks';
@@ -1312,21 +1312,24 @@ export class SyncService {
       for (let page = 0; page < MAX_PAGES_PER_CALL; page++) {
         // Per-day Square page budget — stop cleanly when exceeded so a
         // runaway loop cannot saturate the shared Square API for the day.
-        const budget = await consumeDailyBudget(1);
-        if (!budget.ok) {
+        // `withDailyBudget` enforces the Task #120 ordering contract by
+        // construction: budget is consumed BEFORE the Square fetch, and
+        // any throw from the fetch propagates out without a refund (the
+        // helper has no try/catch around its callback by design).
+        const budgetResult = await withDailyBudget(1, async () => {
+          try {
+            return await squareClient.fetchGiftCardActivitiesPage(currentCursor, 'ASC');
+          } catch (fetchErr) {
+            logIfSquare429(fetchErr, { syncType: SYNC_TYPE, source: 'fetchGiftCardActivitiesPage' });
+            throw fetchErr;
+          }
+        });
+        if (!budgetResult.ok) {
           budgetExceeded = true;
-          logger.warn('sync.historicalGc.budget_exhausted', { used: budget.used, cap: budget.cap });
+          logger.warn('sync.historicalGc.budget_exhausted', { used: budgetResult.used, cap: budgetResult.cap });
           break;
         }
-
-        let activities: Awaited<ReturnType<typeof squareClient.fetchGiftCardActivitiesPage>>['activities'];
-        let nextCursor: string | undefined;
-        try {
-          ({ activities, nextCursor } = await squareClient.fetchGiftCardActivitiesPage(currentCursor, 'ASC'));
-        } catch (fetchErr) {
-          logIfSquare429(fetchErr, { syncType: SYNC_TYPE, source: 'fetchGiftCardActivitiesPage' });
-          throw fetchErr;
-        }
+        const { activities, nextCursor } = budgetResult.result;
         pagesProcessed++;
 
         logger.info('sync.historicalGc.page', { page: page + 1, events: activities.length });
@@ -1634,131 +1637,137 @@ export class SyncService {
 
         // Per-day shared Square page budget — stop cleanly when exceeded
         // so a runaway / hostile backfill can't hammer Square indefinitely.
-        const budget = await consumeDailyBudget(BACKFILL_BUDGET_PER_CHUNK);
-        if (!budget.ok) {
-          budgetExceeded = true;
-          logger.warn('sync.historicalBackfill.budget_exhausted', { used: budget.used, cap: budget.cap, chunkIndex: i + 1, totalChunks: chunks.length });
-          break;
-        }
-
-        logger.info('sync.historicalBackfill.chunk_start', { chunkIndex: i + 1, totalChunks: chunks.length, startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) });
-
+        // `withDailyBudget` enforces the Task #120 ordering contract by
+        // construction (consume FIRST, callback second, no refund on
+        // throw). The chunk_start log moves inside the callback so it
+        // still only fires AFTER a successful budget grant — matching
+        // the pre-helper ordering that operators rely on when scanning
+        // for "this chunk actually started" entries.
         try {
-          // --- Orders (batch upsert) ---
-          const squareOrders = await squareClient.fetchOrders(start, end).catch((err) => {
-            logIfSquare429(err, { syncType: SYNC_TYPE, source: 'fetchOrders' });
-            throw err;
-          });
-          const orderRows: any[] = [];
-          const squareOrderMap = new Map<string, any>();
+          const budgetResult = await withDailyBudget(BACKFILL_BUDGET_PER_CHUNK, async () => {
+            logger.info('sync.historicalBackfill.chunk_start', { chunkIndex: i + 1, totalChunks: chunks.length, startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) });
 
-          for (const squareOrder of squareOrders) {
-            try {
-              const orderData = squareClient.convertSquareOrderToOrder(squareOrder);
-              orderRows.push(orderData);
-              squareOrderMap.set(orderData.squareId, squareOrder);
-            } catch (err) {
-              logger.error('sync.historicalBackfill.order_convert_error', errorContext(err));
-            }
-          }
+            // --- Orders (batch upsert) ---
+            const squareOrders = await squareClient.fetchOrders(start, end).catch((err) => {
+              logIfSquare429(err, { syncType: SYNC_TYPE, source: 'fetchOrders' });
+              throw err;
+            });
+            const orderRows: any[] = [];
+            const squareOrderMap = new Map<string, any>();
 
-          let chunkOrdersUpserted = 0;
-          if (orderRows.length > 0) {
-            const BATCH = 200;
-            for (let b = 0; b < orderRows.length; b += BATCH) {
-              const batch = orderRows.slice(b, b + BATCH);
-              const upserted = await db.insert(orders).values(batch)
-                .onConflictDoUpdate({
-                  target: orders.squareId,
-                  set: {
-                    status: sql`excluded.status`,
-                    totalMoney: sql`excluded.total_money`,
-                    totalTax: sql`excluded.total_tax`,
-                    totalDiscount: sql`excluded.total_discount`,
-                    squareData: sql`excluded.square_data`,
-                    closedAt: sql`excluded.closed_at`,
-                  },
-                })
-                .returning({ id: orders.id, squareId: orders.squareId });
-              chunkOrdersUpserted += upserted.length;
-
-              const lineItemRows: any[] = [];
-              const upsertedIds = upserted.map(r => r.id);
-              if (upsertedIds.length > 0) {
-                await db.delete(orderLineItems).where(
-                  inArray(orderLineItems.orderId, upsertedIds)
-                );
+            for (const squareOrder of squareOrders) {
+              try {
+                const orderData = squareClient.convertSquareOrderToOrder(squareOrder);
+                orderRows.push(orderData);
+                squareOrderMap.set(orderData.squareId, squareOrder);
+              } catch (err) {
+                logger.error('sync.historicalBackfill.order_convert_error', errorContext(err));
               }
-              for (const row of upserted) {
-                const sqOrder = squareOrderMap.get(row.squareId);
-                if (sqOrder?.lineItems) {
-                  for (const li of sqOrder.lineItems) {
-                    try {
-                      lineItemRows.push(
-                        squareClient.convertSquareLineItemToOrderLineItem(li, row.id)
-                      );
-                    } catch { }
+            }
+
+            let chunkOrdersUpserted = 0;
+            if (orderRows.length > 0) {
+              const BATCH = 200;
+              for (let b = 0; b < orderRows.length; b += BATCH) {
+                const batch = orderRows.slice(b, b + BATCH);
+                const upserted = await db.insert(orders).values(batch)
+                  .onConflictDoUpdate({
+                    target: orders.squareId,
+                    set: {
+                      status: sql`excluded.status`,
+                      totalMoney: sql`excluded.total_money`,
+                      totalTax: sql`excluded.total_tax`,
+                      totalDiscount: sql`excluded.total_discount`,
+                      squareData: sql`excluded.square_data`,
+                      closedAt: sql`excluded.closed_at`,
+                    },
+                  })
+                  .returning({ id: orders.id, squareId: orders.squareId });
+                chunkOrdersUpserted += upserted.length;
+
+                const lineItemRows: any[] = [];
+                const upsertedIds = upserted.map(r => r.id);
+                if (upsertedIds.length > 0) {
+                  await db.delete(orderLineItems).where(
+                    inArray(orderLineItems.orderId, upsertedIds)
+                  );
+                }
+                for (const row of upserted) {
+                  const sqOrder = squareOrderMap.get(row.squareId);
+                  if (sqOrder?.lineItems) {
+                    for (const li of sqOrder.lineItems) {
+                      try {
+                        lineItemRows.push(
+                          squareClient.convertSquareLineItemToOrderLineItem(li, row.id)
+                        );
+                      } catch { }
+                    }
+                  }
+                }
+                if (lineItemRows.length > 0) {
+                  const LI_BATCH = 500;
+                  for (let lb = 0; lb < lineItemRows.length; lb += LI_BATCH) {
+                    await db.insert(orderLineItems).values(lineItemRows.slice(lb, lb + LI_BATCH))
+                      .onConflictDoNothing();
                   }
                 }
               }
-              if (lineItemRows.length > 0) {
-                const LI_BATCH = 500;
-                for (let lb = 0; lb < lineItemRows.length; lb += LI_BATCH) {
-                  await db.insert(orderLineItems).values(lineItemRows.slice(lb, lb + LI_BATCH))
-                    .onConflictDoNothing();
-                }
+            }
+
+            totalOrders += squareOrders.length;
+            logger.info('sync.historicalBackfill.chunk_orders', { chunkIndex: i + 1, upserted: chunkOrdersUpserted, fetched: squareOrders.length });
+
+            // --- Payments (batch upsert) ---
+            const paymentResult = await squareClient.fetchPayments(start, end, { returnMeta: true })
+              .catch((err) => {
+                logIfSquare429(err, { syncType: SYNC_TYPE, source: 'fetchPayments' });
+                throw err;
+              });
+            const squarePayments = paymentResult.payments;
+            if (paymentResult.hitPageCap) {
+              cappedPaymentChunks.push({ start, end, chunkIndex: i });
+              logger.warn('sync.historicalBackfill.payment_cap_hit', { chunkIndex: i + 1 });
+            }
+            const paymentRows: any[] = [];
+
+            for (const squarePayment of squarePayments) {
+              try {
+                const paymentData = squareClient.convertSquarePaymentToTransaction(squarePayment);
+                if (!paymentData.amount || paymentData.amount === 0) continue;
+                paymentRows.push(paymentData);
+              } catch (err) {
+                logger.error('sync.historicalBackfill.payment_convert_error', errorContext(err));
               }
             }
-          }
 
-          totalOrders += squareOrders.length;
-          logger.info('sync.historicalBackfill.chunk_orders', { chunkIndex: i + 1, upserted: chunkOrdersUpserted, fetched: squareOrders.length });
-
-          // --- Payments (batch upsert) ---
-          const paymentResult = await squareClient.fetchPayments(start, end, { returnMeta: true })
-            .catch((err) => {
-              logIfSquare429(err, { syncType: SYNC_TYPE, source: 'fetchPayments' });
-              throw err;
-            });
-          const squarePayments = paymentResult.payments;
-          if (paymentResult.hitPageCap) {
-            cappedPaymentChunks.push({ start, end, chunkIndex: i });
-            logger.warn('sync.historicalBackfill.payment_cap_hit', { chunkIndex: i + 1 });
-          }
-          const paymentRows: any[] = [];
-
-          for (const squarePayment of squarePayments) {
-            try {
-              const paymentData = squareClient.convertSquarePaymentToTransaction(squarePayment);
-              if (!paymentData.amount || paymentData.amount === 0) continue;
-              paymentRows.push(paymentData);
-            } catch (err) {
-              logger.error('sync.historicalBackfill.payment_convert_error', errorContext(err));
+            let chunkPaymentsUpserted = 0;
+            if (paymentRows.length > 0) {
+              const BATCH = 200;
+              for (let b = 0; b < paymentRows.length; b += BATCH) {
+                const batch = paymentRows.slice(b, b + BATCH);
+                const upserted = await db.insert(transactions).values(batch)
+                  .onConflictDoUpdate({
+                    target: transactions.squareId,
+                    set: {
+                      amount: sql`excluded.amount`,
+                      status: sql`excluded.status`,
+                      squareData: sql`excluded.square_data`,
+                      categoryId: sql`excluded.category_id`,
+                    },
+                  })
+                  .returning({ id: transactions.id });
+                chunkPaymentsUpserted += upserted.length;
+              }
             }
-          }
 
-          let chunkPaymentsUpserted = 0;
-          if (paymentRows.length > 0) {
-            const BATCH = 200;
-            for (let b = 0; b < paymentRows.length; b += BATCH) {
-              const batch = paymentRows.slice(b, b + BATCH);
-              const upserted = await db.insert(transactions).values(batch)
-                .onConflictDoUpdate({
-                  target: transactions.squareId,
-                  set: {
-                    amount: sql`excluded.amount`,
-                    status: sql`excluded.status`,
-                    squareData: sql`excluded.square_data`,
-                    categoryId: sql`excluded.category_id`,
-                  },
-                })
-                .returning({ id: transactions.id });
-              chunkPaymentsUpserted += upserted.length;
-            }
+            totalPayments += squarePayments.length;
+            logger.info('sync.historicalBackfill.chunk_payments', { chunkIndex: i + 1, upserted: chunkPaymentsUpserted, fetched: squarePayments.length });
+          });
+          if (!budgetResult.ok) {
+            budgetExceeded = true;
+            logger.warn('sync.historicalBackfill.budget_exhausted', { used: budgetResult.used, cap: budgetResult.cap, chunkIndex: i + 1, totalChunks: chunks.length });
+            break;
           }
-
-          totalPayments += squarePayments.length;
-          logger.info('sync.historicalBackfill.chunk_payments', { chunkIndex: i + 1, upserted: chunkPaymentsUpserted, fetched: squarePayments.length });
 
         } catch (err) {
           failedChunks++;

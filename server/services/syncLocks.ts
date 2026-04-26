@@ -325,6 +325,57 @@ export async function consumeDailyBudget(
 }
 
 /**
+ * Outcome of a `withDailyBudget` call. Discriminated on `ok` so TS narrows
+ * `result` to the callback's return type only on the success branch.
+ */
+export type DailyBudgetResult<T> =
+  | { ok: true; result: T; used: number; cap: number }
+  | { ok: false; used: number; cap: number };
+
+/**
+ * Run `callback` only after the daily Square page budget grants `pages`
+ * worth of capacity. Enforces the Task #120 "consume *before* the work,
+ * never refund on failure" contract by construction:
+ *
+ *   1. `consumeDailyBudget` is called FIRST, so any caller using this
+ *      helper cannot accidentally invert the order ("fetch first, then
+ *      consume") and silently bypass the abuse cap.
+ *   2. On `{ ok: false }` the callback never runs — Square is not
+ *      called and no work happens. The denial is already logged
+ *      canonically by `consumeDailyBudget` (Task #163).
+ *   3. On `{ ok: true }` the callback runs. ANY throw it produces
+ *      propagates unchanged: there is intentionally no try/catch
+ *      around the callback here, because catching would either have
+ *      to swallow the error (data corruption) or refund the budget
+ *      (the very abuse vector Task #120 closed). Letting the throw
+ *      escape preserves both contracts simultaneously.
+ *
+ * Production callers should put their Square API call(s) — and only
+ * those — inside the callback. Post-fetch DB work that doesn't itself
+ * consume Square pages can stay outside; if a future refactor moves
+ * additional Square calls into the same iteration, they belong inside
+ * the same `withDailyBudget` block (with the page count summed) so
+ * the cap still bounds them.
+ */
+export async function withDailyBudget<T>(
+  pages: number,
+  callback: () => Promise<T>,
+  dayOverride?: string,
+): Promise<DailyBudgetResult<T>> {
+  // `dayOverride` mirrors `consumeDailyBudget`'s test-only escape hatch
+  // so suite tests of this helper can target a synthetic day key
+  // without mutating today's real budget row in a shared dev DB.
+  // Production callers always omit it.
+  const budget = await consumeDailyBudget(pages, dayOverride);
+  if (!budget.ok) {
+    return { ok: false, used: budget.used, cap: budget.cap };
+  }
+  // Deliberately NOT wrapped in try/catch — see contract docstring.
+  const result = await callback();
+  return { ok: true, result, used: budget.used, cap: budget.cap };
+}
+
+/**
  * Detect a Square-API HTTP 429 (rate-limit) error and emit a structured
  * `square.rate_limit_429` warning so it's grep-able in the log store.
  * Returns `true` if the error was a 429 (caller may choose to back off).
