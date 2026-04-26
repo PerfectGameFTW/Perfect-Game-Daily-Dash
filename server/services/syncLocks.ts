@@ -298,9 +298,26 @@ export async function consumeDailyBudget(
       .from(syncDailyBudget)
       .where(eq(syncDailyBudget.day, day))
       .limit(1);
+    const used = cur[0]?.pagesUsed ?? 0;
+    // Single canonical structured warning so operators have ONE grep
+    // target (`sync.dailyBudget.rejected`) for "we hit the daily Square
+    // page cap" no matter which caller triggered it. Per-caller logs
+    // (`sync.historicalGc.budget_exhausted`,
+    // `sync.historicalBackfill.budget_exhausted`, …) intentionally stay
+    // — they carry caller-specific context like `chunkIndex` — but this
+    // line is the source of truth and is emitted unconditionally for
+    // every rejection, including from any future caller that forgets to
+    // log on its own and from the abusive crash-loop scenario Task #120
+    // defended against.
+    logger.warn('sync.dailyBudget.rejected', {
+      pageCount: pages,
+      pagesUsed: used,
+      cap: MAX_SQUARE_PAGES_PER_DAY,
+      dateStr: day,
+    });
     return {
       ok: false,
-      used: cur[0]?.pagesUsed ?? 0,
+      used,
       cap: MAX_SQUARE_PAGES_PER_DAY,
     };
   }

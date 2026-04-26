@@ -18,7 +18,7 @@
  * production service will run, not a mock.
  */
 
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 
@@ -30,6 +30,7 @@ import {
   MAX_SQUARE_PAGES_PER_DAY,
 } from '../services/syncLocks';
 import { syncService } from '../services/syncService';
+import { logger } from '../logger';
 
 // Synthetic day key used for budget tests. Must NOT start with '9999-'
 // because syncDailyBudgetTrim.test.ts uses '9999-' as its cleanup
@@ -227,6 +228,100 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
         .where(eq(syncDailyBudget.day, day))
         .limit(1);
       expect(stored[0]?.pagesUsed).toBe(MAX_SQUARE_PAGES_PER_DAY);
+    });
+
+    it('emits a single canonical sync.dailyBudget.rejected warning whenever it returns ok:false (Task #163)', async () => {
+      // Operators need ONE grep target ("sync.dailyBudget.rejected")
+      // for "we hit the daily Square page cap" no matter which caller
+      // tripped it — including future callers and the abusive
+      // crash-loop scenario from Task #120 where caller-side logging
+      // can't be trusted. Pinning the log line down here means a
+      // future refactor that deletes / renames / silences it fails
+      // this test instead of failing silently in production.
+
+      const day = testDay();
+      // Two seeded denial scenarios so we exercise both ok:false code
+      // paths in `consumeDailyBudget`:
+      //   (a) UPDATE returns zero rows because the WHERE-guard short-
+      //       circuits when used + pages > cap (the "would exceed"
+      //       path — most common in production).
+      //   (b) Same code path entered with the day already AT the cap
+      //       (the "already exhausted" follow-up path that a long-
+      //       running backfill hits on every subsequent page).
+      // Both must produce the same canonical log line so any caller
+      // grepping for it sees both kinds of rejection.
+      await db.insert(syncDailyBudget).values({
+        day,
+        pagesUsed: MAX_SQUARE_PAGES_PER_DAY - 1,
+      });
+
+      const warnSpy = vi.spyOn(logger, 'warn');
+      try {
+        // (a) Would-exceed: request 2 pages with 1 slot remaining.
+        const r1 = await consumeDailyBudget(2, day);
+        expect(r1.ok).toBe(false);
+
+        // (b) Already-at-cap: bring the row to the cap, then ask for
+        //     one more page.
+        await db
+          .update(syncDailyBudget)
+          .set({ pagesUsed: MAX_SQUARE_PAGES_PER_DAY })
+          .where(eq(syncDailyBudget.day, day));
+        const r2 = await consumeDailyBudget(1, day);
+        expect(r2.ok).toBe(false);
+
+        // Filter the spy to only our key so an unrelated warning from
+        // another part of the system doesn't flake the assertion.
+        // Cleared, well-formed contract: one line per rejection,
+        // carrying the requested page count, current pages_used, and
+        // the cap (per Task #163's "Done looks like").
+        const calls = warnSpy.mock.calls.filter(
+          (c) => c[0] === 'sync.dailyBudget.rejected',
+        );
+        expect(calls).toHaveLength(2);
+
+        const [, ctxA] = calls[0];
+        expect(ctxA).toMatchObject({
+          pageCount: 2,
+          pagesUsed: MAX_SQUARE_PAGES_PER_DAY - 1,
+          cap: MAX_SQUARE_PAGES_PER_DAY,
+          dateStr: day,
+        });
+
+        const [, ctxB] = calls[1];
+        expect(ctxB).toMatchObject({
+          pageCount: 1,
+          pagesUsed: MAX_SQUARE_PAGES_PER_DAY,
+          cap: MAX_SQUARE_PAGES_PER_DAY,
+          dateStr: day,
+        });
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('does NOT emit sync.dailyBudget.rejected when the request is granted (Task #163)', async () => {
+      // The companion guard: a successful consume must NOT produce a
+      // rejection log line. Otherwise operators paging on this key
+      // would get woken up for normal traffic.
+      const day = testDay();
+      await db.insert(syncDailyBudget).values({
+        day,
+        pagesUsed: 0,
+      });
+
+      const warnSpy = vi.spyOn(logger, 'warn');
+      try {
+        const result = await consumeDailyBudget(3, day);
+        expect(result.ok).toBe(true);
+
+        const calls = warnSpy.mock.calls.filter(
+          (c) => c[0] === 'sync.dailyBudget.rejected',
+        );
+        expect(calls).toHaveLength(0);
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it('creates the day row on first call when none exists', async () => {
