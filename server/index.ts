@@ -706,6 +706,57 @@ async function exitWithError(error: unknown) {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_security_audit_log_created_at ON security_audit_log (created_at)`);
     log('✓ Security audit log schema verified');
 
+    // express-session / connect-pg-simple `sessions` table (Task #151).
+    //
+    // Why an explicit bootstrap exists at all:
+    //   server/session.ts wires the store with `createTableIfMissing:
+    //   true`, which sounds like it makes this redundant. In practice
+    //   connect-pg-simple defers the CREATE TABLE until the FIRST
+    //   session-store query is issued — i.e. the first inbound HTTP
+    //   request after the server starts listening. Production hit a
+    //   state where that lazy auto-create never landed (Task #151
+    //   logs show every request thereafter throwing 42P01 `relation
+    //   "sessions" does not exist` from PGStore._asyncQuery). With
+    //   express-session running on every request AND on every
+    //   /ws WebSocket upgrade, the entire app — SPA HTML, favicon,
+    //   service worker, password-reset link landings — was returning
+    //   the JSON error page instead of HTML, so the deployed site was
+    //   effectively down for end users.
+    //
+    //   Promoting the table into a deterministic startup bootstrap
+    //   eliminates the race: by the time the HTTP server begins
+    //   accepting connections at the bottom of this IIFE, the table
+    //   is already verified to exist. `createTableIfMissing: true`
+    //   stays on as defense in depth (it becomes a no-op once the
+    //   table is here), but it is no longer the only line of
+    //   defense. We do NOT add this to shared/schema.ts: the schema
+    //   shape and indexes are owned by connect-pg-simple, not by us,
+    //   so duplicating it into Drizzle would create a second source
+    //   of truth that could drift on a library upgrade.
+    //
+    //   The DDL below is semantically equivalent to what
+    //   connect-pg-simple ships in
+    //   node_modules/connect-pg-simple/table.sql (with the table
+    //   renamed `session` -> `sessions` to match the
+    //   `tableName: 'sessions'` config in server/session.ts), but is
+    //   intentionally not byte-identical: the inline PRIMARY KEY
+    //   replaces the upstream ALTER TABLE … ADD CONSTRAINT pattern
+    //   so re-running this block on a freshly-created table cannot
+    //   throw "constraint already exists" (Postgres has no IF NOT
+    //   EXISTS for ADD CONSTRAINT). The constraint and index names
+    //   end up Postgres-defaulted / explicit rather than the
+    //   upstream `session_pkey` / `IDX_session_expire`, which makes
+    //   no behavioural difference for the store. `COLLATE "default"`
+    //   is preserved verbatim from the upstream definition.
+    log('Bootstrapping sessions schema...');
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS sessions (
+      sid VARCHAR NOT NULL COLLATE "default" PRIMARY KEY,
+      sess JSON NOT NULL,
+      expire TIMESTAMP(6) NOT NULL
+    )`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "IDX_sessions_expire" ON sessions (expire)`);
+    log('✓ Sessions schema verified');
+
     log('Registering routes...');
     const server = await registerRoutes(app);
     httpServer = server;
