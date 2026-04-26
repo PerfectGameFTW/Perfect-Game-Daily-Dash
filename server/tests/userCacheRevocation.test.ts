@@ -16,9 +16,10 @@
  *      waiting for the TTL to expire.
  *
  * Coverage: deleteUser, updateUserEmail, completePasswordReset, TOTP
- * enroll (verifyAndEnable), TOTP disable. The deleteUser path is also
- * exercised end-to-end through `requireAuth` so the session-destroy +
- * 401 behaviour is locked in too.
+ * enroll (verifyAndEnable), TOTP disable, confirmEmailVerification,
+ * TOTP beginEnrollment, TOTP regenerateRecoveryCodes (Task #152). The
+ * deleteUser path is also exercised end-to-end through `requireAuth`
+ * so the session-destroy + 401 behaviour is locked in too.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
@@ -27,7 +28,11 @@ import { Secret, TOTP } from 'otpauth';
 import { createHash, randomBytes } from 'crypto';
 
 import { db } from '../db';
-import { users, passwordResetTokens } from '@shared/schema';
+import {
+  users,
+  passwordResetTokens,
+  emailVerificationTokens,
+} from '@shared/schema';
 import { authService, invalidateUserCache } from '../services/authService';
 import { totpService } from '../services/totpService';
 import { encryptTotpSecret } from '../services/totpCrypto';
@@ -319,5 +324,146 @@ describe('User cache invalidation on revocation paths (Task #112)', () => {
 
     const auth = await runRequireAuth(u.id);
     expect(auth.user?.totpEnabled).toBe(false);
+  });
+
+  // --- Task #152: lock in cache invalidation for the remaining
+  // account-change paths. Same shape as the suites above:
+  //   1. seed the cache with the pre-mutation row,
+  //   2. drive the real service method,
+  //   3. assert the very next cached read reflects the change with no
+  //      TTL wait.
+  // If a future refactor drops one of these `invalidateUserCache`
+  // calls the corresponding test below will start showing the seeded
+  // (pre-mutation) row instead of the new value and fail loudly.
+
+  it('confirmEmailVerification: cache returns the verified email on the very next read', async () => {
+    const oldEmail = `${PREFIX}confirm_old@example.test`;
+    const newEmail = `${PREFIX}confirm_new@example.test`;
+    const u = await createUser('confirm_email', { email: oldEmail });
+
+    // Seed the cache against the user's *current* recovery email so
+    // we can prove the next read picks up the verified address rather
+    // than the seeded copy.
+    const seeded = await authService.getUserByIdCached(u.id);
+    expect(seeded?.email).toBe(oldEmail);
+
+    // Issue a verification token directly against the proposed new
+    // address so the test doesn't depend on the email-send pipeline.
+    // Token hashing here mirrors what authService does internally
+    // (sha256 of the raw token), which is the same scheme the
+    // password-reset test uses above — so any change to the hashing
+    // contract will surface in both suites.
+    const rawToken = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    await db.insert(emailVerificationTokens).values({
+      userId: u.id,
+      email: newEmail,
+      tokenHash,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+
+    const result = await authService.confirmEmailVerification(rawToken);
+    expect(result).toEqual({ email: newEmail, userId: u.id });
+
+    // Without the invalidation in confirmEmailVerification, the
+    // seeded `oldEmail` row would still be served here for up to one
+    // cache TTL.
+    const after = await authService.getUserByIdCached(u.id);
+    expect(after?.email).toBe(newEmail);
+
+    // requireAuth should also see the verified address immediately.
+    const auth = await runRequireAuth(u.id);
+    expect(auth.user?.email).toBe(newEmail);
+  });
+
+  it('TOTP beginEnrollment: cache returns the wiped recovery codes on the very next read', async () => {
+    const u = await createUser('totp_begin');
+
+    // Pre-state the row as if the user had already completed
+    // enrollment with one batch of recovery codes. We do this
+    // directly rather than going through verifyAndEnable so the
+    // seeded cache contains a known non-null `totpRecoveryCodes`
+    // array that beginEnrollment must visibly clear.
+    const seededSecret = new Secret({ size: 20 });
+    const seededRecoveryCodes = ['SEED-CODE-AAAA', 'SEED-CODE-BBBB'];
+    await db
+      .update(users)
+      .set({
+        totpSecretEncrypted: encryptTotpSecret(seededSecret.base32),
+        totpEnabled: true,
+        totpRecoveryCodes: seededRecoveryCodes,
+      })
+      .where(eq(users.id, u.id));
+    invalidateUserCache(u.id);
+
+    // Re-read so beginEnrollment receives a fresh User object that
+    // matches the row we just wrote (its signature takes a User).
+    const seededRow = await authService.getUserByIdCached(u.id);
+    expect(seededRow?.totpRecoveryCodes).toEqual(seededRecoveryCodes);
+
+    await totpService.beginEnrollment(seededRow!);
+
+    // Without the invalidation in beginEnrollment, this read would
+    // still see the seeded `seededRecoveryCodes` array.
+    const after = await authService.getUserByIdCached(u.id);
+    expect(after?.totpRecoveryCodes).toBeNull();
+    // Sanity: the row's encrypted secret should also have rotated to
+    // the new pending one. We don't decrypt-and-compare base32 here
+    // (that would couple the test to the crypto module's private
+    // surface), it's enough that the ciphertext changed.
+    expect(after?.totpSecretEncrypted).not.toBe(
+      encryptTotpSecret(seededSecret.base32),
+    );
+  });
+
+  it('TOTP regenerateRecoveryCodes: cache returns the new code batch on the very next read', async () => {
+    const u = await createUser('totp_regen');
+
+    // Pre-enable TOTP with a known secret + a known recovery-code
+    // batch so the seeded cache reads a deterministic array. We
+    // bypass beginEnrollment + verifyAndEnable for the same reason
+    // the TOTP enroll/disable suites above do: their own
+    // invalidations would mask whether the *regenerate* call clears
+    // the cache.
+    const knownSecret = new Secret({ size: 20 });
+    const seededRecoveryCodes = ['REGEN-SEED-1111', 'REGEN-SEED-2222'];
+    await db
+      .update(users)
+      .set({
+        totpSecretEncrypted: encryptTotpSecret(knownSecret.base32),
+        totpEnabled: true,
+        totpRecoveryCodes: seededRecoveryCodes,
+      })
+      .where(eq(users.id, u.id));
+    invalidateUserCache(u.id);
+
+    const seeded = await authService.getUserByIdCached(u.id);
+    expect(seeded?.totpRecoveryCodes).toEqual(seededRecoveryCodes);
+
+    // Drive a live authenticator code so regenerateRecoveryCodes
+    // accepts the request (it explicitly refuses recovery codes
+    // here, see the comment above its body).
+    const totp = new TOTP({
+      issuer: 'Perfect Game Sales Dashboard',
+      label: u.username,
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      secret: knownSecret,
+    });
+    const code = totp.generate();
+    const newCodes = await totpService.regenerateRecoveryCodes(u.id, code);
+    expect(newCodes).not.toBeNull();
+    expect(newCodes!.length).toBeGreaterThan(0);
+
+    // Without the invalidation in regenerateRecoveryCodes the next
+    // read would still serve the seeded array. The new array on the
+    // row stores hashes (not the plaintext codes returned to the
+    // caller), so we assert the hashes differ from the seeded
+    // plaintext rather than try to round-trip the new plaintext.
+    const after = await authService.getUserByIdCached(u.id);
+    expect(after?.totpRecoveryCodes).not.toBeNull();
+    expect(after?.totpRecoveryCodes).not.toEqual(seededRecoveryCodes);
+    expect(after?.totpRecoveryCodes!.length).toBe(newCodes!.length);
   });
 });
