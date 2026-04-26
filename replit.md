@@ -331,3 +331,6 @@ Hand edits in production leave no audit trail and re-create the same silent-drif
 
 ### Follow-up task proposals
 Only propose follow-up tasks that are **critical or high priority**. Do not propose medium, low, or nice-to-have items. A follow-up qualifies if it directly addresses a security risk, data integrity issue, or a broken/missing feature that meaningfully impacts daily use. Housekeeping, refactoring, test coverage improvements, and incremental enhancements do not meet the bar unless they carry a genuine production risk.
+
+### Pre-existing errors
+Always fix pre-existing errors (failing tests, type errors, broken builds, runtime crashes) before marking a task complete. If a task introduces or exposes an error that was already present in the codebase, resolve it as part of the task rather than deferring it.
