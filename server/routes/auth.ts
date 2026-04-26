@@ -385,7 +385,10 @@ export function createAuthRouter(): Router {
   router.post(
     '/totp/enroll',
     requireAuth,
-    requireAdmin,
+    // Self-service enrollment: any authenticated user can opt in to 2FA
+    // for their own account from the Account Settings page (Task #185).
+    // The previous requireAdmin gate is gone now that the admin panel
+    // is no longer the only enrollment surface.
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const result = await totpService.beginEnrollment(req.user!, {
@@ -403,7 +406,8 @@ export function createAuthRouter(): Router {
   router.post(
     '/totp/enroll/verify',
     requireAuth,
-    requireAdmin,
+    // See /totp/enroll above — enrollment is self-service for any
+    // authenticated user (Task #185).
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const parsed = totpVerifySchema.safeParse(req.body);
