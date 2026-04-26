@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import express from 'express';
 import session from 'express-session';
+import connectPgSimple from 'connect-pg-simple';
 import http from 'http';
 import { AddressInfo } from 'net';
 import { eq, inArray, desc } from 'drizzle-orm';
@@ -536,5 +537,171 @@ describe('Admin Security overview + require-2FA toggle (Task #100)', () => {
       expect(r.status).toBe(401);
       expect(await sessionExists(TARGET_SID_A)).toBe(true);
     });
+  });
+});
+
+
+// Task #127 — End-to-end contract test.
+//
+// The describe block above seeds rows directly into the `sessions`
+// table to prove the SQL DELETE fires on the success path. That's
+// good enough to pin the helper's behavior, but it doesn't prove
+// what the task description actually asks for: "a previously-valid
+// session cookie is rejected after the action."
+//
+// To prove THAT, we need a test app whose session middleware
+// reads/writes the same PG `sessions` table the production purge
+// targets. So this suite stands up its own express app with a real
+// connect-pg-simple store, logs the target user in (getting a real
+// signed cookie tied to a real PG row), has an admin trigger
+// disable-totp on the target, and then re-uses the target's cookie
+// against /me. requireAuth must reject it with 401.
+describe('Task #127 E2E: a real session cookie is rejected after admin disable-TOTP', () => {
+  const PgStore = connectPgSimple(session);
+  const E2E_ADMIN = '__e2e_t127_admin__';
+  const E2E_TARGET = '__e2e_t127_target__';
+  const PWD = 'E2eT127Pwd!9876';
+
+  let e2eApp: express.Express;
+  let e2eServer: http.Server;
+  let e2eUrl: string;
+  let e2eAdminId: number;
+  let e2eTargetId: number;
+
+  beforeAll(async () => {
+    await db
+      .delete(users)
+      .where(inArray(users.username, [E2E_ADMIN, E2E_TARGET]));
+
+    const a = await authService.registerUser(E2E_ADMIN, PWD, 'admin');
+    e2eAdminId = a.id;
+    const t = await authService.registerUser(E2E_TARGET, PWD, 'admin');
+    e2eTargetId = t.id;
+
+    e2eApp = express();
+    e2eApp.set('trust proxy', 'loopback');
+    e2eApp.use(express.json());
+    e2eApp.use(
+      session({
+        // Real PG-backed store — the same store class production uses,
+        // talking to the same `sessions` table the helper purges.
+        store: new PgStore({
+          pool: pool as any,
+          tableName: 'sessions',
+          createTableIfMissing: true,
+        }),
+        // Distinct cookie name from the other suites so a leaked
+        // cookie from this app can't accidentally satisfy auth in
+        // another running test app.
+        name: 't127e2e.sid',
+        secret: 'test-secret-t127-e2e-only',
+        resave: false,
+        saveUninitialized: false,
+        cookie: { httpOnly: true, sameSite: 'lax', secure: false },
+      }),
+    );
+    e2eApp.use('/api/auth', createAuthRouter());
+
+    await new Promise<void>((resolve) => {
+      e2eServer = http.createServer(e2eApp);
+      e2eServer.listen(0, '127.0.0.1', () => resolve());
+    });
+    e2eUrl = `http://127.0.0.1:${(e2eServer.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => e2eServer.close(() => resolve()));
+    // Clean up any session rows this suite produced. A LIKE on the
+    // user-id-bearing JSON payload is sufficient — we don't know the
+    // sids assigned by the store.
+    await pool.query(
+      `DELETE FROM sessions WHERE sess->>'userId' IN ($1, $2)`,
+      [String(e2eAdminId), String(e2eTargetId)],
+    );
+    await db
+      .delete(securityAuditLog)
+      .where(inArray(securityAuditLog.actorUserId, [e2eAdminId, e2eTargetId]));
+    await db
+      .delete(users)
+      .where(inArray(users.id, [e2eAdminId, e2eTargetId]));
+  });
+
+  async function login(username: string, password: string): Promise<string> {
+    const r = await fetch(`${e2eUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    expect(r.status).toBe(200);
+    const setCookie = r.headers.get('set-cookie');
+    expect(setCookie).toBeTruthy();
+    return setCookie!.split(';')[0];
+  }
+
+  it('the target\'s cookie was valid before the admin action and is rejected immediately after', async () => {
+    // 1. Target logs in WHILE TOTP IS OFF so we get a real fully-
+    // authenticated session row in PG (login with TOTP enabled
+    // returns a pending-2FA half-session, which is not what we want
+    // to test against). After login we flip totpEnabled=true in the
+    // DB so the admin disable endpoint has actual work to do — that
+    // toggle doesn't touch the existing session row.
+    const targetCookie = await login(E2E_TARGET, PWD);
+    await db
+      .update(users)
+      .set({
+        totpEnabled: true,
+        totpSecretEncrypted: 'placeholder',
+        totpRecoveryCodes: ['x', 'y'],
+      })
+      .where(eq(users.id, e2eTargetId));
+    authService.invalidateUserCache(e2eTargetId);
+
+    // 2. Sanity: target's cookie authenticates a requireAuth-gated
+    // route. We use the admin overview endpoint because both /me
+    // (returns 200+null on logged-out, not 401) and most user
+    // endpoints would conflate "session purged" with "no permission".
+    // The target is an admin, so 200 here proves the session is live.
+    const beforeR = await fetch(
+      `${e2eUrl}/api/auth/admin/security/overview`,
+      { headers: { Cookie: targetCookie } },
+    );
+    expect(beforeR.status).toBe(200);
+
+    // 3. A different admin force-disables the target's 2FA. The
+    // helper purges the target's session row from PG as part of the
+    // success path.
+    const adminCookie = await login(E2E_ADMIN, PWD);
+    const disableR = await fetch(
+      `${e2eUrl}/api/auth/admin/security/users/${e2eTargetId}/disable-totp`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: adminCookie,
+        },
+        body: JSON.stringify({ password: PWD }),
+      },
+    );
+    expect(disableR.status).toBe(200);
+
+    // 4. THE CORE ASSERTION: the exact same cookie from step 2 must
+    // now be rejected with 401. This is the contract Task #127 was
+    // created to enforce — an attacker holding a stolen cookie can no
+    // longer use it the moment the operator pulls the trigger.
+    const afterR = await fetch(
+      `${e2eUrl}/api/auth/admin/security/overview`,
+      { headers: { Cookie: targetCookie } },
+    );
+    expect(afterR.status).toBe(401);
+
+    // 5. The admin's own cookie is unaffected — only the *target's*
+    // sessions are purged. Without this assertion a buggy "purge
+    // every session in the table" implementation would also pass the
+    // primary contract.
+    const adminAfterR = await fetch(
+      `${e2eUrl}/api/auth/admin/security/overview`,
+      { headers: { Cookie: adminCookie } },
+    );
+    expect(adminAfterR.status).toBe(200);
   });
 });
