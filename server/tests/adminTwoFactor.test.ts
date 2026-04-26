@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import session from 'express-session';
 import http from 'http';
@@ -536,6 +536,157 @@ describe('Admin Security overview + require-2FA toggle (Task #100)', () => {
       );
       expect(r.status).toBe(401);
       expect(await sessionExists(TARGET_SID_A)).toBe(true);
+    });
+  });
+
+  // Task #128 — atomicity / rollback tests for the require-2FA toggle
+  // and the admin disable-TOTP endpoint. Both paths now commit the
+  // state mutation and the security_audit_log row inside one DB
+  // transaction (`setAppSettingWithAudit`, `disableUserTotpWithAudit`
+  // in pgStorage). The happy-path tests above prove both halves land
+  // when nothing goes wrong; these tests prove the OTHER half of the
+  // contract — that if the audit insert blows up, the state mutation
+  // does NOT persist. A future refactor that re-splits the helper
+  // into two separate statements would silently break atomicity, so
+  // we lock it in here by injecting a failure into the audit insert
+  // and asserting the previous state survives.
+  //
+  // Mechanism: wrap `db.transaction` to hand the callback a tx whose
+  // `insert` method throws synchronously when called with the
+  // `securityAuditLog` table. The state-mutation insert/update runs
+  // first inside the same transaction and is then rolled back by
+  // Postgres when the audit insert raises.
+  describe('Task #128: audit-write failure rolls back the state change', () => {
+    // Types derived from the live `db.transaction` signature so the
+    // spy-based wrapper below stays in lock-step with whatever drizzle
+    // actually exposes — no `any` escapes, just structural inference.
+    type DbTransaction = typeof db.transaction;
+    type TxCallback = Parameters<DbTransaction>[0];
+    type Tx = Parameters<TxCallback>[0];
+    type TxConfig = Parameters<DbTransaction>[1];
+
+    let txSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+    function injectAuditFailure(): void {
+      const originalTransaction: DbTransaction = db.transaction.bind(db);
+      txSpy = vi
+        .spyOn(db, 'transaction')
+        .mockImplementation(<T>(
+          fn: (tx: Tx) => Promise<T>,
+          config?: TxConfig,
+        ): Promise<T> => {
+          return originalTransaction((tx) => {
+            const originalInsert = tx.insert.bind(tx);
+            // Generic-preserving wrapper: same `<TTable extends PgTable>`
+            // shape as the real `tx.insert`, so reassigning it doesn't
+            // require any unsafe casts. We special-case only the audit
+            // table; every other insert (the state mutation that runs
+            // first inside the same transaction) flows through the real
+            // implementation untouched.
+            tx.insert = function patchedInsert<
+              TTable extends Parameters<typeof originalInsert>[0],
+            >(table: TTable) {
+              if (table === securityAuditLog) {
+                throw new Error(
+                  'forced audit-write failure for atomicity test',
+                );
+              }
+              return originalInsert(table);
+            };
+            return fn(tx);
+          }, config);
+        });
+    }
+
+    afterEach(() => {
+      txSpy?.mockRestore();
+      txSpy = null;
+    });
+
+    it('require-2FA PUT: forced audit failure leaves the previous toggle value intact', async () => {
+      // Seed a known previous value so we can prove the failed write
+      // did NOT flip it. Direct DB write (not the WithAudit helper) so
+      // the seed itself doesn't try to write an audit row.
+      await db
+        .insert(appSettings)
+        .values({
+          key: REQUIRE_ADMIN_2FA_SETTING_KEY,
+          value: { enabled: false },
+        })
+        .onConflictDoUpdate({
+          target: appSettings.key,
+          set: { value: { enabled: false } },
+        });
+
+      // Log in BEFORE arming the spy so the login flow's own queries
+      // (none of which touch security_audit_log) aren't accidentally
+      // routed through the failure-injecting transaction wrapper.
+      const cookie = await loginNoTotp(ADMIN_A);
+      injectAuditFailure();
+
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/admin/security/require-2fa`,
+        'PUT',
+        { enabled: true },
+        cookie,
+      );
+      // The route's catch block forwards to next(error) → Express
+      // default error handler → 500. Anything in the 5xx range
+      // satisfies the contract; we don't pin to exactly 500 because
+      // there's no custom error handler in this test app and the
+      // exact status is an implementation detail of express.
+      expect(r.status).toBeGreaterThanOrEqual(500);
+      expect(r.status).toBeLessThan(600);
+
+      const stored = await db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, REQUIRE_ADMIN_2FA_SETTING_KEY));
+      // CORE ASSERTION: the toggle is still in its previous state.
+      // A regression that re-split the helper into two separate
+      // statements would have committed the appSettings update
+      // before the audit insert blew up, and this assertion would
+      // catch it.
+      expect(stored[0]?.value).toEqual({ enabled: false });
+    });
+
+    it('disable-TOTP POST: forced audit failure leaves the target user\'s totpEnabled=true', async () => {
+      // Pre-enable 2FA on admin B so the helper has actual state to
+      // try to flip — without this the user row is already in the
+      // post-disable state and the test would tautologically pass.
+      await db
+        .update(users)
+        .set({
+          totpEnabled: true,
+          totpSecretEncrypted: 'placeholder',
+          totpRecoveryCodes: ['a', 'b'],
+        })
+        .where(eq(users.id, adminBId));
+      authService.invalidateUserCache(adminBId);
+
+      const cookie = await loginNoTotp(ADMIN_A);
+      injectAuditFailure();
+
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/admin/security/users/${adminBId}/disable-totp`,
+        'POST',
+        { password: PWD },
+        cookie,
+      );
+      expect(r.status).toBeGreaterThanOrEqual(500);
+      expect(r.status).toBeLessThan(600);
+
+      const after = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, adminBId));
+      // CORE ASSERTION: the target's TOTP state is unchanged because
+      // the audit insert blew up inside the same transaction. If the
+      // helper ever stops being transactional, the user row will
+      // already show totpEnabled=false here and the test will fail.
+      expect(after[0]?.totpEnabled).toBe(true);
+      expect(after[0]?.totpSecretEncrypted).toBe('placeholder');
+      expect(after[0]?.totpRecoveryCodes).toEqual(['a', 'b']);
     });
   });
 });
