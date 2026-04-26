@@ -326,3 +326,8 @@ When an alert fires, do **not** fix the row by editing it directly in psql — t
 2. Ship a one-off migration that deletes the row entirely so the consumer's hard-coded default takes over.
 
 Hand edits in production leave no audit trail and re-create the same silent-drift problem the alerter exists to catch.
+
+## Agent Workflow Preferences
+
+### Follow-up task proposals
+Only propose follow-up tasks that are **critical or high priority**. Do not propose medium, low, or nice-to-have items. A follow-up qualifies if it directly addresses a security risk, data integrity issue, or a broken/missing feature that meaningfully impacts daily use. Housekeeping, refactoring, test coverage improvements, and incremental enhancements do not meet the bar unless they carry a genuine production risk.
