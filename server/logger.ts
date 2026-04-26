@@ -207,6 +207,15 @@ const ALLOWED_FIELDS = new Set<string>([
   'attemptCount',
   'actorRole',
   'recoveryCodesRemaining',
+  // Admin-action audit (Tasks #102 / #116 / #127). `actorUserId` and
+  // `targetUserId` identify the privileged actor and the user being
+  // acted upon — opaque numeric IDs only, never names. `revoked` is
+  // the count of session rows wiped by `revokeAllSessionsForUser`
+  // (Task #127) so an operator can see at a glance whether an attacker
+  // had any live sessions when the admin pulled the trigger.
+  'actorUserId',
+  'targetUserId',
+  'revoked',
   // error context
   'code',
   'errorMessage',

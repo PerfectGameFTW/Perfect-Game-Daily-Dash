@@ -27,7 +27,7 @@ import http from 'http';
 import { AddressInfo } from 'net';
 import { eq, inArray, desc } from 'drizzle-orm';
 
-import { db } from '../db';
+import { db, pool } from '../db';
 import { users, passwordResetTokens, securityAuditLog } from '@shared/schema';
 import { authService, invalidateUserCache } from '../services/authService';
 import { encryptTotpSecret } from '../services/totpCrypto';
@@ -468,5 +468,144 @@ describe('Admin send-reset-link endpoint (Task #116)', () => {
       );
       expect(r.status).toBe(200);
     }
+  });
+
+  // Task #127: success case must purge the target's active sessions.
+  // Operator threat model: a reset link gets sent because the target's
+  // account is suspect (post-compromise help-desk ticket, hijacked
+  // admin, etc). If the attacker is currently signed in, leaving their
+  // session alive until the user follows the email link defeats the
+  // operator's intervention. Failure cases (no email on file, transport
+  // failure, unknown user) must NOT purge — there's no actual security
+  // remediation in flight.
+  describe('Task #127: session revocation on send-reset-link', () => {
+    const TARGET_SID_OK = '__t127_resend_ok__';
+    const TARGET_SID_NOEMAIL = '__t127_resend_noemail__';
+    const TARGET_SID_TRANSPORT = '__t127_resend_transport__';
+    const OTHER_SID = '__t127_resend_other__';
+
+    async function seedSession(sid: string, userId: number): Promise<void> {
+      const expire = new Date(Date.now() + 60 * 60 * 1000);
+      await pool.query(
+        `INSERT INTO sessions (sid, sess, expire) VALUES ($1, $2::json, $3)
+         ON CONFLICT (sid) DO UPDATE SET sess = EXCLUDED.sess, expire = EXCLUDED.expire`,
+        [sid, JSON.stringify({ userId, cookie: {} }), expire],
+      );
+    }
+    async function sessionExists(sid: string): Promise<boolean> {
+      const r = await pool.query<{ sid: string }>(
+        'SELECT sid FROM sessions WHERE sid = $1',
+        [sid],
+      );
+      return r.rowCount! > 0;
+    }
+
+    beforeAll(async () => {
+      // Tests in this file run against an in-memory express-session
+      // store so the connect-pg-simple `sessions` table is never
+      // auto-created here. Materialize it ourselves with the same
+      // schema connect-pg-simple uses so the route's DELETE statement
+      // has something to operate on.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          sid VARCHAR PRIMARY KEY,
+          sess JSON NOT NULL,
+          expire TIMESTAMP(6) NOT NULL
+        )
+      `);
+    });
+
+    afterAll(async () => {
+      await pool.query(
+        `DELETE FROM sessions WHERE sid IN ($1, $2, $3, $4)`,
+        [TARGET_SID_OK, TARGET_SID_NOEMAIL, TARGET_SID_TRANSPORT, OTHER_SID],
+      );
+    });
+
+    it('destroys every active session for the target — and only the target — on a successful send', async () => {
+      vi.spyOn(emailService, 'sendEmail').mockResolvedValue(
+        undefined as unknown as void,
+      );
+      await seedSession(TARGET_SID_OK, targetWithEmailId);
+      await seedSession(OTHER_SID, normalUserId);
+      expect(await sessionExists(TARGET_SID_OK)).toBe(true);
+      expect(await sessionExists(OTHER_SID)).toBe(true);
+
+      const cookie = await loginAs(ADMIN);
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/users/${targetWithEmailId}/send-reset-link`,
+        'POST',
+        undefined,
+        cookie,
+      );
+      expect(r.status).toBe(200);
+
+      // Target sessions wiped; unrelated user's session preserved.
+      expect(await sessionExists(TARGET_SID_OK)).toBe(false);
+      expect(await sessionExists(OTHER_SID)).toBe(true);
+    });
+
+    it('does NOT revoke sessions when the target has no recovery email (no security action taken)', async () => {
+      // No email on file → 400 before any reset/security-state change.
+      // Purging here would be a denial-of-service vector: an admin
+      // with the user-management permission could log out any account
+      // by trying to send a reset link, even when no link actually
+      // gets issued.
+      vi.spyOn(emailService, 'sendEmail');
+      await seedSession(TARGET_SID_NOEMAIL, targetNoEmailId);
+      expect(await sessionExists(TARGET_SID_NOEMAIL)).toBe(true);
+
+      const cookie = await loginAs(ADMIN);
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/users/${targetNoEmailId}/send-reset-link`,
+        'POST',
+        undefined,
+        cookie,
+      );
+      expect(r.status).toBe(400);
+      expect(await sessionExists(TARGET_SID_NOEMAIL)).toBe(true);
+    });
+
+    it('does NOT revoke any session when the target id is unknown (404 path)', async () => {
+      // Prove the purge SQL doesn't fire on the validation-failure
+      // path. Seed a session for a real, unrelated user and call
+      // send-reset-link with an ID that has never existed; the row
+      // must survive. Otherwise an admin who fat-fingers a target ID
+      // could DoS a random other account.
+      vi.spyOn(emailService, 'sendEmail');
+      await seedSession(OTHER_SID, normalUserId);
+      expect(await sessionExists(OTHER_SID)).toBe(true);
+
+      const cookie = await loginAs(ADMIN);
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/users/9999999/send-reset-link`,
+        'POST',
+        undefined,
+        cookie,
+      );
+      expect(r.status).toBe(404);
+      expect(await sessionExists(OTHER_SID)).toBe(true);
+    });
+
+    it('does NOT revoke sessions when SendGrid throws (no link delivered)', async () => {
+      vi.spyOn(emailService, 'sendEmail').mockRejectedValue(
+        new Error('SendGrid: 503 Service Unavailable'),
+      );
+      await seedSession(TARGET_SID_TRANSPORT, targetWithEmailId);
+      expect(await sessionExists(TARGET_SID_TRANSPORT)).toBe(true);
+
+      const cookie = await loginAs(ADMIN);
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/users/${targetWithEmailId}/send-reset-link`,
+        'POST',
+        undefined,
+        cookie,
+      );
+      // Transport failure surfaces as 502 — purging on this branch
+      // would log the user out without ever sending them a recovery
+      // link, locking them out of the account.
+      expect(r.status).toBe(502);
+      expect(await sessionExists(TARGET_SID_TRANSPORT)).toBe(true);
+    });
   });
 });

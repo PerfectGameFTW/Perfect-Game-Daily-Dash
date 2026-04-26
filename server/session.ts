@@ -2,7 +2,7 @@ import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import type { Request, Response, NextFunction } from 'express';
 import { pool } from './db';
-import { logger } from './logger';
+import { logger, errorContext } from './logger';
 import {
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_SECURE,
@@ -143,3 +143,75 @@ export const legacyCookieCompatMiddleware = (
 };
 
 export { SESSION_COOKIE_NAME };
+
+/**
+ * Forcibly invalidate every authenticated session belonging to a
+ * given user (Task #127).
+ *
+ * Used by privileged admin actions that change a target's
+ * authentication state — admin-disabled TOTP (#127), admin-initiated
+ * password reset (#127), and admin user-deletion. The threat model:
+ * an admin uses the operator console to disable 2FA on a peer admin
+ * (or sends them a fresh reset link) precisely because that account
+ * is suspected compromised. Without this purge, any session the
+ * attacker has already established stays valid until it idles out —
+ * defeating the operator's intervention. The purge closes that
+ * window the moment the security state changes.
+ *
+ * Implementation note — direct SQL on the connect-pg-simple
+ * `sessions` table:
+ *   - express-session's store API only exposes `destroy(sid)`,
+ *     forcing us to enumerate every session (`store.all`) and filter
+ *     in JS. With even modest session counts that's both slower and
+ *     race-prone (a new session can land between the listing and
+ *     the destroy). One DELETE on `sess->>'userId'` happens in a
+ *     single statement. Note: this DELETE is a sequential scan —
+ *     connect-pg-simple's default schema only indexes `sid` (PK) and
+ *     `expire`, not the JSON-extracted `userId`. That is fine at the
+ *     session-table sizes we operate at (single-digit thousands of
+ *     rows, called only on rare admin actions); if either of those
+ *     premises ever changes, add an expression index on
+ *     `(sess->>'userId')`.
+ *   - We compare the JSON value as text (`$1::text`) — never as a
+ *     bare integer cast — so a corrupt session row whose `userId`
+ *     happens to be a non-numeric string can't blow up the whole
+ *     DELETE with a cast error and leave the purge half-done.
+ *   - Failures are logged but never thrown. The caller already
+ *     succeeded at the security action (TOTP disabled, reset link
+ *     sent); a session-store hiccup must not roll back that change.
+ *     The session store is best-effort cleanup; the canonical
+ *     security state is the user row + audit log, both of which the
+ *     caller has already committed.
+ */
+export async function revokeAllSessionsForUser(
+  userId: number,
+  reason:
+    | 'admin_disabled_totp'
+    | 'admin_password_reset_initiated'
+    | 'user_deleted',
+): Promise<{ revoked: number }> {
+  try {
+    const result = await pool.query<{ count: string }>(
+      `DELETE FROM sessions WHERE sess->>'userId' = $1::text`,
+      [userId],
+    );
+    const revoked = result.rowCount ?? 0;
+    // Always log — both for forensic value (an admin force-disabled
+    // someone's 2FA and N live sessions were killed) AND so the
+    // common no-op case (target wasn't currently signed in) is
+    // observable.
+    logger.warn('session.revoke_user_sessions', {
+      targetUserId: userId,
+      reason,
+      revoked,
+    });
+    return { revoked };
+  } catch (err) {
+    logger.error('session.revoke_user_sessions_failed', {
+      targetUserId: userId,
+      reason,
+      ...errorContext(err),
+    });
+    return { revoked: 0 };
+  }
+}

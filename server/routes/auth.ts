@@ -45,7 +45,7 @@ import {
   totpVerifyLimiter,
 } from '../middleware/rateLimiter';
 import { SESSION_COOKIE_NAME } from '../sessionConfig';
-import { pool } from '../db';
+import { revokeAllSessionsForUser } from '../session';
 import { logger, errorContext } from '../logger';
 
 // Validation schemas
@@ -908,6 +908,12 @@ export function createAuthRouter(): Router {
           },
         });
         authService.invalidateUserCache(targetId);
+        // Force-revoke every active session for the target so any
+        // attacker-held cookie stops working immediately (Task #127).
+        // Best-effort: helper logs and swallows session-store errors
+        // — the DB-side disable already committed and must not be
+        // rolled back by a session-table hiccup.
+        await revokeAllSessionsForUser(targetId, 'admin_disabled_totp');
         // Mirror the admin-initiated disable into the structured log
         // stream alongside the DB security_audit_log row (Task #102).
         // The DB row is the canonical record; the log line is what an
@@ -1080,6 +1086,25 @@ export function createAuthRouter(): Router {
           ip: actorIp,
         });
 
+        // Revoke the target's active sessions immediately (Task #127).
+        // The threat: an admin only sends a reset link from the
+        // operator console when the target's account is suspect — a
+        // help-desk request after a possible compromise, an obviously
+        // hijacked admin, etc. If the attacker is currently signed in,
+        // letting their session ride until the target follows the
+        // email link defeats the operator's intervention. Purging on
+        // link-send (success path only) closes that window. Best-
+        // effort by design — a session-store hiccup must not roll
+        // back the just-issued reset token. Note this is intentionally
+        // wider than "kill the attacker" — the legitimate target also
+        // gets logged out everywhere and re-authenticates after the
+        // reset, which is what they'd expect after an admin-initiated
+        // reset anyway.
+        await revokeAllSessionsForUser(
+          targetId,
+          'admin_password_reset_initiated',
+        );
+
         res.json({ success: true });
       } catch (error) {
         // Failure-side audit. Most paths above already wrote their
@@ -1135,23 +1160,12 @@ export function createAuthRouter(): Router {
 
         // Invalidate any active sessions belonging to the deleted user
         // so the cookie they're holding stops working immediately.
-        // The connect-pg-simple `sessions` table stores the session
-        // payload as JSON in `sess`. Compare the `userId` field as a
-        // string ($1::text) so a malformed/non-numeric payload from
-        // an unrelated session can't blow up the DELETE with a cast
-        // error and cause us to skip the purge entirely.
-        try {
-          await pool.query(
-            `DELETE FROM sessions WHERE sess->>'userId' = $1::text`,
-            [userId],
-          );
-        } catch (sessionErr) {
-          // Don't fail the request — the user row is already gone, so
-          // the next authenticated request will be rejected by
-          // requireAuth's user re-fetch anyway. Log so an operator can
-          // investigate the session-store hiccup.
-          logger.error('auth.users.session_purge_failed', errorContext(sessionErr));
-        }
+        // Shared helper (Task #127) handles the same SQL purge used by
+        // admin-disable-TOTP and admin-initiated reset; failures are
+        // logged inside, never thrown, since the user row is already
+        // gone and requireAuth's user re-fetch will reject the next
+        // authenticated request anyway.
+        await revokeAllSessionsForUser(userId, 'user_deleted');
 
         res.json({ success: true });
       } catch (error) {

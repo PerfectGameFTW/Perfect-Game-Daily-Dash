@@ -5,7 +5,7 @@ import http from 'http';
 import { AddressInfo } from 'net';
 import { eq, inArray, desc } from 'drizzle-orm';
 
-import { db } from '../db';
+import { db, pool } from '../db';
 import { users, securityAuditLog, appSettings, REQUIRE_ADMIN_2FA_SETTING_KEY } from '@shared/schema';
 import { authService } from '../services/authService';
 import { totpService } from '../services/totpService';
@@ -410,5 +410,131 @@ describe('Admin Security overview + require-2FA toggle (Task #100)', () => {
       cookie,
     );
     expect(r.status).toBe(403);
+  });
+
+  // Task #127: when an admin force-disables another admin's 2FA, every
+  // session belonging to the target must be invalidated so any
+  // attacker-held cookie stops working immediately. The tests in this
+  // file run against an in-memory express-session store, but the
+  // production purge runs as raw SQL against the connect-pg-simple
+  // `sessions` table. We seed that table directly with two synthetic
+  // session rows for the target (one with a `userId` matching the
+  // target, one matching an unrelated user), call the endpoint, and
+  // assert the matching row is gone and the unrelated row is left
+  // alone. That's the actual production code path — the route handler
+  // doesn't care which store the running app uses, it just executes
+  // the DELETE.
+  describe('Task #127: session revocation on admin disable-TOTP', () => {
+    async function seedSession(sid: string, userId: number): Promise<void> {
+      // expire is required by connect-pg-simple's schema. Far-future
+      // timestamp so the row would otherwise be valid.
+      const expire = new Date(Date.now() + 60 * 60 * 1000);
+      await pool.query(
+        `INSERT INTO sessions (sid, sess, expire) VALUES ($1, $2::json, $3)
+         ON CONFLICT (sid) DO UPDATE SET sess = EXCLUDED.sess, expire = EXCLUDED.expire`,
+        [sid, JSON.stringify({ userId, cookie: {} }), expire],
+      );
+    }
+    async function sessionExists(sid: string): Promise<boolean> {
+      const r = await pool.query<{ sid: string }>(
+        'SELECT sid FROM sessions WHERE sid = $1',
+        [sid],
+      );
+      return r.rowCount! > 0;
+    }
+    const TARGET_SID_A = '__t127_target_sess_a__';
+    const TARGET_SID_B = '__t127_target_sess_b__';
+    const OTHER_SID = '__t127_other_sess__';
+
+    beforeAll(async () => {
+      // Tests in this file run against an in-memory express-session
+      // store so the connect-pg-simple `sessions` table is never
+      // auto-created here. Materialize it ourselves with the same
+      // schema connect-pg-simple uses (createTableIfMissing) so the
+      // route's DELETE statement has something to operate on.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          sid VARCHAR PRIMARY KEY,
+          sess JSON NOT NULL,
+          expire TIMESTAMP(6) NOT NULL
+        )
+      `);
+    });
+
+    afterAll(async () => {
+      await pool.query(
+        `DELETE FROM sessions WHERE sid IN ($1, $2, $3)`,
+        [TARGET_SID_A, TARGET_SID_B, OTHER_SID],
+      );
+    });
+
+    it('destroys every active session for the target — and only the target — on successful disable', async () => {
+      // Pre-enable 2FA on admin B (the target) and seed two sessions
+      // for them plus one unrelated session that must survive.
+      await db
+        .update(users)
+        .set({
+          totpEnabled: true,
+          totpSecretEncrypted: 'placeholder',
+          totpRecoveryCodes: ['a', 'b'],
+        })
+        .where(eq(users.id, adminBId));
+      authService.invalidateUserCache(adminBId);
+
+      await seedSession(TARGET_SID_A, adminBId);
+      await seedSession(TARGET_SID_B, adminBId);
+      await seedSession(OTHER_SID, normalUserId);
+
+      // Sanity: all three present before the call.
+      expect(await sessionExists(TARGET_SID_A)).toBe(true);
+      expect(await sessionExists(TARGET_SID_B)).toBe(true);
+      expect(await sessionExists(OTHER_SID)).toBe(true);
+
+      const cookie = await loginNoTotp(ADMIN_A);
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/admin/security/users/${adminBId}/disable-totp`,
+        'POST',
+        { password: PWD },
+        cookie,
+      );
+      expect(r.status).toBe(200);
+
+      // The two target sessions are gone; the unrelated session is
+      // still there. This is the security-meaningful assertion: the
+      // attacker's cookie no longer maps to any session row, so the
+      // very next request from them fails requireAuth.
+      expect(await sessionExists(TARGET_SID_A)).toBe(false);
+      expect(await sessionExists(TARGET_SID_B)).toBe(false);
+      expect(await sessionExists(OTHER_SID)).toBe(true);
+    });
+
+    it('failed disable (wrong password) does NOT revoke the target sessions', async () => {
+      // Crucial property: the purge must only run on the success
+      // path. Otherwise an admin who fat-fingers their re-auth could
+      // accidentally log out the target with no actual security state
+      // change to back it up.
+      await db
+        .update(users)
+        .set({
+          totpEnabled: true,
+          totpSecretEncrypted: 'placeholder',
+          totpRecoveryCodes: ['a'],
+        })
+        .where(eq(users.id, adminBId));
+      authService.invalidateUserCache(adminBId);
+
+      await seedSession(TARGET_SID_A, adminBId);
+      expect(await sessionExists(TARGET_SID_A)).toBe(true);
+
+      const cookie = await loginNoTotp(ADMIN_A);
+      const r = await jsonReq(
+        `${baseUrl}/api/auth/admin/security/users/${adminBId}/disable-totp`,
+        'POST',
+        { password: 'wrong-password-for-test' },
+        cookie,
+      );
+      expect(r.status).toBe(401);
+      expect(await sessionExists(TARGET_SID_A)).toBe(true);
+    });
   });
 });
