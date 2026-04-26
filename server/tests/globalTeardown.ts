@@ -41,6 +41,7 @@
 
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import ws from 'ws';
+import { samePostgresEndpoint } from './samePostgresEndpoint';
 
 neonConfig.webSocketConstructor = ws;
 
@@ -58,44 +59,10 @@ function deriveTestUrl(live: string | undefined): string | undefined {
   }
 }
 
-/**
- * Compare two Postgres connection strings by canonical endpoint
- * (protocol + host + port + database + user) rather than byte
- * equality. Two strings can point at the same database while
- * differing in query-parameter order, percent-encoding, or trailing
- * slashes — string equality would miss those cases and let the
- * audit run against the live DB. We only need a conservative answer:
- * if the URLs cannot be parsed, treat them as identical (refuse to
- * connect) rather than risk a false negative.
- */
-function samePostgresEndpoint(a: string, b: string): boolean {
-  try {
-    const norm = (raw: string) => {
-      const u = new URL(raw);
-      return {
-        protocol: u.protocol.toLowerCase(),
-        host: u.hostname.toLowerCase(),
-        port: u.port || '5432',
-        db: u.pathname.replace(/^\//, '').replace(/\/$/, ''),
-        user: decodeURIComponent(u.username),
-      };
-    };
-    const x = norm(a);
-    const y = norm(b);
-    return (
-      x.protocol === y.protocol &&
-      x.host === y.host &&
-      x.port === y.port &&
-      x.db === y.db &&
-      x.user === y.user
-    );
-  } catch {
-    // If either URL is unparseable, refuse to audit — the safe answer
-    // is "treat as same so we skip" rather than "treat as different
-    // so we connect to something we can't reason about."
-    return true;
-  }
-}
+// `samePostgresEndpoint` lives in its own module (Task #141) so it
+// can be unit-tested without importing this file's neon serverless
+// shim. See ./samePostgresEndpoint.ts for the comparator's contract,
+// and ./samePostgresEndpoint.test.ts for the matrix that pins it.
 
 const BANNER = '='.repeat(72);
 
