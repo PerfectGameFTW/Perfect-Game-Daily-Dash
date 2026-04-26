@@ -420,6 +420,83 @@ describe('TOTP audit-log DB persistence (Task #131)', () => {
     });
   });
 
+  it('admin-disable also lands a row (action=user.totp_disabled_by_admin) via the transactional helper (Task #176)', async () => {
+    // Symmetry with the self-disable test above. The admin flow does
+    // NOT go through TotpService.disable — it persists transactionally
+    // via pgStorage.disableUserTotpWithAudit (Task #100) so the state
+    // mutation and the audit row commit-or-fail together. The route
+    // and its row shape are also covered end-to-end in
+    // adminTwoFactor.test.ts:241; this test pins the same contract at
+    // the storage layer alongside the self-disable rows in this file
+    // so a future refactor that breaks either path is caught here too.
+    const targetUsername = '__totp_audit_persist_admin_target__';
+    const targetPwd = 'AdminTarget!Audit-Pwd-19';
+    await db.delete(users).where(eq(users.username, targetUsername));
+    const target = await authService.registerUser(targetUsername, targetPwd, 'admin');
+    try {
+      // Pre-enable target's 2FA so the helper has something to disable.
+      await db
+        .update(users)
+        .set({
+          totpEnabled: true,
+          totpSecretEncrypted: 'placeholder-encrypted-blob',
+          totpRecoveryCodes: ['$argon2id$placeholder'],
+        })
+        .where(eq(users.id, target.id));
+      authService.invalidateUserCache(target.id);
+
+      const ip = uniqueIp();
+      await pgStorage.disableUserTotpWithAudit(target.id, {
+        actorUserId: userId,
+        actorIp: ip,
+        action: 'user.totp_disabled_by_admin',
+        targetUserId: target.id,
+        metadata: {
+          targetUsername,
+          targetRole: 'admin',
+          wasEnabled: true,
+        },
+      });
+
+      // State mutation landed.
+      const after = await db.select().from(users).where(eq(users.id, target.id));
+      expect(after[0]?.totpEnabled).toBe(false);
+      expect(after[0]?.totpSecretEncrypted).toBeNull();
+      expect(after[0]?.totpRecoveryCodes).toBeNull();
+
+      // Audit row landed in the same transaction. Filter by
+      // targetUserId because actorUserId here is our test user (whose
+      // own enrollment-test rows we're already asserting on).
+      const rows = await db
+        .select()
+        .from(securityAuditLog)
+        .where(
+          and(
+            eq(securityAuditLog.targetUserId, target.id),
+            eq(securityAuditLog.action, 'user.totp_disabled_by_admin'),
+          ),
+        )
+        .orderBy(asc(securityAuditLog.id));
+      expect(rows).toHaveLength(1);
+      expect(rows[0].actorUserId).toBe(userId);
+      expect(rows[0].targetUserId).toBe(target.id);
+      expect(rows[0].actorIp).toBe(ip);
+      expect(rows[0].metadata).toMatchObject({
+        targetUsername,
+        targetRole: 'admin',
+        wasEnabled: true,
+      });
+    } finally {
+      // Order matters: audit rows reference the target via targetUserId
+      // (no FK, but our own data) — drop them before the user row so a
+      // future test seeding the same id can't pick up phantom rows.
+      await db
+        .delete(securityAuditLog)
+        .where(eq(securityAuditLog.targetUserId, target.id));
+      await db.delete(users).where(eq(users.id, target.id));
+    }
+  });
+
   it('does not block the auth flow when the audit-row insert fails', async () => {
     // Force the persistence layer to reject. The TOTP operation itself
     // must still succeed — that is the whole point of fire-and-forget.
