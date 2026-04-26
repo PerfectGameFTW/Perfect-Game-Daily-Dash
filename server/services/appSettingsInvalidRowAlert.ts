@@ -99,6 +99,14 @@ class AppSettingsInvalidRowAlerter {
   private notifier: Notifier | null = null;
   private now: () => number = () => Date.now();
 
+  /** Test-only accessor: whether a per-key cooldown timestamp is
+   *  currently set. Used by the storage-layer recovery test to
+   *  assert the cooldown was actually cleared on a successful read,
+   *  without exposing the private map. */
+  hasCooldownFor(key: string): boolean {
+    return this.lastAlertAtByKey.has(key);
+  }
+
   /** Test-only: override config / notifier / clock. */
   reconfigure(opts: {
     config?: Partial<AlertConfig>;
@@ -161,6 +169,55 @@ class AppSettingsInvalidRowAlerter {
       source: 'appSettingsInvalidRowAlert',
     });
   }
+
+  /**
+   * Called from `pgStorage.getAppSetting` whenever a row reads back
+   * cleanly (Task #168). If we previously alerted on this key, clear
+   * the per-key cooldown so the next break re-alerts immediately
+   * instead of being silently swallowed by a leftover quiet window
+   * — the row is materially healthy now, and the next failure is a
+   * new incident worth paging on. Mirrors the recovery quiet-period
+   * pattern in `squareRateLimitAlert.ts`, scoped per key here
+   * because each app_settings row is its own independent failure
+   * domain.
+   *
+   * If no prior alert fired for this key, this is a no-op so a
+   * settings page that polls happy keys all day doesn't fire
+   * spurious "recovered" pings.
+   */
+  recordRecovery(key: string): void {
+    if (!this.lastAlertAtByKey.has(key)) return;
+    this.lastAlertAtByKey.delete(key);
+
+    if (!this.config.webhookUrl && !this.notifier) {
+      // Cooldown still gets cleared above so that a webhook
+      // configured *after* the row recovers will alert on the next
+      // genuine break — same contract as `record()` when nothing
+      // was sent.
+      logger.info('app_settings.invalid_row_recovered', {
+        key,
+        source: 'appSettingsInvalidRowAlert',
+        webhookConfigured: false,
+      });
+      return;
+    }
+
+    const text =
+      `:white_check_mark: app_settings row "${key}" now passes schema ` +
+      `validation again. The next invalid-row break for this key will ` +
+      `re-alert immediately.`;
+
+    const send = this.notifier ?? ((p: { text: string }) =>
+      defaultNotifier(this.config.webhookUrl!, p));
+
+    void send({ text });
+
+    logger.info('app_settings.invalid_row_recovered', {
+      key,
+      source: 'appSettingsInvalidRowAlert',
+      webhookConfigured: true,
+    });
+  }
 }
 
 export const appSettingsInvalidRowAlerter = new AppSettingsInvalidRowAlerter();
@@ -171,4 +228,14 @@ export function recordAppSettingsInvalidRowForAlerting(
   issues: ValidationIssue[],
 ): void {
   appSettingsInvalidRowAlerter.record(key, issues);
+}
+
+/**
+ * Public hook called from `pgStorage.getAppSetting`'s success branch
+ * (Task #168). Clears the per-key cooldown if a prior alert fired so
+ * a re-break after an admin fix-up migration pages on-call
+ * immediately rather than waiting out the original quiet window.
+ */
+export function recordAppSettingsRecoveryForAlerting(key: string): void {
+  appSettingsInvalidRowAlerter.recordRecovery(key);
 }

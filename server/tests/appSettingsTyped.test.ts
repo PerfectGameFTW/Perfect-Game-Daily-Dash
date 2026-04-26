@@ -144,6 +144,92 @@ describe('typed app_settings accessors (Task #97)', () => {
     }
   });
 
+  // Wiring check for Task #168. `getAppSetting`'s success branch
+  // must clear any leftover per-key cooldown so a fix-up migration
+  // shipped during the original quiet window doesn't leave the
+  // alerter silently swallowing the next genuine break of the same
+  // key. The alerter has its own unit-level coverage of the
+  // recordRecovery semantics; this test just pins that the storage
+  // layer actually invokes the recovery hook on a healthy read.
+  it('clears the invalid-row alerter cooldown on a successful read', async () => {
+    const { appSettingsInvalidRowAlerter } = await import(
+      '../services/appSettingsInvalidRowAlert'
+    );
+    appSettingsInvalidRowAlerter.reset();
+    const sent: Array<{ text: string }> = [];
+    appSettingsInvalidRowAlerter.reconfigure({
+      config: { webhookUrl: 'https://example/hook', cooldownMs: 60 * 60 * 1000 },
+      notifier: async (p) => { sent.push(p); },
+    });
+
+    // Step 1: persist a deliberately bad row and read it once so
+    // the alerter records the per-key cooldown.
+    await db
+      .insert(appSettings)
+      .values({ key: KEY, value: { threshold: 'not-a-number' } });
+    await pgStorage.getAppSetting(KEY);
+    expect(appSettingsInvalidRowAlerter.hasCooldownFor(KEY)).toBe(true);
+    const sentAfterBreak = sent.length;
+    expect(sentAfterBreak).toBe(1);
+
+    // Step 2: simulate the admin's fix-up migration by overwriting
+    // the row with a valid payload, then read it. The successful
+    // read must clear the cooldown via the recovery hook.
+    await pgStorage.setAppSetting(KEY, {
+      threshold: 5,
+      windowMs: 5 * 60_000,
+      cooldownMs: 5 * 60_000,
+    });
+    const out = await pgStorage.getAppSetting(KEY);
+    expect(out).toEqual({
+      threshold: 5,
+      windowMs: 5 * 60_000,
+      cooldownMs: 5 * 60_000,
+    });
+    expect(appSettingsInvalidRowAlerter.hasCooldownFor(KEY)).toBe(false);
+    // Recovery ping was sent so on-call sees positive confirmation.
+    expect(sent.length).toBe(sentAfterBreak + 1);
+    expect(sent[sent.length - 1].text).toMatch(/passes schema validation again/);
+
+    appSettingsInvalidRowAlerter.reset();
+  });
+
+  // Belt-and-braces sibling of the failure-branch alerter-throws
+  // test above: the recovery hook is also wrapped in a try/catch so
+  // a faulty alerter cannot poison a perfectly healthy read.
+  it('still returns the typed value when the recovery hook throws', async () => {
+    const { appSettingsInvalidRowAlerter } = await import(
+      '../services/appSettingsInvalidRowAlert'
+    );
+    appSettingsInvalidRowAlerter.reset();
+    appSettingsInvalidRowAlerter.reconfigure({
+      config: { webhookUrl: 'https://example/hook', cooldownMs: 60_000 },
+    });
+    const original = appSettingsInvalidRowAlerter.recordRecovery.bind(
+      appSettingsInvalidRowAlerter,
+    );
+    appSettingsInvalidRowAlerter.recordRecovery = () => {
+      throw new Error('recovery hook exploded');
+    };
+
+    await pgStorage.setAppSetting(KEY, {
+      threshold: 5,
+      windowMs: 5 * 60_000,
+      cooldownMs: 5 * 60_000,
+    });
+
+    try {
+      await expect(pgStorage.getAppSetting(KEY)).resolves.toEqual({
+        threshold: 5,
+        windowMs: 5 * 60_000,
+        cooldownMs: 5 * 60_000,
+      });
+    } finally {
+      appSettingsInvalidRowAlerter.recordRecovery = original;
+      appSettingsInvalidRowAlerter.reset();
+    }
+  });
+
   it('rejects an out-of-bounds setter payload before writing to the DB', async () => {
     const bad = {
       threshold: 0, // schema min is 1

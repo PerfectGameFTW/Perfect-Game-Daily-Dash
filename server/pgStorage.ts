@@ -783,6 +783,24 @@ class PgStorage implements IStorage {
       }
       return undefined;
     }
+    // Successful read — tell the alerter so any leftover per-key
+    // cooldown from a prior invalid-row alert is cleared (Task #168).
+    // Without this, a fix-up migration shipped *during* the cooldown
+    // window would leave the alerter quietly suppressing the next
+    // genuine break of the same key. Same lazy-import + guarded
+    // pattern as the failure branch so a recovery-side fault can't
+    // escalate into a broken settings read.
+    try {
+      const { recordAppSettingsRecoveryForAlerting } = await import(
+        './services/appSettingsInvalidRowAlert'
+      );
+      recordAppSettingsRecoveryForAlerting(key);
+    } catch (err) {
+      logger.warn('app_settings.invalid_row_recovery.invoke_failed', {
+        key,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+    }
     return parsed.data as AppSettingValue<K>;
   }
 
