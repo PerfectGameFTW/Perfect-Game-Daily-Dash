@@ -64,12 +64,15 @@ function currentCode(secretBase32: string, label: string): string {
 let pendingAuditWrites: Promise<unknown>[] = [];
 let recordAuditSpy: ReturnType<typeof vi.spyOn> | null = null;
 
+type RecordAuditArgs = Parameters<typeof pgStorage.recordSecurityAudit>;
+type RecordAuditReturn = ReturnType<typeof pgStorage.recordSecurityAudit>;
+
 function trackAuditWrites(): void {
   pendingAuditWrites = [];
   const original = pgStorage.recordSecurityAudit.bind(pgStorage);
   recordAuditSpy = vi.spyOn(pgStorage, 'recordSecurityAudit');
-  recordAuditSpy.mockImplementation((entry: any) => {
-    const p = original(entry);
+  recordAuditSpy.mockImplementation((...args: RecordAuditArgs): RecordAuditReturn => {
+    const p = original(...args);
     pendingAuditWrites.push(p.catch(() => undefined));
     return p;
   });
