@@ -43,6 +43,8 @@ import {
   emailVerificationConfirmLimiter,
   emailVerificationRequestLimiter,
   passwordResetRequestLimiter,
+  totpDisableAccountLimiter,
+  totpDisableIpLimiter,
   totpRecoveryRegenerateAccountLimiter,
   totpRecoveryRegenerateIpLimiter,
   totpVerifyLimiter,
@@ -499,6 +501,13 @@ export function createAuthRouter(): Router {
   router.post(
     '/totp/disable',
     requireAuth,
+    // Per-IP and per-account throttling (Task #174). Same shape as the
+    // recovery-codes/regenerate route above (10 attempts / 15 min,
+    // skipSuccessfulRequests, resetKey on success). Without these a
+    // stolen authenticated session can brute-force the password gate
+    // at full speed and silently turn 2FA off.
+    totpDisableIpLimiter,
+    totpDisableAccountLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const parsed = disableTotpSchema.safeParse(req.body);
@@ -515,6 +524,28 @@ export function createAuthRouter(): Router {
           ip: req.ip,
           actorRole: 'self',
         });
+        // Clear both throttle buckets so a successful disable fully
+        // resets the next-15-minute window for this IP and account.
+        // skipSuccessfulRequests already prevents this hit from being
+        // counted; resetKey additionally undoes any prior failures so
+        // a legitimate user who fat-fingered their password a few
+        // times before getting it right doesn't carry that count
+        // into the next window.
+        try {
+          // resetKey MUST be derived through ipKeyGenerator() to match
+          // the bucket key the limiter actually wrote — for IPv6
+          // clients the limiter normalizes to /64, so a raw req.ip
+          // here would miss the active bucket and the reset would be
+          // a no-op.
+          totpDisableIpLimiter.resetKey(
+            `ip:${ipKeyGenerator(req.ip ?? 'unknown')}`,
+          );
+          totpDisableAccountLimiter.resetKey(`acct:${req.user!.id}`);
+        } catch (resetErr) {
+          // Reset is best-effort; never fail a successful disable
+          // because the limiter store hiccupped.
+          logger.warn('auth.totpDisable.reset_key_failed', errorContext(resetErr));
+        }
         res.json({ success: true });
       } catch (error) {
         next(error);

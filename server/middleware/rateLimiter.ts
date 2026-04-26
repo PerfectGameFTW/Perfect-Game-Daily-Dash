@@ -100,6 +100,57 @@ export const totpRecoveryRegenerateAccountLimiter = rateLimit({
   },
 });
 
+// Self-disable-2FA limiters (Task #174). The /api/auth/totp/disable
+// endpoint sits behind requireAuth and only re-checks the current
+// password — without throttling, an attacker holding a stolen
+// authenticated session can brute-force the password gate at full
+// speed and silently weaken the account's security posture by
+// turning 2FA off. We mirror the recovery-code regenerate pattern
+// (Task #129) exactly: same 10/15 min window, same dual per-IP +
+// per-account buckets, same skipSuccessfulRequests, and the route
+// also calls resetKey() on success so a legitimate disable doesn't
+// poison the next-window budget for that IP/account.
+//
+// Why not share a single bucket with regenerate? They are different
+// security postures (one rotates a recovery batch, the other turns
+// the second factor off entirely) and an attacker who blows the
+// regenerate budget should still face a fresh budget on disable —
+// otherwise sharing would let one drained route shield the other
+// from triggering its own throttle.
+export const totpDisableIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  // IPv6 clients are bucketed by /64 prefix via ipKeyGenerator (see
+  // totpRecoveryRegenerateIpLimiter for the full rationale).
+  keyGenerator: (req) => `ip:${ipKeyGenerator(req.ip ?? 'unknown')}`,
+  message: {
+    error: 'Too many disable attempts, please try again later.',
+  },
+});
+
+export const totpDisableAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  // requireAuth runs before this middleware on the disable route, so
+  // req.user is set. The IP fallback only fires for the impossible
+  // case where it isn't, and prevents this middleware from throwing.
+  keyGenerator: (req: Request) => {
+    const userId = req.user?.id ?? req.session?.userId;
+    return userId != null
+      ? `acct:${userId}`
+      : `ip:${ipKeyGenerator(req.ip ?? 'unknown')}`;
+  },
+  message: {
+    error: 'Too many disable attempts for this account, please try again later.',
+  },
+});
+
 // Password-reset request limiter. Tighter than authLimiter because each
 // successful request triggers an outbound email — we cannot let an
 // attacker spam the inbox of a known account. 3 requests per IP per hour.
