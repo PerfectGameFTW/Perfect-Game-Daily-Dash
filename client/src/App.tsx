@@ -10,6 +10,7 @@ import ResetPassword from "@/pages/ResetPassword";
 import VerifyEmail from "@/pages/VerifyEmail";
 import ForcePasswordChange from "@/pages/ForcePasswordChange";
 import ForceEnable2FA from "@/pages/ForceEnable2FA";
+import AccountSettings from "@/pages/AccountSettings";
 import Admin from "@/pages/Admin";
 import McpAudit from "@/pages/McpAudit";
 import SyncAudit from "@/pages/SyncAudit";
@@ -88,6 +89,14 @@ function Router() {
         )}
       </Route>
       
+      <Route path="/account">
+        {() => (
+          <ProtectedRoute>
+            <AccountSettings />
+          </ProtectedRoute>
+        )}
+      </Route>
+
       <Route path="/admin">
         {() => (
           <ProtectedRoute requiredRole="admin">

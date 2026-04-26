@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
-import { ShieldCheck, User, LogOut, CreditCard, CircleCheck, Moon, Sun } from "lucide-react";
+import { ShieldCheck, User, LogOut, CreditCard, CircleCheck, Moon, Sun, KeyRound } from "lucide-react";
 import { useLocation } from "wouter";
 
 interface AccountDrawerProps {
@@ -56,6 +56,15 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
                 Users
               </Button>
             )}
+            <Button
+              variant="outline"
+              className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
+              onClick={() => handleNavigate('/account')}
+              data-testid="button-account-settings"
+            >
+              <KeyRound className="h-5 w-5 text-primary" />
+              Account settings
+            </Button>
             <Button 
               variant="outline" 
               className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
