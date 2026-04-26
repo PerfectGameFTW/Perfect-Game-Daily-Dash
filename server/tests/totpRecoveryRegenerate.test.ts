@@ -17,6 +17,49 @@ import {
   totpRecoveryRegenerateAccountLimiter,
   totpRecoveryRegenerateIpLimiter,
 } from '../middleware/rateLimiter';
+import type { TotpLoginResult } from '../services/totpService';
+
+// Polls pg_stat_activity until at least `expected` non-poller backends
+// on this database are blocked behind another backend. The single-suite
+// advisory lock from globalSetup keeps any other traffic off this DB,
+// so the only candidates are the operations we deliberately fired in
+// the calling test.
+//
+// (We deliberately do NOT filter by the sentinel's specific
+// `pg_backend_pid()` here. Under Neon's serverless WS pooler the pid
+// returned by one client connection is not reliably the same pid that
+// `pg_blocking_pids()` reports as the lock holder seen from another
+// client — so a pid-targeted predicate yields zero matches even when
+// the lock conflict is real. The broader "any blocked backend" check
+// is safe in this suite because the globalSetup advisory lock
+// guarantees no concurrent test traffic shares the DB.)
+//
+// In this controlled scenario (same row, same lock conflict class, no
+// NOWAIT/SKIP LOCKED, no statement cancellation) Postgres serves the
+// queued waiters in arrival order, so gating each fire on this helper
+// gives us a deterministic execution sequence. We treat that as a
+// practical test invariant — not a formal SQL-contract guarantee —
+// which is sufficient for catching regressions of our own lock code.
+async function waitUntilBlockedBackends(
+  expected: number,
+  timeoutMs = 20_000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const r = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND pid <> pg_backend_pid()
+          AND cardinality(pg_blocking_pids(pid)) > 0`,
+    );
+    if (Number(r.rows[0]?.count ?? '0') >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(
+    `Timed out after ${timeoutMs}ms waiting for ${expected} blocked backends`,
+  );
+}
 
 let __ip = 0;
 function uniqueIp(): string {
@@ -446,6 +489,170 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
       blocker.release();
     }
   });
+
+  // Task #130: explicit both-orderings race coverage. The blocker test
+  // above proves regenerate uses FOR UPDATE; these tests prove that
+  // when verify and regenerate are forced to serialize against each
+  // OTHER (not against an external blocker), the lock prevents either
+  // schedule from resurrecting old hashes.
+  //
+  // Strategy: hold a sentinel FOR UPDATE lock on the user row, then
+  // queue the two operations one at a time, polling pg_stat_activity
+  // between each so the SECOND op only fires after the FIRST is
+  // observed to have queued behind the sentinel's pid (see
+  // waitUntilBlockedByPid above). In this controlled scenario Postgres
+  // services the queued waiters in arrival order, so the order in
+  // which we kick the operations off becomes the deterministic order
+  // in which they commit once the sentinel is released. No reliance on
+  // which Promise "happens to win" — every run exercises the exact
+  // ordering named in the test.
+  for (const order of ['verify-first', 'regenerate-first'] as const) {
+    it(
+      `Task #130: serializes verify+regenerate deterministically (${order}) — old hashes never resurrect`,
+      { timeout: 30_000 },
+      async () => {
+        // Seed a fresh, known recovery batch so verify has a real
+        // plaintext code to attempt against the OLD hashes.
+        const oldBatch = (await totpService.verifyAndEnable(
+          userId,
+          currentCode(secretBase32),
+        ))!;
+        expect(oldBatch.length).toBeGreaterThanOrEqual(2);
+        const beforeRow = await db
+          .select()
+          .from(users)
+          .where(eq(users.id, userId));
+        const oldHashes = beforeRow[0]!.totpRecoveryCodes ?? [];
+        expect(oldHashes.length).toBeGreaterThan(0);
+        const targetOldCode = oldBatch[0];
+
+        // Pool capacity must be >= 3 (sentinel + verify + regen). The
+        // app pool is sized well above that; if it ever shrinks, this
+        // test will time out at the lock-wait poll — caller-visible
+        // failure, not a silent skip.
+        const blocker = await pool.connect();
+        let blockerCommitted = false;
+        let verifyPromise: Promise<TotpLoginResult> | null = null;
+        let regenPromise: Promise<string[] | null> | null = null;
+        try {
+          await blocker.query('BEGIN');
+          await blocker.query(
+            'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+            [userId],
+          );
+
+          const fireVerify = (): Promise<TotpLoginResult> => {
+            const p = totpService.verifyLoginCode(userId, targetOldCode);
+            // Silence unhandled-rejection bookkeeping during the poll.
+            // The real outcome is awaited (and asserted) below; the
+            // finally drains it on every error path.
+            p.catch(() => {});
+            return p;
+          };
+          const fireRegen = (): Promise<string[] | null> => {
+            const p = totpService.regenerateRecoveryCodes(
+              userId,
+              currentCode(secretBase32),
+            );
+            p.catch(() => {});
+            return p;
+          };
+
+          if (order === 'verify-first') {
+            verifyPromise = fireVerify();
+            await waitUntilBlockedBackends(1);
+            regenPromise = fireRegen();
+            await waitUntilBlockedBackends(2);
+          } else {
+            regenPromise = fireRegen();
+            await waitUntilBlockedBackends(1);
+            verifyPromise = fireVerify();
+            await waitUntilBlockedBackends(2);
+          }
+
+          // Release the sentinel; queued waiters drain in FIFO order.
+          await blocker.query('COMMIT');
+          blockerCommitted = true;
+
+          const verifyResult = await verifyPromise;
+          verifyPromise = null;
+          const regenResult = await regenPromise;
+          regenPromise = null;
+
+          // Regenerate always succeeds — TOTP code was valid and there
+          // is no precondition on the old batch contents.
+          expect(regenResult).not.toBeNull();
+          expect(regenResult!).toHaveLength(10);
+
+          if (order === 'verify-first') {
+            // Verify saw the OLD batch, found the target code, consumed
+            // it, and committed BEFORE regenerate replaced the batch.
+            // Exactly the dangerous path: the lock must guarantee that
+            // verify's "remaining = old minus consumed" write does NOT
+            // land after regenerate's commit.
+            expect(verifyResult.ok).toBe(true);
+            if (verifyResult.ok) {
+              expect(verifyResult.factor).toBe('recovery');
+            }
+          } else {
+            // Verify ran AFTER regenerate replaced the batch and
+            // re-read inside its own transaction → the old plaintext
+            // code is no longer present in the new batch → fails.
+            expect(verifyResult.ok).toBe(false);
+          }
+
+          // In every ordering: the final on-disk batch contains the
+          // 10 NEW hashes and NONE of the old ones — proof that
+          // regenerate's write was not clobbered by verify's
+          // consume-and-write computed against a stale snapshot.
+          const after = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, userId));
+          const finalHashes = after[0]!.totpRecoveryCodes ?? [];
+          expect(finalHashes).toHaveLength(10);
+          for (const h of finalHashes) {
+            expect(oldHashes).not.toContain(h);
+          }
+
+          // Each new plaintext code matches exactly one stored hash —
+          // the regenerated batch is internally consistent.
+          for (const c of regenResult!) {
+            const stripped = c.replace('-', '');
+            // eslint-disable-next-line no-await-in-loop
+            const matches = await Promise.all(
+              finalHashes.map((h) => verifyPassword(stripped, h)),
+            );
+            expect(matches.filter(Boolean)).toHaveLength(1);
+          }
+
+          // No code from the old batch can verify against the new
+          // batch — even the one verify-first consumed. This is the
+          // user-visible invariant: once regenerate commits, every
+          // previously-issued recovery code is dead.
+          for (const oldCode of oldBatch) {
+            // eslint-disable-next-line no-await-in-loop
+            expect(
+              (await totpService.verifyLoginCode(userId, oldCode)).ok,
+            ).toBe(false);
+          }
+        } finally {
+          // Order matters: release the sentinel first (so any still-
+          // pending op can drain), THEN await both ops to settle, THEN
+          // release the connection. Without the drain, a poll-timeout
+          // or mid-test assertion failure could leave a background
+          // operation landing AFTER the test returns and corrupting
+          // the next test's expectations.
+          if (!blockerCommitted) {
+            await blocker.query('ROLLBACK').catch(() => {});
+          }
+          if (verifyPromise) await verifyPromise.catch(() => {});
+          if (regenPromise) await regenPromise.catch(() => {});
+          blocker.release();
+        }
+      },
+    );
+  }
 
   it('throttles with 429 after 10 failed attempts from the same IP (Task #129)', async () => {
     const cookie = await login();
