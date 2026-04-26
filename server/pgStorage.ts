@@ -651,6 +651,19 @@ class PgStorage implements IStorage {
   // on read; a malformed/legacy row is logged and surfaces as
   // `undefined` so consumers fall back to their defaults rather than
   // receive a wrong-shape value.
+  //
+  // Runbook for `app_settings.invalid_row` (Task #122):
+  //   When a row fails schema validation here, the storage layer logs
+  //   the event AND fires a webhook alert via
+  //   `recordAppSettingsInvalidRowForAlerting` so on-call notices
+  //   *before* an incident. Do NOT fix the offending row by hand-
+  //   editing it in psql — that's exactly the class of change that
+  //   produced the alert in the first place. Instead, ship a one-off
+  //   migration that either rewrites the row to the new shape (if the
+  //   schema change was intentional and the field can be defaulted)
+  //   or deletes the row entirely so the consumer's default kicks in.
+  //   See `server/services/appSettingsInvalidRowAlert.ts` for the
+  //   full alerter contract and cooldown semantics.
   async getAppSetting<K extends AppSettingKey>(
     key: K,
   ): Promise<AppSettingValue<K> | undefined> {
@@ -662,13 +675,29 @@ class PgStorage implements IStorage {
     const schema = appSettingsRegistry[key];
     const parsed = schema.safeParse(rows[0].value);
     if (!parsed.success) {
-      logger.warn('app_settings.invalid_row', {
-        key,
-        issues: parsed.error.issues.map((i) => ({
-          path: i.path.join('.'),
-          message: i.message,
-        })),
-      });
+      const issues = parsed.error.issues.map((i) => ({
+        path: i.path.join('.'),
+        message: i.message,
+      }));
+      logger.warn('app_settings.invalid_row', { key, issues });
+      // Lazy-import to avoid a hard dependency at module-load time —
+      // the alerter pulls in the env-config snapshot when first used,
+      // which would otherwise be evaluated before tests can stub env.
+      // Guarded so an alerter-side fault (failed import, throwing
+      // notifier) can never escalate from "missing alert" to "broken
+      // settings read" — the consumer's `undefined` fallback contract
+      // takes priority over the alert.
+      try {
+        const { recordAppSettingsInvalidRowForAlerting } = await import(
+          './services/appSettingsInvalidRowAlert'
+        );
+        recordAppSettingsInvalidRowForAlerting(key, issues);
+      } catch (err) {
+        logger.warn('app_settings.invalid_row_alert.invoke_failed', {
+          key,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+      }
       return undefined;
     }
     return parsed.data as AppSettingValue<K>;
