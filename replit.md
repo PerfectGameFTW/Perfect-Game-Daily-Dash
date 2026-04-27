@@ -262,6 +262,29 @@ The script wraps a check-and-insert in a transaction guarded by a Postgres advis
 
 The public registration path no longer exists. The admin-create schema (`adminCreateUserSchema` in `shared/schema.ts`) is the only way `role` can be set, and it is server-side validated; values from the request body are otherwise ignored / coerced to `'user'`.
 
+## Git over SSH (persistent across container rebuilds)
+The `origin` remote uses SSH (`git@github.com:PerfectGameFTW/Perfect-Game-Daily-Dash.git`). SSH auth needs a private key in `~/.ssh/`, but the home directory is **rebuilt from scratch** every time the Replit workspace container is recycled — so a key that worked yesterday is gone today, and `git fetch / push` fails with `Permission denied (publickey)`.
+
+The durable fix has three pieces:
+
+1. **Private key lives in a Replit Secret**, `GIT_SSH_PRIVATE_KEY` (Secrets persist across container rebuilds; `~/.ssh/` does not). Same key used for the LeagueVault workspace, so adding the public key to GitHub once covers both apps.
+2. **`scripts/setup-git-ssh.sh`** materializes the secret into `~/.ssh/id_ed25519` with mode 600, normalizes the PEM line-wrap (Replit Secrets sometimes collapse newlines to spaces), and pins GitHub's published host keys into `~/.ssh/known_hosts` so the first connection doesn't need an interactive y/n. Idempotent — safe to re-run.
+3. **`.config/bashrc`** (workspace-tracked) calls the setup script on every interactive shell start. Replit's base `~/.bashrc` auto-sources `${REPL_HOME}/.config/bashrc` when present, so the key is re-materialized any time you open a shell — no manual step ever again.
+
+To set this up on a new workspace (or after a key rotation):
+
+```bash
+# 1. Add the private key as a Replit Secret named GIT_SSH_PRIVATE_KEY
+#    (paste the full PEM, including BEGIN / END markers).
+# 2. Run the bootstrap once to populate ~/.ssh/ for the current shell:
+bash scripts/setup-git-ssh.sh
+# 3. Verify:
+ssh -T git@github.com    # expect: "Hi <username>! You've successfully authenticated…"
+git ls-remote --heads origin
+```
+
+Future shells get the bootstrap automatically via `.config/bashrc`. If you ever need to rotate the key, replace the `GIT_SSH_PRIVATE_KEY` secret value and re-run the script (or just open a new shell).
+
 ## Running the Test Suite
 The vitest suite under `server/tests/` writes to real tables (`orders`, `users`, `password_reset_tokens`, …) and grants real Postgres roles (`mcp_read_only`). To prevent any test-driven mutation from touching production data, the suite is wired to run against a separate **test database**, never against the live `DATABASE_URL` (Task #106).
 
