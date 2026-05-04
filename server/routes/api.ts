@@ -865,6 +865,9 @@ export function createApiRouter(): Router {
       const { syncCatalog } = await import('../services/catalogService');
       const result = await syncCatalog();
       res.json({ success: true, ...result });
+      // Notify connected dashboards (e.g. the Items tab) so they can
+      // refetch category and ranked-item data without a manual reload.
+      broadcast('data-updated', { syncType: 'catalog' });
     } catch (error) {
       logger.error('sync.catalog.failed', errorContext(error));
       next(error);
@@ -885,6 +888,7 @@ export function createApiRouter(): Router {
         catalog: catalogResult,
         backfill: backfillResult,
       });
+      broadcast('data-updated', { syncType: 'catalog' });
     } catch (error) {
       logger.error('sync.catalog.backfillFailed', errorContext(error));
       next(error);
