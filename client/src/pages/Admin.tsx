@@ -14,6 +14,16 @@ import QRCode from 'qrcode';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { formatDistanceToNow, format } from 'date-fns';
@@ -672,10 +682,43 @@ const APP_SETTINGS_VALIDATION_KEY = APP_SETTINGS_VALIDATION_QUERY_KEY;
  * having to ssh into the box and re-trigger a read.
  */
 function AppSettingsRegistryStatusCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [resetTarget, setResetTarget] = useState<string | null>(null);
   const { data, isLoading, isError, error, refetch, isFetching } =
     useQuery<AppSettingsValidationResponse>({
       queryKey: APP_SETTINGS_VALIDATION_KEY,
     });
+
+  // "Reset to default" — calls the admin DELETE endpoint that drops
+  // the row and writes a security_audit_log entry, then refetches the
+  // validation query so the panel re-renders without the now-cleared
+  // entry (Task #182). Closes the loop on broken/legacy rows without
+  // a one-off migration.
+  const resetMutation = useMutation({
+    mutationFn: (key: string) =>
+      apiRequest('DELETE', `/api/admin/app-settings/${encodeURIComponent(key)}`),
+    onSuccess: (_data, key) => {
+      toast({
+        title: 'Setting reset',
+        description: `${key} cleared — consumer will fall back to its default.`,
+      });
+      queryClient.invalidateQueries({ queryKey: APP_SETTINGS_VALIDATION_KEY });
+      queryClient.invalidateQueries({
+        queryKey: ['/api/admin/alerts/square-rate-limit'],
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: 'Reset failed',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        variant: 'destructive',
+      });
+    },
+    onSettled: () => {
+      setResetTarget(null);
+    },
+  });
 
   const invalidCount = data?.entries.filter((e) => e.status === 'invalid').length ?? 0;
   const validatedLabel = data
@@ -779,21 +822,42 @@ function AppSettingsRegistryStatusCard() {
                         </span>
                       </div>
                     </div>
-                    {entry.status === 'invalid' && entry.issues.length > 0 ? (
-                      // Show the same zod issue list the alert payload
-                      // contains so an on-call who lands here without
-                      // the alert in front of them sees the same
-                      // diagnostic detail.
-                      <ul className="mt-2 space-y-1 border-t border-destructive/20 pt-2 text-xs text-destructive">
-                        {entry.issues.map((issue, idx) => (
-                          <li key={idx} className="flex gap-2">
-                            <span className="font-mono">
-                              {issue.path || '(root)'}:
-                            </span>
-                            <span>{issue.message}</span>
-                          </li>
-                        ))}
-                      </ul>
+                    {entry.status === 'invalid' ? (
+                      <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2">
+                        {entry.issues.length > 0 ? (
+                          // Show the same zod issue list the alert payload
+                          // contains so an on-call who lands here without
+                          // the alert in front of them sees the same
+                          // diagnostic detail.
+                          <ul className="space-y-1 text-xs text-destructive">
+                            {entry.issues.map((issue, idx) => (
+                              <li key={idx} className="flex gap-2">
+                                <span className="font-mono">
+                                  {issue.path || '(root)'}:
+                                </span>
+                                <span>{issue.message}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          disabled={
+                            resetMutation.isPending &&
+                            resetMutation.variables === entry.key
+                          }
+                          onClick={() => setResetTarget(entry.key)}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          {resetMutation.isPending &&
+                          resetMutation.variables === entry.key
+                            ? 'Resetting...'
+                            : 'Reset to default'}
+                        </Button>
+                      </div>
                     ) : null}
                   </li>
                 ))}
@@ -804,15 +868,49 @@ function AppSettingsRegistryStatusCard() {
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  Affected consumers are silently falling back to defaults. Ship a one-off
-                  migration that either rewrites the row to the new shape or deletes it — never
-                  hand-edit <code>app_settings</code> in production.
+                  Affected consumers are silently falling back to defaults. Use{' '}
+                  <strong>Reset to default</strong> to clear a broken row in place — the
+                  delete is recorded in the security audit log. Never hand-edit{' '}
+                  <code>app_settings</code> in production; if the row needs a rewrite
+                  rather than a reset, ship a one-off migration instead.
                 </span>
               </div>
             ) : null}
           </div>
         )}
       </CardContent>
+      <AlertDialog
+        open={resetTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !resetMutation.isPending) setResetTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset this app setting to its default?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes the <code>{resetTarget}</code> row from{' '}
+              <code>app_settings</code> so the consumer falls back to its hard-coded
+              default. The action is recorded in the security audit log. You can
+              always re-tune the setting from its panel afterwards.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (resetTarget) resetMutation.mutate(resetTarget);
+              }}
+              disabled={resetMutation.isPending}
+            >
+              {resetMutation.isPending ? 'Resetting...' : 'Reset to default'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

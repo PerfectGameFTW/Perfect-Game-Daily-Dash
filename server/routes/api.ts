@@ -20,7 +20,7 @@ import {
   getDailyBudgetStatus,
 } from '../services/syncLocks';
 import { paymentService } from '../services/paymentService';
-import { DateRange, dateRangeSchema } from '../../shared/schema';
+import { DateRange, dateRangeSchema, appSettingsRegistry, AppSettingKey } from '../../shared/schema';
 import { broadcast } from '../ws';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import {
@@ -964,6 +964,60 @@ export function createApiRouter(): Router {
           validatedAt: new Date().toISOString(),
           entries,
         });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // Admin: delete a single row from `app_settings` so the consumer
+  // falls back to its hard-coded default (Task #182). Designed for the
+  // "Reset to default" button on the App settings registry panel —
+  // when a row has gone invalid (legacy shape, dropped field) and the
+  // correct fix is simply to drop it, this endpoint closes the loop
+  // without shipping a one-off migration. The delete + audit-row write
+  // commit together via `deleteAppSettingWithAudit` so we can never
+  // lose the trail of who reset which key. Restricted to keys that
+  // are actually in `appSettingsRegistry` so an attacker can't use
+  // this to clear arbitrary jsonb rows that future code might add.
+  router.delete(
+    '/admin/app-settings/:key',
+    requireAdmin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const key = req.params.key;
+        if (!Object.prototype.hasOwnProperty.call(appSettingsRegistry, key)) {
+          return res.status(404).json({
+            error: 'Unknown app setting key',
+            key,
+          });
+        }
+        const typedKey = key as AppSettingKey;
+        // Snapshot the current row (if any) so the audit metadata can
+        // record what was cleared. We use the raw DB read instead of
+        // `getAppSetting` so an invalid/legacy row — the very case
+        // this endpoint exists to clean up — still surfaces in the
+        // audit trail rather than coming back as `undefined`.
+        const { db } = await import('../db');
+        const { appSettings } = await import('../../shared/schema');
+        const { eq } = await import('drizzle-orm');
+        const existing = await db
+          .select({ value: appSettings.value })
+          .from(appSettings)
+          .where(eq(appSettings.key, typedKey));
+        const previousValue = existing[0]?.value ?? null;
+        await pgStorage.deleteAppSettingWithAudit(typedKey, {
+          actorUserId: req.user!.id,
+          actorIp: req.ip ?? null,
+          action: 'app_setting.reset_to_default',
+          targetUserId: null,
+          metadata: {
+            key: typedKey,
+            existed: existing.length > 0,
+            previousValue,
+          },
+        });
+        res.json({ key: typedKey, status: 'reset' });
       } catch (err) {
         next(err);
       }

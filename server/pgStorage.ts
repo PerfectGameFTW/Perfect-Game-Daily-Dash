@@ -443,6 +443,24 @@ class PgStorage implements IStorage {
     });
   }
 
+  // Delete the persisted row for `key` and write the audit row in the
+  // same transaction (Task #182). Mirrors `setAppSettingWithAudit` so
+  // an audit-write failure can't leave the row removed without the
+  // accompanying trail. Used by the admin "Reset to default" action on
+  // the App settings registry panel: dropping the row makes the
+  // consumer fall back to its hard-coded default, which closes out a
+  // broken/legacy row without a one-off migration. No-op-safe — if no
+  // row exists the audit row still records the attempt.
+  async deleteAppSettingWithAudit<K extends AppSettingKey>(
+    key: K,
+    audit: InsertSecurityAuditLog,
+  ): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.delete(appSettings).where(eq(appSettings.key, key));
+      await tx.insert(securityAuditLog).values(audit);
+    });
+  }
+
   async disableUserTotpWithAudit(
     targetUserId: number,
     audit: InsertSecurityAuditLog,
