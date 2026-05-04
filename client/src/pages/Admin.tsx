@@ -17,6 +17,10 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import { formatDistanceToNow, format } from 'date-fns';
+import {
+  useInvalidAppSettingsCount,
+  APP_SETTINGS_VALIDATION_QUERY_KEY,
+} from '@/hooks/use-invalid-app-settings-count';
 
 interface SyncStatusData {
   success: boolean;
@@ -41,6 +45,7 @@ export default function Admin() {
   const [activeTab, setActiveTab] = useState('users');
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const invalidAppSettings = useInvalidAppSettingsCount();
 
   useEffect(() => {
     if (!isLoading && user?.role !== 'admin') {
@@ -149,9 +154,27 @@ export default function Admin() {
               <RefreshCw className="mr-2 h-4 w-4" />
               <span>Sync</span>
             </TabsTrigger>
-            <TabsTrigger value="alerts" className="flex items-center">
-              <Bell className="mr-2 h-4 w-4" />
+            <TabsTrigger
+              value="alerts"
+              className="flex items-center"
+              data-testid="tab-trigger-alerts"
+            >
+              <span className="relative mr-2 flex h-4 w-4 items-center justify-center">
+                <Bell className="h-4 w-4" />
+                {invalidAppSettings > 0 ? (
+                  <span
+                    className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-destructive ring-2 ring-background"
+                    data-testid="badge-alerts-tab-invalid-app-settings"
+                    aria-label={`${invalidAppSettings} broken app setting${invalidAppSettings === 1 ? '' : 's'}`}
+                  />
+                ) : null}
+              </span>
               <span>Alerts</span>
+              {invalidAppSettings > 0 ? (
+                <span className="ml-1.5 rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-medium leading-none text-destructive-foreground">
+                  {invalidAppSettings}
+                </span>
+              ) : null}
             </TabsTrigger>
             <TabsTrigger value="security" className="flex items-center">
               <KeyRound className="mr-2 h-4 w-4" />
@@ -634,7 +657,7 @@ interface AppSettingsValidationResponse {
   entries: AppSettingsValidationEntry[];
 }
 
-const APP_SETTINGS_VALIDATION_KEY = ['/api/admin/app-settings/validation'] as const;
+const APP_SETTINGS_VALIDATION_KEY = APP_SETTINGS_VALIDATION_QUERY_KEY;
 
 /**
  * Read-only panel that lists every key registered in

@@ -14,6 +14,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { ShieldCheck, User, LogOut, CreditCard, CircleCheck, Moon, Sun, KeyRound } from "lucide-react";
 import { useLocation } from "wouter";
+import { useInvalidAppSettingsCount } from "@/hooks/use-invalid-app-settings-count";
 
 interface AccountDrawerProps {
   open: boolean;
@@ -24,6 +25,7 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [_, navigate] = useLocation();
+  const invalidAppSettings = useInvalidAppSettingsCount();
 
   const handleNavigate = (path: string) => {
     navigate(path);
@@ -47,13 +49,28 @@ export default function AccountDrawer({ open, onOpenChange }: AccountDrawerProps
           </DrawerHeader>
           <div className="px-4 py-2 pb-6 space-y-4">
             {user?.role === 'admin' && (
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="w-full text-left justify-start gap-2 border-border hover:bg-accent/50"
                 onClick={() => handleNavigate('/admin')}
+                data-testid="button-admin-nav"
               >
-                <ShieldCheck className="h-5 w-5 text-primary" />
+                <span className="relative flex h-5 w-5 items-center justify-center">
+                  <ShieldCheck className="h-5 w-5 text-primary" />
+                  {invalidAppSettings > 0 ? (
+                    <span
+                      className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-destructive ring-2 ring-background"
+                      data-testid="badge-admin-nav-invalid-app-settings"
+                      aria-label={`${invalidAppSettings} broken app setting${invalidAppSettings === 1 ? '' : 's'}`}
+                    />
+                  ) : null}
+                </span>
                 Users
+                {invalidAppSettings > 0 ? (
+                  <span className="ml-auto rounded-full bg-destructive px-2 py-0.5 text-xs font-medium text-destructive-foreground">
+                    {invalidAppSettings}
+                  </span>
+                ) : null}
               </Button>
             )}
             <Button

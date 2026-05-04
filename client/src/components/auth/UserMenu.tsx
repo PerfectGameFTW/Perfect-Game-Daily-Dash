@@ -8,11 +8,13 @@ import {
   Settings,
   ShieldCheck
 } from 'lucide-react';
+import { useInvalidAppSettingsCount } from '@/hooks/use-invalid-app-settings-count';
 
 export default function UserMenu() {
   const { user, logout } = useAuth();
   const [, navigate] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
+  const invalidAppSettings = useInvalidAppSettingsCount();
 
   const toggleMenu = () => {
     setIsOpen(!isOpen);
@@ -36,10 +38,17 @@ export default function UserMenu() {
     <div className="relative">
       <button
         onClick={toggleMenu}
-        className="flex items-center space-x-1 rounded-full px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+        className="relative flex items-center space-x-1 rounded-full px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
       >
         <span>{user.username}</span>
         <ChevronDown size={16} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        {user.role === 'admin' && invalidAppSettings > 0 ? (
+          <span
+            className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-destructive ring-2 ring-background"
+            data-testid="badge-user-menu-invalid-app-settings"
+            aria-label={`${invalidAppSettings} broken app setting${invalidAppSettings === 1 ? '' : 's'}`}
+          />
+        ) : null}
       </button>
 
       {isOpen && (
