@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import useMobile from "@/hooks/use-mobile";
 import { queryClient } from "@/lib/queryClient";
 import GiftCardActivity from "@/components/dashboard/GiftCardActivity";
+import ItemsPerformance from "@/components/dashboard/ItemsPerformance";
 
 export default function Dashboard() {
   const [dateRange, setDateRange] = useState<DateRange>("today");
@@ -18,6 +19,12 @@ export default function Dashboard() {
   const [timeframeModalOpen, setTimeframeModalOpen] = useState(false);
   const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
+  // Track whether the user has changed the date range from the initial
+  // "today" default. The Items tab is most useful over a multi-day window,
+  // so the first time the user opens it we bump the range to "last7days"
+  // — but only if they haven't already picked something themselves.
+  const [dateRangeUserChanged, setDateRangeUserChanged] = useState(false);
+  const [itemsTabAutoSet, setItemsTabAutoSet] = useState(false);
   const isMobile = useMobile();
   const { toast } = useToast();
 
@@ -27,6 +34,7 @@ export default function Dashboard() {
     setDateRange(newRange);
     setCustomStartDate(start);
     setCustomEndDate(end);
+    setDateRangeUserChanged(true);
 
     const queryKeys = [
       ['/api/summary', newRange, start?.toISOString(), end?.toISOString()],
@@ -48,6 +56,14 @@ export default function Dashboard() {
         return (
           <StatsSummary 
             dateRange={dateRange} 
+            customStartDate={customStartDate}
+            customEndDate={customEndDate}
+          />
+        );
+      case "items":
+        return (
+          <ItemsPerformance
+            dateRange={dateRange}
             customStartDate={customStartDate}
             customEndDate={customEndDate}
           />
@@ -93,7 +109,22 @@ export default function Dashboard() {
 
       <BottomNavigation 
         activeTab={activeTab} 
-        onTabChange={setActiveTab} 
+        onTabChange={(tab) => {
+          if (
+            tab === "items"
+            && !itemsTabAutoSet
+            && !dateRangeUserChanged
+            && dateRange === "today"
+          ) {
+            setItemsTabAutoSet(true);
+            handleDateRangeChange("last7days");
+            // handleDateRangeChange flips dateRangeUserChanged true, so
+            // reset it back to false afterwards — this auto-bump should
+            // not count as the user picking a range.
+            setDateRangeUserChanged(false);
+          }
+          setActiveTab(tab);
+        }} 
         onAccountClick={() => setAccountDrawerOpen(true)}
       />
 

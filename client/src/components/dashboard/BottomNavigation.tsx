@@ -1,7 +1,8 @@
 import { 
   BarChart3,
   CreditCard, 
-  UserCircle
+  UserCircle,
+  Package
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -15,7 +16,7 @@ interface NavItemProps {
 const NavItem = ({ icon, label, active, onClick }: NavItemProps) => {
   return (
     <button 
-      className="flex flex-col items-center justify-center w-1/3 relative py-2 transition-all"
+      className="flex flex-col items-center justify-center w-1/4 relative py-2 transition-all"
       onClick={onClick}
     >
       {active && (
@@ -71,6 +72,12 @@ const BottomNavigation = ({ activeTab = "overview", onTabChange, onAccountClick 
           label="Overview" 
           active={activeTab === "overview"}
           onClick={() => handleTabChange("overview")}
+        />
+        <NavItem 
+          icon={<Package className="w-5 h-5 md:w-6 md:h-6" />} 
+          label="Items" 
+          active={activeTab === "items"}
+          onClick={() => handleTabChange("items")}
         />
         <NavItem 
           icon={<CreditCard className="w-5 h-5 md:w-6 md:h-6" />} 

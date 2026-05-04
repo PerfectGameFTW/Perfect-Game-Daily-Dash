@@ -243,6 +243,11 @@ export const categoryRevenueLimiter = makeLimiter({ max: 30 });
 export const hourlyRevenueLimiter = makeLimiter({ max: 30 });
 export const giftCardSummaryLimiter = makeLimiter({ max: 30 });
 export const detailedTransactionsLimiter = makeLimiter({ max: 30 });
+// Items-by-category dashboard tab (Task #188). Two panels render
+// concurrently and the user flips category/metric quickly, so the
+// budget is a touch higher than the standard aggregation limiter.
+export const itemsCategoriesLimiter = makeLimiter({ max: 60 });
+export const itemsRankedLimiter = makeLimiter({ max: 60 });
 
 // Sync status / progress polling. Has to tolerate a UI polling every 5s
 // while a long-running sync is visible (12/min), with headroom for two

@@ -1,0 +1,204 @@
+/**
+ * Items-by-category performance service (Task #188)
+ *
+ * Powers the Dashboard "Items" tab. Two responsibilities:
+ *
+ *   1. `getCategoryTree()` — return Square's category hierarchy as an
+ *      arbitrarily-deep tree. The UI uses the top-level rollups (e.g.
+ *      "Food", "Beverage") for the side-by-side panels and renders the
+ *      sub-categories as the per-panel dropdown.
+ *
+ *   2. `getRankedItems({ categoryId, metric, dateRange })` — for the
+ *      given category (rollup OR specific child), return a fully ranked
+ *      list of every non-archived catalog item that lives under it,
+ *      INCLUDING items with zero sales in the window. Zero-sales items
+ *      come back with metric=0; the UI renders them at the bottom so
+ *      the operator can see "nobody bought this".
+ *
+ * Design notes:
+ *   - We don't hardcode "Food" / "Beverage". Any category that has at
+ *     least one child becomes a rollup. That keeps the tab in sync with
+ *     whatever Square is configured to do without code changes.
+ *   - Aggregation joins `order_line_items` against `orders.created_at`
+ *     using the same Eastern-time business window the rest of the
+ *     dashboard uses, so numbers match the Overview tab.
+ *   - Item-level joins use `product_id` → `square_catalog_object_id`
+ *     because Square line items reference variation IDs and our catalog
+ *     cache stores both items and their variations under the same key.
+ */
+import { db } from '../db';
+import { sql } from 'drizzle-orm';
+import { getEasternDateRange } from '../dateUtils';
+import type {
+  CategoryTreeNode,
+  DateRange,
+  ItemMetric,
+  RankedItem,
+} from '../../shared/schema';
+
+export class ItemsService {
+  /**
+   * Build the category hierarchy from `square_categories`. Returns the
+   * forest of top-level (NULL parent) nodes, each with their full
+   * descendant tree. Categories whose parent ID points to a row that
+   * doesn't exist locally are promoted to top-level so they remain
+   * reachable in the UI.
+   */
+  async getCategoryTree(): Promise<CategoryTreeNode[]> {
+    const rows = await db.execute<{
+      square_category_id: string;
+      name: string;
+      parent_category_id: string | null;
+    }>(sql`
+      SELECT square_category_id, name, parent_category_id
+      FROM square_categories
+      ORDER BY name ASC
+    `);
+
+    const byId = new Map<string, CategoryTreeNode>();
+    for (const row of rows.rows) {
+      byId.set(row.square_category_id, {
+        squareCategoryId: row.square_category_id,
+        name: row.name,
+        children: [],
+      });
+    }
+
+    const roots: CategoryTreeNode[] = [];
+    for (const row of rows.rows) {
+      const node = byId.get(row.square_category_id)!;
+      const parentId = row.parent_category_id;
+      if (parentId && byId.has(parentId)) {
+        byId.get(parentId)!.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+
+    // Stable alphabetical ordering at every level — operators expect
+    // categories in a predictable order across loads.
+    const sortRec = (nodes: CategoryTreeNode[]) => {
+      nodes.sort((a, b) => a.name.localeCompare(b.name));
+      for (const n of nodes) sortRec(n.children);
+    };
+    sortRec(roots);
+    return roots;
+  }
+
+  /**
+   * Collect a category ID and all of its descendants into a flat list.
+   * Used to expand a rollup selection into the set of leaf categories
+   * whose items should be included.
+   */
+  private collectCategoryIds(
+    rootId: string,
+    nodes: CategoryTreeNode[],
+  ): string[] {
+    const out: string[] = [];
+    const walk = (n: CategoryTreeNode) => {
+      out.push(n.squareCategoryId);
+      for (const c of n.children) walk(c);
+    };
+    const find = (list: CategoryTreeNode[]): CategoryTreeNode | null => {
+      for (const n of list) {
+        if (n.squareCategoryId === rootId) return n;
+        const inner = find(n.children);
+        if (inner) return inner;
+      }
+      return null;
+    };
+    const root = find(nodes);
+    if (root) walk(root);
+    return out;
+  }
+
+  /**
+   * Return every non-archived item belonging to `categoryId` (or any of
+   * its descendant categories) with revenue / units / transactions
+   * aggregated over the requested business-date window. Items with zero
+   * sales in the window still appear (metric values default to 0).
+   *
+   * `metric` only controls the ORDER BY direction, not the projection —
+   * the response always carries all three numbers so the client can
+   * switch metrics without an extra round-trip.
+   */
+  async getRankedItems(
+    categoryId: string,
+    metric: ItemMetric,
+    dateRange: DateRange,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<RankedItem[]> {
+    const tree = await this.getCategoryTree();
+    const categoryIds = this.collectCategoryIds(categoryId, tree);
+    if (categoryIds.length === 0) return [];
+
+    const { start, end } = getEasternDateRange(dateRange, startDate, endDate);
+
+    // LEFT JOIN catalog items against the windowed sales aggregation so
+    // zero-sales items still come back. We aggregate orders/line-items
+    // in a CTE first to keep the join cardinality manageable on big
+    // catalogs.
+    const result = await db.execute<{
+      catalog_object_id: string;
+      item_name: string | null;
+      category_id: string | null;
+      category_name: string | null;
+      revenue: string | number | null;
+      units: string | number | null;
+      transactions: string | number | null;
+    }>(sql`
+      WITH sales AS (
+        SELECT
+          oli.product_id AS catalog_object_id,
+          COALESCE(SUM(oli.total_money), 0) AS revenue,
+          COALESCE(SUM(oli.quantity), 0) AS units,
+          COUNT(DISTINCT oli.order_id) AS transactions
+        FROM order_line_items oli
+        INNER JOIN orders o ON o.id = oli.order_id
+        WHERE oli.product_id IS NOT NULL
+          AND o.created_at >= ${start}
+          AND o.created_at <  ${end}
+        GROUP BY oli.product_id
+      )
+      SELECT
+        sci.square_catalog_object_id AS catalog_object_id,
+        sci.item_name,
+        sci.category_id,
+        sci.category_name,
+        COALESCE(s.revenue, 0)       AS revenue,
+        COALESCE(s.units, 0)         AS units,
+        COALESCE(s.transactions, 0)  AS transactions
+      FROM square_catalog_items sci
+      LEFT JOIN sales s ON s.catalog_object_id = sci.square_catalog_object_id
+      WHERE sci.is_archived = false
+        AND sci.category_id = ANY(${categoryIds})
+    `);
+
+    const items: RankedItem[] = result.rows.map((r) => ({
+      catalogObjectId: r.catalog_object_id,
+      itemName: r.item_name ?? 'Unnamed Item',
+      categoryId: r.category_id,
+      categoryName: r.category_name,
+      revenue: Number(r.revenue ?? 0),
+      units: Number(r.units ?? 0),
+      transactions: Number(r.transactions ?? 0),
+    }));
+
+    // Sort in JS so the chosen metric is the primary key and the other
+    // metrics break ties consistently. Item name is the final tiebreaker
+    // so identical-zero rows render in a stable alphabetical order.
+    const key = (i: RankedItem) =>
+      metric === 'revenue' ? i.revenue
+      : metric === 'units' ? i.units
+      : i.transactions;
+    items.sort((a, b) => {
+      const diff = key(b) - key(a);
+      if (diff !== 0) return diff;
+      return a.itemName.localeCompare(b.itemName);
+    });
+    return items;
+  }
+}
+
+export const itemsService = new ItemsService();

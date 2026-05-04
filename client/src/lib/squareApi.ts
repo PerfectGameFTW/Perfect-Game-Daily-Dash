@@ -1,5 +1,5 @@
 import { apiRequest } from "./queryClient";
-import { DateRange, DailySummary, GiftCardSummary, DetailedTransactionBreakdown, ProcessingFeeBreakdown, GcRedemptionBreakdown } from "@shared/schema";
+import { DateRange, DailySummary, GiftCardSummary, DetailedTransactionBreakdown, ProcessingFeeBreakdown, GcRedemptionBreakdown, CategoryTreeNode, RankedItem, ItemMetric } from "@shared/schema";
 
 const toFloat = (v: unknown): number => typeof v === 'number' ? v : parseFloat(String(v ?? 0)) || 0;
 const toInt = (v: unknown): number => typeof v === 'number' ? v : parseInt(String(v ?? 0), 10) || 0;
@@ -66,6 +66,34 @@ export const fetchDailySummary = async (
     console.error('Error fetching daily summary:', error);
     throw error;
   }
+};
+
+export const fetchCategoryTree = async (): Promise<CategoryTreeNode[]> => {
+  const response = await apiRequest('GET', '/api/items/categories');
+  if (response instanceof Response) return await response.json();
+  return Array.isArray(response) ? (response as CategoryTreeNode[]) : [];
+};
+
+export const fetchRankedItems = async (
+  categoryId: string,
+  metric: ItemMetric,
+  dateRange: DateRange,
+  startDate?: Date,
+  endDate?: Date,
+): Promise<RankedItem[]> => {
+  const qs = `${buildQueryString(dateRange, startDate, endDate)}&categoryId=${encodeURIComponent(categoryId)}&metric=${metric}`;
+  const response = await apiRequest('GET', `/api/items/ranked?${qs}`);
+  const data = response instanceof Response ? await response.json() : response;
+  if (!Array.isArray(data)) return [];
+  return data.map((r: Record<string, unknown>) => ({
+    catalogObjectId: toStr(r.catalogObjectId, ''),
+    itemName: toStr(r.itemName, 'Unnamed Item'),
+    categoryId: typeof r.categoryId === 'string' ? r.categoryId : null,
+    categoryName: typeof r.categoryName === 'string' ? r.categoryName : null,
+    revenue: toFloat(r.revenue),
+    units: toFloat(r.units),
+    transactions: toInt(r.transactions),
+  }));
 };
 
 export const fetchGiftCardSummary = async (

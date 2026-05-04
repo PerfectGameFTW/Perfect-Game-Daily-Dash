@@ -520,11 +520,16 @@ export const insertSyncStateSchema = createInsertSchema(syncState).omit({
 export type InsertSyncState = z.infer<typeof insertSyncStateSchema>;
 export type SyncState = typeof syncState.$inferSelect;
 
-// Square catalog categories cache — stores real category names from Square's Catalog API
+// Square catalog categories cache — stores real category names from Square's Catalog API.
+// `parentCategoryId` mirrors Square's category hierarchy: a NULL parent means the row IS
+// itself a top-level rollup (e.g. "Food", "Beverage"); a non-null parent points to the
+// rollup this category belongs to (e.g. Pizza → Food). The Items-by-category dashboard
+// tab uses this to drive the rollup dropdowns without any hand-maintained mapping.
 export const squareCategories = pgTable("square_categories", {
   id: serial("id").primaryKey(),
   squareCategoryId: text("square_category_id").notNull().unique(),
   name: text("name").notNull(),
+  parentCategoryId: text("parent_category_id"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
@@ -535,13 +540,16 @@ export const insertSquareCategorySchema = createInsertSchema(squareCategories).o
 export type InsertSquareCategory = z.infer<typeof insertSquareCategorySchema>;
 export type SquareCategory = typeof squareCategories.$inferSelect;
 
-// Square catalog items cache — maps catalog object IDs to their category
+// Square catalog items cache — maps catalog object IDs to their category.
+// `isArchived` captures Square's `is_deleted` / archived flag so the items dashboard
+// can hide retired SKUs without losing the historical sales data they generated.
 export const squareCatalogItems = pgTable("square_catalog_items", {
   id: serial("id").primaryKey(),
   squareCatalogObjectId: text("square_catalog_object_id").notNull().unique(),
   categoryId: text("category_id"),
   categoryName: text("category_name"),
   itemName: text("item_name"),
+  isArchived: boolean("is_archived").default(false).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
@@ -551,6 +559,33 @@ export const insertSquareCatalogItemSchema = createInsertSchema(squareCatalogIte
 
 export type InsertSquareCatalogItem = z.infer<typeof insertSquareCatalogItemSchema>;
 export type SquareCatalogItem = typeof squareCatalogItems.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Items-by-category performance dashboard (Task #188)
+// ---------------------------------------------------------------------------
+export const itemMetricSchema = z.enum(["revenue", "units", "transactions"]);
+export type ItemMetric = z.infer<typeof itemMetricSchema>;
+
+// One node in the category-tree response. Children are direct sub-categories;
+// leaves have an empty children array. The UI treats any node with children as
+// a rollup (offers "All <name>" + a dropdown of its children).
+export interface CategoryTreeNode {
+  squareCategoryId: string;
+  name: string;
+  children: CategoryTreeNode[];
+}
+
+// One row in the ranked-items response. `categoryName` is the item's specific
+// (leaf) Square category, useful when the caller is looking at a rollup view.
+export interface RankedItem {
+  catalogObjectId: string;
+  itemName: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  revenue: number;
+  units: number;
+  transactions: number;
+}
 
 // Audit log of every MCP `run_read_query` invocation (success or failure).
 // Persisted so admins can review who ran what query without needing shell

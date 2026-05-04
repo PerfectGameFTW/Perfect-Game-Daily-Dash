@@ -360,3 +360,22 @@ Only propose follow-up tasks that are **critical or high priority**. Do not prop
 
 ### Pre-existing errors
 Always fix pre-existing errors (failing tests, type errors, broken builds, runtime crashes) before marking a task complete. If a task introduces or exposes an error that was already present in the codebase, resolve it as part of the task rather than deferring it.
+
+## Items by Category Dashboard Tab (Task #188)
+
+The Dashboard "Items" tab (between Overview and Gift Cards in `BottomNavigation.tsx`) renders one panel per top-level Square category rollup. Each panel has:
+- Its own category dropdown — `All <Rollup>` plus every direct child category from Square's hierarchy.
+- Its own metric toggle — Revenue / Units / Transactions.
+- A full ranked list (NOT top-N) of every non-archived item under the chosen category. Zero-sales items render at the bottom in muted text so operators can see what nobody bought.
+
+Driven by:
+- `square_categories.parent_category_id` (added Task #188): nullable text column. NULL = top-level rollup. Populated on catalog sync from Square's `categoryData.parentCategory.id` (with fallback to legacy `parentCategoryId` field).
+- `square_catalog_items.is_archived` (added Task #188): boolean default false. Set from Square's `is_deleted` flag on the catalog object; variations inherit their parent item's archived state.
+- `server/services/itemsService.ts`: `getCategoryTree()` returns the full forest; `getRankedItems(categoryId, metric, dateRange)` LEFT JOINs `square_catalog_items` against a windowed `order_line_items` aggregation so zero-sales items still appear with `0` metrics. Sorts in JS by the chosen metric with item-name tiebreaker for stable ordering.
+- `GET /api/items/categories` (rate-limited 60/min) and `GET /api/items/ranked` (rate-limited 60/min, requires `categoryId` and validates `metric` via `itemMetricSchema` zod enum). Both behind the standard `requireAuth` middleware.
+
+The tab does NOT hardcode "Food" / "Beverage" — any top-level category with at least one child becomes a panel. If Square has more than two rollups they all render in the same 2-column grid below.
+
+The Dashboard auto-bumps the date range to `last7days` the first time the user opens the Items tab, but only if they haven't already picked a range — `dateRangeUserChanged` flag in `Dashboard.tsx` ensures user choice always wins. The auto-bump fires once per session (`itemsTabAutoSet` guard).
+
+Visible to all authenticated dashboard users (no admin gate).

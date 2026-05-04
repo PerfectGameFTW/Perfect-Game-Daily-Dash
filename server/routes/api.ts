@@ -8,6 +8,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { dashboardService } from '../services/dashboardService';
+import { itemsService } from '../services/itemsService';
+import { itemMetricSchema } from '../../shared/schema';
 import { pgStorage } from '../pgStorage';
 import { giftCardService } from '../services/giftCardService';
 import { syncService } from '../services/syncService';
@@ -25,6 +27,8 @@ import {
   syncLimiter,
   summaryLimiter,
   categoryRevenueLimiter,
+  itemsCategoriesLimiter,
+  itemsRankedLimiter,
   hourlyRevenueLimiter,
   giftCardSummaryLimiter,
   detailedTransactionsLimiter,
@@ -276,6 +280,63 @@ export function createApiRouter(): Router {
   };
   router.get('/category-revenue', categoryRevenueLimiter, categoryRevenueHandler);
   router.get('/revenue-by-category', categoryRevenueLimiter, categoryRevenueHandler);
+
+  /**
+   * Items by Category — category tree (Task #188)
+   * GET /api/items/categories
+   * Returns Square's category hierarchy as a forest of top-level rollups.
+   */
+  router.get('/items/categories', itemsCategoriesLimiter, async (
+    _req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const tree = await itemsService.getCategoryTree();
+      res.json(tree);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Items by Category — ranked items (Task #188)
+   * GET /api/items/ranked?categoryId=...&metric=revenue|units|transactions&dateRange=...
+   * Returns every non-archived item under the given category (or its
+   * descendants) ranked by the requested metric. Items with zero sales
+   * are included with metric=0.
+   */
+  router.get('/items/ranked', itemsRankedLimiter, async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const { dateRange, startDate, endDate } = extractDateRange(req);
+      const categoryId = typeof req.query.categoryId === 'string' ? req.query.categoryId : '';
+      if (!categoryId) {
+        res.status(400).json({ error: 'categoryId is required' });
+        return;
+      }
+      let metric: ReturnType<typeof itemMetricSchema.parse>;
+      try {
+        metric = itemMetricSchema.parse(req.query.metric ?? 'revenue');
+      } catch {
+        res.status(400).json({ error: 'metric must be revenue, units, or transactions' });
+        return;
+      }
+      const items = await itemsService.getRankedItems(
+        categoryId,
+        metric,
+        dateRange,
+        startDate,
+        endDate,
+      );
+      res.json(items);
+    } catch (error) {
+      next(error);
+    }
+  });
   
   /**
    * Hourly Revenue API

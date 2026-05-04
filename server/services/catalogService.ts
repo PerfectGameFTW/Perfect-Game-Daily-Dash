@@ -87,6 +87,17 @@ export async function syncCatalog(): Promise<{
           const catId = obj.id as string;
           if (!catId) continue;
           const catName = obj.categoryData.name || 'Unnamed Category';
+          // Square's CategoryData exposes the parent rollup either as
+          // `parentCategory.id` (current SDK) or the legacy `parentCategoryId`
+          // field. Read both so we don't silently drop the hierarchy if
+          // Square ever flips one off — the items dashboard depends on
+          // this to drive its rollup dropdowns.
+          const catData = obj.categoryData as Record<string, unknown>;
+          const parentCategoryObj = catData.parentCategory as { id?: unknown } | undefined;
+          const parentCategoryId =
+            (typeof parentCategoryObj?.id === 'string' && parentCategoryObj.id) ||
+            (typeof catData.parentCategoryId === 'string' && catData.parentCategoryId) ||
+            null;
           categoryMap.set(catId, catName);
 
           await db
@@ -94,12 +105,14 @@ export async function syncCatalog(): Promise<{
             .values({
               squareCategoryId: catId,
               name: catName,
+              parentCategoryId,
               updatedAt: new Date(),
             } satisfies InsertSquareCategory)
             .onConflictDoUpdate({
               target: squareCategories.squareCategoryId,
               set: {
                 name: catName,
+                parentCategoryId,
                 updatedAt: new Date(),
               },
             });
@@ -126,6 +139,11 @@ export async function syncCatalog(): Promise<{
         const itemData = obj.itemData;
         const catalogObjectId = obj.id;
         const itemName = itemData.name || 'Unnamed Item';
+        // Square uses `is_deleted` on the catalog object for archived
+        // SKUs. Capture it so the items dashboard can hide retired items
+        // without losing their historical sales data.
+        const objAny = obj as unknown as Record<string, unknown>;
+        const isArchived = objAny.isDeleted === true || objAny.is_deleted === true;
 
         let categoryId: string | null = null;
         let categoryName: string | null = null;
@@ -170,6 +188,7 @@ export async function syncCatalog(): Promise<{
             categoryId,
             categoryName,
             itemName,
+            isArchived,
             updatedAt: new Date(),
           } satisfies InsertSquareCatalogItem)
           .onConflictDoUpdate({
@@ -178,6 +197,7 @@ export async function syncCatalog(): Promise<{
               categoryId,
               categoryName,
               itemName,
+              isArchived,
               updatedAt: new Date(),
             },
           });
@@ -192,6 +212,12 @@ export async function syncCatalog(): Promise<{
               && typeof variation.itemVariationData.name === 'string'
               ? `${itemName} - ${variation.itemVariationData.name}`
               : itemName;
+            // A variation inherits its parent item's archived state unless Square
+            // marked the variation itself as deleted; either is enough to retire it.
+            const varAny = variation as unknown as Record<string, unknown>;
+            const varArchived = isArchived
+              || varAny.isDeleted === true
+              || varAny.is_deleted === true;
 
             await db
               .insert(squareCatalogItems)
@@ -200,6 +226,7 @@ export async function syncCatalog(): Promise<{
                 categoryId,
                 categoryName,
                 itemName: varName,
+                isArchived: varArchived,
                 updatedAt: new Date(),
               } satisfies InsertSquareCatalogItem)
               .onConflictDoUpdate({
@@ -208,6 +235,7 @@ export async function syncCatalog(): Promise<{
                   categoryId,
                   categoryName,
                   itemName: varName,
+                  isArchived: varArchived,
                   updatedAt: new Date(),
                 },
               });
