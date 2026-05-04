@@ -248,13 +248,16 @@ app.disable('etag');
 //
 // Both modes set:
 //   - X-Content-Type-Options: nosniff
-//   - X-Frame-Options: DENY  (also enforced via CSP frame-ancestors 'none')
 //   - Referrer-Policy: no-referrer
 //   - Cross-Origin-Opener-Policy / Resource-Policy: same-origin
 // Production additionally sets:
+//   - X-Frame-Options: DENY (CSP frame-ancestors 'none' also enforces this)
 //   - Strict-Transport-Security: max-age=1y; includeSubDomains; preload
 //   - A tight Content-Security-Policy (no inline/eval, no third-party
 //     origins). Same-origin /ws WebSocket is allowed via connect-src 'self'.
+// Development relaxes frame embedding so the Replit workspace preview
+// pane can iframe the dev server (CSP frame-ancestors restricts who can
+// embed; X-Frame-Options is omitted entirely in dev).
 //
 // HSTS is intentionally OFF in development so a local http://localhost
 // session never gets pinned to https in the browser.
@@ -295,7 +298,10 @@ const devCspDirectives = {
   connectSrc: ["'self'", 'ws:', 'wss:'],
   workerSrc: ["'self'", 'blob:'],
   objectSrc: ["'none'"],
-  frameAncestors: ["'none'"],
+  // Allow the Replit workspace to embed the dev server in its preview
+  // pane / canvas iframe. Production keeps `'none'` for clickjacking
+  // defense (see prodCspDirectives).
+  frameAncestors: ["'self'", 'https://*.replit.dev', 'https://*.replit.com', 'https://replit.com'],
   baseUri: ["'self'"],
   formAction: ["'self'"],
   // Explicitly drop helmet's default `upgrade-insecure-requests` in
@@ -315,8 +321,11 @@ app.use(
       ? { maxAge: 31536000, includeSubDomains: true, preload: true }
       : false,
     // X-Frame-Options is also covered by CSP frame-ancestors in prod, but
-    // we keep the legacy header on for older browsers.
-    frameguard: { action: 'deny' },
+    // we keep the legacy header on for older browsers. In development we
+    // disable it so the Replit workspace preview pane (an iframe) can embed
+    // the dev server; CSP frame-ancestors above still restricts who can
+    // frame us.
+    frameguard: isProd ? { action: 'deny' } : false,
     referrerPolicy: { policy: 'no-referrer' },
     crossOriginEmbedderPolicy: false, // would block third-party images / Square assets
     crossOriginResourcePolicy: { policy: 'same-origin' },
