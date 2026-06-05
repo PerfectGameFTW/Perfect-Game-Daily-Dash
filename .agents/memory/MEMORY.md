@@ -1,0 +1,1 @@
+- [Editing .replit safely](dotreplit-editing.md) — use verifyAndReplaceDotReplit({tempFilePath}); bash blocks the literal "npm run dev"; secrets never go in [userenv] (committed to git).
