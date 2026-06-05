@@ -705,7 +705,7 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     );
   }
 
-  it('throttles with 429 after 10 failed attempts from the same IP (Task #129)', async () => {
+  it('throttles with 429 after 10 failed attempts from the same IP (Task #129)', { timeout: 30000 }, async () => {
     const cookie = await login();
     const ATTACKER_IP = '198.51.100.7';
     // Reset both buckets so prior tests / unique-IP traffic in this
@@ -748,7 +748,7 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     expect(after[0]?.totpRecoveryCodes).toEqual(['$argon2id$placeholder']);
   });
 
-  it('throttle bucket clears after a successful regenerate (Task #129)', async () => {
+  it('throttle bucket clears after a successful regenerate (Task #129)', { timeout: 30000 }, async () => {
     const cookie = await login();
     const ATTACKER_IP = '198.51.100.42';
     // Start from a clean bucket so this test is independent of others.
@@ -809,7 +809,7 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
     expect(blocked.status).toBe(429);
   });
 
-  it('throttles per-account even when failed attempts come from many IPs (Task #129)', async () => {
+  it('throttles per-account even when failed attempts come from many IPs (Task #129)', { timeout: 30000 }, async () => {
     const cookie = await login();
     // Reset the per-account bucket so prior tests don't interfere.
     totpRecoveryRegenerateAccountLimiter.resetKey(`acct:${userId}`);

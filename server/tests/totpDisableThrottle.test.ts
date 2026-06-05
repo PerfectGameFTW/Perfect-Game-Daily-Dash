@@ -166,7 +166,12 @@ describe('Throttle the self-disable-2FA endpoint (Task #174)', () => {
     return (r2.cookie ?? r1.cookie!).split(';')[0];
   }
 
-  it('throttles with 429 after 10 failed attempts from the same IP', async () => {
+  // Each /totp/disable request runs a deliberately-slow bcrypt.compare
+  // (via loginUser) plus a Neon DB write; this loop fires ~11 of them
+  // sequentially. The default 5s timeout is too tight under full-suite
+  // CPU contention (many parallel forks competing for bcrypt cycles),
+  // so give the throttle-loop tests a generous explicit budget.
+  it('throttles with 429 after 10 failed attempts from the same IP', { timeout: 30000 }, async () => {
     const cookie = await login();
     const ATTACKER_IP = '198.51.100.71';
     // Reset both buckets so prior tests / unique-IP traffic in this
@@ -215,7 +220,7 @@ describe('Throttle the self-disable-2FA endpoint (Task #174)', () => {
     expect(after[0]?.totpEnabled).toBe(true);
   });
 
-  it('throttle bucket clears after a successful disable', async () => {
+  it('throttle bucket clears after a successful disable', { timeout: 30000 }, async () => {
     const cookie = await login();
     const ATTACKER_IP = '198.51.100.74';
     totpDisableIpLimiter.resetKey(`ip:${ATTACKER_IP}`);
@@ -281,7 +286,7 @@ describe('Throttle the self-disable-2FA endpoint (Task #174)', () => {
     expect(blocked.status).toBe(429);
   });
 
-  it('throttles per-account even when failed attempts come from many IPs', async () => {
+  it('throttles per-account even when failed attempts come from many IPs', { timeout: 30000 }, async () => {
     const cookie = await login();
     // Reset the per-account bucket so prior tests don't interfere.
     totpDisableAccountLimiter.resetKey(`acct:${userId}`);
