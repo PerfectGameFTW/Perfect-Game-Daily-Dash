@@ -150,6 +150,14 @@ export class SyncService {
     errors: any[];
     redeemedGiftCardIds: string[];
   }> {
+    // Cross-instance guard: only one instance may run the gift card redemption
+    // sync at a time. Released in the finally block on every exit path.
+    const lock = await tryAcquireSyncLock('gift_card_redemptions');
+    if (!lock) {
+      logger.info('sync.giftCardRedemption.lock_not_acquired');
+      return { success: true, processed: 0, matched: 0, created: 0, errors: [], redeemedGiftCardIds: [] };
+    }
+
     logger.info('sync.giftCardRedemption.start', { startDate: startDate?.toISOString() ?? null, endDate: endDate?.toISOString() ?? null });
     
     try {
@@ -294,6 +302,8 @@ export class SyncService {
           error: error instanceof Error ? error.message : String(error)
         }]
       };
+    } finally {
+      await lock.release();
     }
   }
   
@@ -313,6 +323,15 @@ export class SyncService {
   }> {
     if (this._ordersSyncRunning) {
       logger.info('sync.orders.already_running');
+      return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
+    }
+
+    // Cross-instance guard: only one instance may run the orders sync at a
+    // time. The in-process boolean above is the fast path; this advisory lock
+    // is the authoritative guard on multi-instance deployments.
+    const lock = await tryAcquireSyncLock('orders');
+    if (!lock) {
+      logger.info('sync.orders.lock_not_acquired');
       return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
     }
 
@@ -614,6 +633,7 @@ export class SyncService {
       );
     } finally {
       this._ordersSyncRunning = false;
+      await lock.release();
     }
   }
   
@@ -633,6 +653,15 @@ export class SyncService {
   }> {
     if (this._paymentsSyncRunning) {
       logger.info('sync.payments.already_running');
+      return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
+    }
+
+    // Cross-instance guard: only one instance may run the payments sync at a
+    // time. The in-process boolean above is the fast path; this advisory lock
+    // is the authoritative guard on multi-instance deployments.
+    const lock = await tryAcquireSyncLock('payments');
+    if (!lock) {
+      logger.info('sync.payments.lock_not_acquired');
       return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
     }
 
@@ -795,6 +824,7 @@ export class SyncService {
       );
     } finally {
       this._paymentsSyncRunning = false;
+      await lock.release();
     }
   }
   
@@ -803,7 +833,16 @@ export class SyncService {
     created: number;
     updated: number;
     failed: number;
+    alreadyRunning?: boolean;
   }> {
+    // Cross-instance guard: only one instance may run the refunds sync at a
+    // time. Released in the finally block on every exit path.
+    const lock = await tryAcquireSyncLock('refunds');
+    if (!lock) {
+      logger.info('sync.refunds.lock_not_acquired');
+      return { processed: 0, created: 0, updated: 0, failed: 0, alreadyRunning: true };
+    }
+
     let processed = 0;
     let created = 0;
     let updated = 0;
@@ -901,6 +940,8 @@ export class SyncService {
         'SYNC_ERROR',
         error instanceof Error ? error.message : error
       );
+    } finally {
+      await lock.release();
     }
   }
 
@@ -917,6 +958,28 @@ export class SyncService {
    *      If any card fails, the watermark is unchanged so the next cycle retries.
    */
   async syncIncrementalGiftCards(): Promise<{
+    processed: number;
+    created: number;
+    updated: number;
+    failed: number;
+    sinceDate: string;
+  }> {
+    // Cross-instance guard: only one instance may run the incremental gift
+    // card sync at a time. The in-process sync_state status check inside
+    // _runIncrementalGiftCards remains the fast path. Released on every exit.
+    const lock = await tryAcquireSyncLock('giftCards_incremental');
+    if (!lock) {
+      logger.info('sync.incrementalGc.lock_not_acquired');
+      return { processed: 0, created: 0, updated: 0, failed: 0, sinceDate: 'skipped' };
+    }
+    try {
+      return await this._runIncrementalGiftCards();
+    } finally {
+      await lock.release();
+    }
+  }
+
+  private async _runIncrementalGiftCards(): Promise<{
     processed: number;
     created: number;
     updated: number;
@@ -1100,6 +1163,25 @@ export class SyncService {
   }
 
   async syncRedeemActivityBalances(): Promise<{
+    redeemEvents: number;
+    cardsRefreshed: number;
+  }> {
+    // Cross-instance guard: only one instance may run the REDEEM balance
+    // monitor at a time. The in-process sync_state status check inside
+    // _runRedeemActivityBalances remains the fast path. Released on every exit.
+    const lock = await tryAcquireSyncLock('giftCard_redeem_monitor');
+    if (!lock) {
+      logger.info('sync.redeemMonitor.lock_not_acquired');
+      return { redeemEvents: 0, cardsRefreshed: 0 };
+    }
+    try {
+      return await this._runRedeemActivityBalances();
+    } finally {
+      await lock.release();
+    }
+  }
+
+  private async _runRedeemActivityBalances(): Promise<{
     redeemEvents: number;
     cardsRefreshed: number;
   }> {

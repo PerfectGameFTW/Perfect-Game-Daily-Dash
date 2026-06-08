@@ -592,3 +592,185 @@ describe('syncLocks — abuse-resistance guarantees (Task #86)', () => {
     });
   });
 });
+
+/**
+ * Cluster-safe recurring-sync locks (Task #196).
+ *
+ * The 60-second recurring syncs (orders, payments, refunds, incremental
+ * gift cards, gift card redemptions, REDEEM balance monitor, Intercard
+ * today) each acquire their OWN distinct Postgres advisory lock before
+ * doing any external API work. These tests prove the three guarantees the
+ * task requires:
+ *
+ *   1. When the type's lock is already held (another instance is running
+ *      it), a fresh call returns the existing no-op result shape WITHOUT
+ *      invoking Square — proven by holding the lock from this test session
+ *      (a separate Postgres session) and asserting the method short-
+ *      circuits before any I/O.
+ *   2. Different recurring types use different keys, so holding one does
+ *      not block another within the same cycle.
+ *   3. Recurring keys are distinct from the shared historical/backfill
+ *      key, so a long backfill never blocks the recurring cycle.
+ *
+ * Holding the lock here works because `tryAcquireSyncLock` opens a
+ * dedicated pool connection and Postgres advisory locks are session-
+ * scoped: the connection the sync method opens is a different session and
+ * therefore sees the lock as taken.
+ */
+describe('recurring-sync advisory locks (Task #196)', () => {
+  // Every recurring sync type registered for cluster-safe locking.
+  const RECURRING_TYPES = [
+    'orders',
+    'payments',
+    'refunds',
+    'giftCards_incremental',
+    'gift_card_redemptions',
+    'giftCard_redeem_monitor',
+    'intercard_today',
+  ];
+
+  describe('a held lock makes a fresh call a no-op without invoking Square', () => {
+    it('syncOrders returns alreadyRunning when the orders lock is held', async () => {
+      const held = await tryAcquireSyncLock('orders');
+      expect(held).not.toBeNull();
+      try {
+        const result = await syncService.syncOrders(new Date(), new Date());
+        expect(result.alreadyRunning).toBe(true);
+        expect(result.processed).toBe(0);
+        expect(result.created).toBe(0);
+        expect(result.updated).toBe(0);
+        expect(result.failed).toBe(0);
+      } finally {
+        await held?.release();
+      }
+    }, 20_000);
+
+    it('syncPayments returns alreadyRunning when the payments lock is held', async () => {
+      const held = await tryAcquireSyncLock('payments');
+      expect(held).not.toBeNull();
+      try {
+        const result = await syncService.syncPayments(new Date(), new Date());
+        expect(result.alreadyRunning).toBe(true);
+        expect(result.processed).toBe(0);
+      } finally {
+        await held?.release();
+      }
+    }, 20_000);
+
+    it('syncRefunds returns alreadyRunning when the refunds lock is held', async () => {
+      const held = await tryAcquireSyncLock('refunds');
+      expect(held).not.toBeNull();
+      try {
+        const result = await syncService.syncRefunds(new Date(), new Date());
+        expect(result.alreadyRunning).toBe(true);
+        expect(result.processed).toBe(0);
+      } finally {
+        await held?.release();
+      }
+    }, 20_000);
+
+    it('syncIncrementalGiftCards returns the skipped no-op when its lock is held', async () => {
+      const held = await tryAcquireSyncLock('giftCards_incremental');
+      expect(held).not.toBeNull();
+      try {
+        const result = await syncService.syncIncrementalGiftCards();
+        expect(result.sinceDate).toBe('skipped');
+        expect(result.processed).toBe(0);
+        expect(result.created).toBe(0);
+      } finally {
+        await held?.release();
+      }
+    }, 20_000);
+
+    it('syncGiftCardRedemptions returns the empty no-op when its lock is held', async () => {
+      const held = await tryAcquireSyncLock('gift_card_redemptions');
+      expect(held).not.toBeNull();
+      try {
+        const result = await syncService.syncGiftCardRedemptions(new Date(), new Date());
+        expect(result.success).toBe(true);
+        expect(result.created).toBe(0);
+        expect(result.matched).toBe(0);
+        expect(result.redeemedGiftCardIds).toHaveLength(0);
+      } finally {
+        await held?.release();
+      }
+    }, 20_000);
+
+    it('syncRedeemActivityBalances returns the empty no-op when its lock is held', async () => {
+      const held = await tryAcquireSyncLock('giftCard_redeem_monitor');
+      expect(held).not.toBeNull();
+      try {
+        const result = await syncService.syncRedeemActivityBalances();
+        expect(result.redeemEvents).toBe(0);
+        expect(result.cardsRefreshed).toBe(0);
+      } finally {
+        await held?.release();
+      }
+    }, 20_000);
+  });
+
+  describe('key independence', () => {
+    it('two concurrent callers of the SAME recurring type: exactly one acquires the lock', async () => {
+      // Mirror the production race: two instances attempt the same
+      // recurring sync at the same moment. Exactly one wins the lock; the
+      // other gets null and (in production) returns the no-op result.
+      const [a, b] = await Promise.all([
+        tryAcquireSyncLock('orders'),
+        tryAcquireSyncLock('orders'),
+      ]);
+      try {
+        const winners = [a, b].filter((l) => l !== null);
+        const losers = [a, b].filter((l) => l === null);
+        expect(winners).toHaveLength(1);
+        expect(losers).toHaveLength(1);
+      } finally {
+        await a?.release();
+        await b?.release();
+      }
+    });
+
+    it('all recurring types can hold their locks simultaneously (distinct keys)', async () => {
+      // Holding every recurring type's lock at once proves no two types
+      // collide on a key — so orders and payments (etc.) still run
+      // concurrently within the same 60s cycle.
+      const locks = await Promise.all(
+        RECURRING_TYPES.map((t) => tryAcquireSyncLock(t)),
+      );
+      try {
+        for (let i = 0; i < locks.length; i++) {
+          expect(locks[i], `lock for ${RECURRING_TYPES[i]}`).not.toBeNull();
+        }
+      } finally {
+        await Promise.all(locks.map((l) => l?.release()));
+      }
+    });
+
+    it('a recurring lock does NOT block the shared historical/backfill key', async () => {
+      // A long-running backfill must never be blocked by — and must never
+      // block — the recurring cycle. They use different keys.
+      const recurring = await tryAcquireSyncLock('orders');
+      expect(recurring).not.toBeNull();
+      try {
+        const backfill = await tryAcquireSyncLock('orders_payments_backfill');
+        expect(backfill).not.toBeNull();
+        await backfill?.release();
+      } finally {
+        await recurring?.release();
+      }
+    });
+
+    it('releasing a recurring lock lets a subsequent caller acquire it', async () => {
+      const first = await tryAcquireSyncLock('payments');
+      expect(first).not.toBeNull();
+      // While held, a second acquire fails.
+      const blocked = await tryAcquireSyncLock('payments');
+      expect(blocked).toBeNull();
+      await first!.release();
+
+      // After release, the key is free again.
+      const second = await tryAcquireSyncLock('payments');
+      expect(second).not.toBeNull();
+      await second!.release();
+    });
+  });
+});

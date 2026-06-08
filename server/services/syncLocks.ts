@@ -42,10 +42,30 @@ export const MAX_SQUARE_PAGES_PER_DAY = 2000;
  * API for diagnostics and future per-type locks.
  */
 const HISTORICAL_BACKFILL_LOCK_KEY = 0x53594e43; // "SYNC"
+
+/**
+ * Each recurring (every-60s) sync type gets its OWN distinct advisory-lock
+ * key so that, on a multi-instance deployment, only one instance runs a
+ * given recurring type at a time — while different types (e.g. orders and
+ * payments) still run concurrently within the same cycle. All recurring
+ * keys are distinct from `HISTORICAL_BACKFILL_LOCK_KEY`, so a long-running
+ * backfill never blocks the recurring cycle and vice versa.
+ */
 const ADVISORY_LOCK_KEYS: Record<string, number> = {
+  // Historical / backfill flows — intentionally share one key (they all draw
+  // on the same Square page budget, so only one may run at a time).
   orders_payments_backfill: HISTORICAL_BACKFILL_LOCK_KEY,
   giftCards_historical: HISTORICAL_BACKFILL_LOCK_KEY,
   historical_sync: HISTORICAL_BACKFILL_LOCK_KEY,
+
+  // Recurring (every-60s) syncs — one distinct key each.
+  orders: 0x52454301,                 // "REC" + 01
+  payments: 0x52454302,               // "REC" + 02
+  refunds: 0x52454303,                // "REC" + 03
+  giftCards_incremental: 0x52454304,  // "REC" + 04
+  gift_card_redemptions: 0x52454305,  // "REC" + 05
+  giftCard_redeem_monitor: 0x52454306, // "REC" + 06
+  intercard_today: 0x52454307,        // "REC" + 07
 };
 
 export interface SyncLock {

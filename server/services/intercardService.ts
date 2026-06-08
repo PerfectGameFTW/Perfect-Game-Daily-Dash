@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { intercardRevenue, syncState, type DateRange } from '../../shared/schema';
 import { getEasternBusinessDateStrings } from '../dateUtils';
 import { logger, errorContext } from '../logger';
+import { tryAcquireSyncLock } from './syncLocks';
 
 const INTERCARD_HOST = (process.env.INTERCARD_HOST || '').replace(/\/+$/, '');
 const INTERCARD_MAC_ID = process.env.INTERCARD_MAC_ID || '';
@@ -213,10 +214,22 @@ export class IntercardService {
   async syncToday(): Promise<void> {
     if (!isIntercardConfigured()) return;
 
-    const todayStr = formatDateET(new Date());
-    const dayResult = await this.syncSingleDay(todayStr);
-    if (dayResult.upserted > 0) {
-      logger.info('intercard.today.synced', { upserted: dayResult.upserted });
+    // Cross-instance guard: only one instance runs the recurring Intercard
+    // today-sync at a time. Released on every exit path.
+    const lock = await tryAcquireSyncLock('intercard_today');
+    if (!lock) {
+      logger.info('intercard.today.lock_not_acquired');
+      return;
+    }
+
+    try {
+      const todayStr = formatDateET(new Date());
+      const dayResult = await this.syncSingleDay(todayStr);
+      if (dayResult.upserted > 0) {
+        logger.info('intercard.today.synced', { upserted: dayResult.upserted });
+      }
+    } finally {
+      await lock.release();
     }
   }
 
