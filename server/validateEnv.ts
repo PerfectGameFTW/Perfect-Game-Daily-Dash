@@ -10,6 +10,7 @@ const REQUIRED_ENV: readonly string[] = [
   'SQUARE_ACCESS_TOKEN',
   'SQUARE_LOCATION_ID',
   'SESSION_SECRET',
+  'TOTP_ENCRYPTION_KEY',
 ];
 
 const INTERCARD_ENV: readonly string[] = [
