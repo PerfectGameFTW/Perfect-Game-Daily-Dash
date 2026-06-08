@@ -1,1 +1,2 @@
 - [Editing .replit safely](dotreplit-editing.md) — use verifyAndReplaceDotReplit({tempFilePath}); bash blocks the literal "npm run dev"; secrets never go in [userenv] (committed to git).
+- [Test suite shared-DB isolation](test-suite-shared-db-isolation.md) — vitest runs on ONE shared test DB; keep fileParallelism:false (global app_settings toggles race); pg row-lock waiters queue in 2 stages (transactionid + tuple).

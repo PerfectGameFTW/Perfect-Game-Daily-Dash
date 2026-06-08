@@ -19,45 +19,122 @@ import {
 } from '../middleware/rateLimiter';
 import type { TotpLoginResult } from '../services/totpService';
 
-// Polls pg_stat_activity until at least `expected` non-poller backends
-// on this database are blocked behind another backend. The single-suite
-// advisory lock from globalSetup keeps any other traffic off this DB,
-// so the only candidates are the operations we deliberately fired in
-// the calling test.
+type PoolClientLike = Awaited<ReturnType<typeof pool.connect>>;
+
+// Identifies the exact row lock held by the sentinel connection so that
+// waits below can be scoped to THIS test's lock conflict only — other
+// test files run concurrently in the same `vitest run` and share this DB.
+interface RowLockTarget {
+  // The sentinel transaction's real 32-bit xid (the FIRST waiter blocks
+  // on a ShareLock of this).
+  xid: string;
+  // relation oid + page/tuple of the locked row (SUBSEQUENT waiters block
+  // on a `tuple` lock identified by these — see waitUntilQueuedWaiters).
+  reloid: string;
+  page: number;
+  tuple: number;
+}
+
+// Captures the sentinel's row-lock identity AFTER it has taken a row lock.
+// `SELECT ... FOR UPDATE` writes the row's xmax, which forces the
+// transaction to be assigned a real xid, so `backend_xid` is populated by
+// then. We read both the xid and the row's ctid via SELF lookups on the
+// sentinel's OWN connection — reliable even under Neon's serverless WS
+// pooler, unlike correlating a pid seen by one client with the pid
+// `pg_blocking_pids()` reports from another client (NOT reliable under the
+// pooler). The ctid is stable for the duration of the wait: a pure
+// FOR UPDATE lock does not move the tuple, and we release the sentinel
+// before any waiter is allowed to UPDATE (and thus re-version) the row.
+async function getSentinelLockTarget(
+  blocker: PoolClientLike,
+  userId: number,
+): Promise<RowLockTarget> {
+  const x = await blocker.query<{ xid: string | null }>(
+    `SELECT backend_xid::text AS xid
+       FROM pg_stat_activity
+      WHERE pid = pg_backend_pid()`,
+  );
+  const xid = x.rows[0]?.xid;
+  if (!xid || xid === '0') {
+    throw new Error(
+      'sentinel transaction has no real xid — acquire SELECT ... FOR UPDATE before reading it',
+    );
+  }
+  const c = await blocker.query<{ ctid: string; reloid: string }>(
+    `SELECT ctid::text AS ctid,
+            'public.users'::regclass::oid::text AS reloid
+       FROM users
+      WHERE id = $1`,
+    [userId],
+  );
+  const ctid = c.rows[0]?.ctid;
+  const reloid = c.rows[0]?.reloid;
+  if (!ctid || !reloid) {
+    throw new Error('could not resolve sentinel row ctid/relation');
+  }
+  const m = ctid.match(/^\((\d+),(\d+)\)$/);
+  if (!m) {
+    throw new Error(`unexpected ctid format: ${ctid}`);
+  }
+  return { xid, reloid, page: Number(m[1]), tuple: Number(m[2]) };
+}
+
+// Polls until at least `expected` backends are queued behind the
+// sentinel's row lock, scoped to THIS test's specific row.
 //
-// (We deliberately do NOT filter by the sentinel's specific
-// `pg_backend_pid()` here. Under Neon's serverless WS pooler the pid
-// returned by one client connection is not reliably the same pid that
-// `pg_blocking_pids()` reports as the lock holder seen from another
-// client — so a pid-targeted predicate yields zero matches even when
-// the lock conflict is real. The broader "any blocked backend" check
-// is safe in this suite because the globalSetup advisory lock
-// guarantees no concurrent test traffic shares the DB.)
+// Postgres serializes row-lock waiters in two stages, so the waiters do
+// NOT all wait on the same lock object:
+//   - The FIRST waiter requests a ShareLock on the holder's
+//     `transactionid` — pg_locks row (locktype='transactionid',
+//     transactionid=<sentinel xid>, granted=false).
+//   - SUBSEQUENT waiters block earlier, on a `tuple` lock for the row that
+//     the first waiter already holds — pg_locks row (locktype='tuple',
+//     relation=<users oid>, page/tuple=<row>, granted=false).
+// Counting ONLY the transactionid waiters therefore caps at 1; we must sum
+// both lock types, each scoped to this row, to observe the second waiter.
+//
+// This replaces an earlier "count ALL blocked backends on the database"
+// poll whose correctness relied on no other traffic sharing the DB. That
+// premise only holds ACROSS vitest runs (the globalSetup advisory lock
+// serializes separate runs); WITHIN a single run every test file shares
+// this DB in concurrent forks, so a global blocked-backend count could
+// return early on an unrelated test's lock wait and break this test's
+// deterministic sequencing — which is exactly how it began failing under
+// the suite's parallel scheduling.
 //
 // In this controlled scenario (same row, same lock conflict class, no
 // NOWAIT/SKIP LOCKED, no statement cancellation) Postgres serves the
-// queued waiters in arrival order, so gating each fire on this helper
-// gives us a deterministic execution sequence. We treat that as a
-// practical test invariant — not a formal SQL-contract guarantee —
-// which is sufficient for catching regressions of our own lock code.
-async function waitUntilBlockedBackends(
+// queued waiters in arrival order (transactionid waiter first, then the
+// tuple waiter), so gating each fire on this helper gives us a
+// deterministic execution sequence.
+async function waitUntilQueuedWaiters(
+  target: RowLockTarget,
   expected: number,
   timeoutMs = 20_000,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const r = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count
-         FROM pg_stat_activity
-        WHERE datname = current_database()
-          AND pid <> pg_backend_pid()
-          AND cardinality(pg_blocking_pids(pid)) > 0`,
+      `SELECT (
+         (SELECT COUNT(*) FROM pg_locks
+            WHERE locktype = 'transactionid'
+              AND transactionid = $1::xid
+              AND NOT granted)
+         + (SELECT COUNT(*) FROM pg_locks
+            WHERE locktype = 'tuple'
+              AND relation = $2::oid
+              AND page = $3
+              AND tuple = $4
+              AND NOT granted)
+       )::text AS count`,
+      [target.xid, target.reloid, target.page, target.tuple],
     );
     if (Number(r.rows[0]?.count ?? '0') >= expected) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(
-    `Timed out after ${timeoutMs}ms waiting for ${expected} blocked backends`,
+    `Timed out after ${timeoutMs}ms waiting for ${expected} queued waiter(s) on row ` +
+      `(xid ${target.xid}, ctid (${target.page},${target.tuple}))`,
   );
 }
 
@@ -390,6 +467,10 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
         'SELECT id FROM users WHERE id = $1 FOR UPDATE',
         [userId],
       );
+      // The sentinel now holds the row lock; capture its lock identity so
+      // we can scope the wait poll to THIS lock conflict only (other
+      // concurrent test files share this DB — see waitUntilQueuedWaiters).
+      const lockTarget = await getSentinelLockTarget(blocker, userId);
 
       // Fire regenerate but DO NOT await — it must reach its
       // `for('update')` and then block on our held lock. We attach
@@ -403,38 +484,13 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
       );
       regenPromise.catch(() => {});
 
-      // Poll pg_stat_activity for ANY non-poller backend on this DB
-      // that is blocked by another backend. `pg_blocking_pids` returns
-      // the set of pids holding a lock the queried pid is waiting on,
-      // so a non-empty result deterministically means "some backend is
-      // blocked behind some other backend right now". With the
-      // single-suite advisory lock from globalSetup ensuring no other
-      // traffic shares this DB, the only candidate is regen blocked
-      // behind our `blocker` connection.
-      //
-      // The condition is guaranteed to become true given Postgres's
-      // lock semantics; the timeout exists only as a safety net for a
-      // real regression (e.g. the FOR UPDATE got removed from
-      // `regenerateRecoveryCodes`).
-      const POLL_DEADLINE_MS = 20_000;
-      const POLL_INTERVAL_MS = 25;
-      const start = Date.now();
-      let observedBlocked = false;
-      while (Date.now() - start < POLL_DEADLINE_MS) {
-        const r = await pool.query<{ count: string }>(
-          `SELECT COUNT(*)::text AS count
-             FROM pg_stat_activity
-            WHERE datname = current_database()
-              AND pid <> pg_backend_pid()
-              AND cardinality(pg_blocking_pids(pid)) > 0`,
-        );
-        if (Number(r.rows[0]?.count ?? '0') > 0) {
-          observedBlocked = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-      }
-      expect(observedBlocked).toBe(true);
+      // Wait until regen is observed queued behind OUR sentinel's row
+      // lock. The condition is guaranteed to become true given Postgres's
+      // lock semantics; waitUntilQueuedWaiters throws on timeout, which is
+      // the loud failure we want for a real regression (e.g. the FOR
+      // UPDATE got removed from `regenerateRecoveryCodes`, so regen never
+      // blocks).
+      await waitUntilQueuedWaiters(lockTarget, 1);
 
       // While regen is blocked the row must still hold the original
       // batch verbatim — no partial write has been applied. A plain
@@ -497,10 +553,10 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
   // schedule from resurrecting old hashes.
   //
   // Strategy: hold a sentinel FOR UPDATE lock on the user row, then
-  // queue the two operations one at a time, polling pg_stat_activity
-  // between each so the SECOND op only fires after the FIRST is
+  // queue the two operations one at a time, polling pg_locks (scoped to
+  // this row) between each so the SECOND op only fires after the FIRST is
   // observed to have queued behind the sentinel (see
-  // waitUntilBlockedBackends above). In this controlled scenario
+  // waitUntilQueuedWaiters above). In this controlled scenario
   // Postgres services the queued waiters in arrival order, so the
   // order in which we kick the operations off becomes the
   // deterministic order in which they commit once the sentinel is
@@ -540,6 +596,11 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
             'SELECT id FROM users WHERE id = $1 FOR UPDATE',
             [userId],
           );
+          // Sentinel holds the row lock. Capture its lock identity so the
+          // wait polls below are scoped to THIS row and concurrent test
+          // files sharing the DB can't make a poll return early (see
+          // waitUntilQueuedWaiters).
+          const lockTarget = await getSentinelLockTarget(blocker, userId);
 
           const fireVerify = (): Promise<TotpLoginResult> => {
             const p = totpService.verifyLoginCode(userId, targetOldCode);
@@ -560,14 +621,14 @@ describe('Regenerate TOTP recovery codes (Task #101)', () => {
 
           if (order === 'verify-first') {
             verifyPromise = fireVerify();
-            await waitUntilBlockedBackends(1);
+            await waitUntilQueuedWaiters(lockTarget, 1);
             regenPromise = fireRegen();
-            await waitUntilBlockedBackends(2);
+            await waitUntilQueuedWaiters(lockTarget, 2);
           } else {
             regenPromise = fireRegen();
-            await waitUntilBlockedBackends(1);
+            await waitUntilQueuedWaiters(lockTarget, 1);
             verifyPromise = fireVerify();
-            await waitUntilBlockedBackends(2);
+            await waitUntilQueuedWaiters(lockTarget, 2);
           }
 
           // Release the sentinel; queued waiters drain in FIFO order.
